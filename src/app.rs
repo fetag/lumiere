@@ -921,7 +921,7 @@ impl App {
             self.slideshow,
         );
         egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
+            top_menu(ui, "File", |ui| {
                 menu(ui, &mut actions, Action::Open, "Open", "Enter");
                 menu(
                     ui,
@@ -967,7 +967,7 @@ impl App {
                 ui.separator();
                 menu(ui, &mut actions, Action::Quit, "Exit", "Cmd+Q");
             });
-            ui.menu_button("Edit", |ui| {
+            top_menu(ui, "Edit", |ui| {
                 menu(ui, &mut actions, Action::SelectAll, "Select All", "Cmd+A");
                 menu(
                     ui,
@@ -995,7 +995,7 @@ impl App {
                 menu(ui, &mut actions, Action::FlipH, "Flip Horizontal", "");
                 menu(ui, &mut actions, Action::FlipV, "Flip Vertical", "");
             });
-            ui.menu_button("View", |ui| {
+            top_menu(ui, "View", |ui| {
                 check(ui, &mut actions, Action::ToggleToolbar, "Toolbar", toolbar);
                 check(ui, &mut actions, Action::ToggleTree, "Folder Tree", tree);
                 check(
@@ -1017,7 +1017,7 @@ impl App {
                 );
                 menu(ui, &mut actions, Action::ThumbLarge, "Large Thumbnails", "");
                 ui.separator();
-                ui.menu_button("Sort", |ui| {
+                top_menu(ui, "Sort", |ui| {
                     check(
                         ui,
                         &mut actions,
@@ -1046,10 +1046,9 @@ impl App {
                         "by Type",
                         sort == SortKey::Type,
                     );
-                    if ui
-                        .checkbox(&mut self.sort_reverse, "Reverse order")
-                        .changed()
-                    {
+                    let reverse = ui.checkbox(&mut self.sort_reverse, "Reverse order");
+                    classic::note_rect(ui, "Reverse order", reverse.rect);
+                    if reverse.changed() {
                         actions.push(Action::Refresh);
                     }
                 });
@@ -1075,7 +1074,7 @@ impl App {
                 );
                 menu(ui, &mut actions, Action::Refresh, "Refresh", "F5");
             });
-            ui.menu_button("Go", |ui| {
+            top_menu(ui, "Go", |ui| {
                 menu(ui, &mut actions, Action::GoHome, "Home Folder", "");
                 menu(ui, &mut actions, Action::GoPictures, "Pictures", "");
                 ui.separator();
@@ -1111,10 +1110,10 @@ impl App {
                     "Cmd+Shift+Y",
                 );
             });
-            ui.menu_button("Tools", |ui| {
+            top_menu(ui, "Tools", |ui| {
                 menu(ui, &mut actions, Action::Options, "Options...", "Cmd+,");
             });
-            ui.menu_button("Help", |ui| {
+            top_menu(ui, "Help", |ui| {
                 menu(ui, &mut actions, Action::About, "About Lumiere", "");
             });
         });
@@ -1232,21 +1231,25 @@ impl App {
             if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 navigate = Some(PathBuf::from(self.path_edit.trim()));
             }
-            if ui.button("Go").clicked() {
+            let go = ui.button("Go");
+            classic::note_rect(ui, "Go", go.rect);
+            if go.clicked() {
                 navigate = Some(PathBuf::from(self.path_edit.trim()));
             }
             ui.label("Files:");
-            let filter_lost_focus = ui
-                .add_sized(
-                    [90.0, 20.0],
-                    egui::TextEdit::singleline(&mut self.filter_edit),
-                )
-                .lost_focus();
+            let filter_response = ui.add_sized(
+                [90.0, 20.0],
+                egui::TextEdit::singleline(&mut self.filter_edit),
+            );
+            classic::note_rect(ui, "Files filter", filter_response.rect);
+            let filter_lost_focus = filter_response.lost_focus();
             if filter_lost_focus && self.filter_edit != self.filter {
                 self.filter = self.filter_edit.clone();
                 rescan = true;
             }
-            if ui.button("Apply").clicked() {
+            let apply = ui.button("Apply");
+            classic::note_rect(ui, "Apply", apply.rect);
+            if apply.clicked() {
                 self.filter = self.filter_edit.clone();
                 rescan = true;
             }
@@ -1285,7 +1288,9 @@ impl App {
             }
             places.push(("Macintosh HD".to_owned(), PathBuf::from("/")));
             for (label, path) in places {
-                if ui.selectable_label(self.dir == path, label).clicked() {
+                let response = ui.selectable_label(self.dir == path, &label);
+                classic::note_rect(ui, &label, response.rect);
+                if response.clicked() {
                     goto = Some(path);
                 }
             }
@@ -1878,9 +1883,15 @@ fn menu_row(label: &str, shortcut: &str, checked: Option<bool>) -> egui::text::L
     job
 }
 
+fn top_menu(ui: &mut egui::Ui, label: &str, contents: impl FnOnce(&mut egui::Ui)) {
+    let response = ui.menu_button(label, contents);
+    classic::note_rect(ui, label, response.response.rect);
+}
+
 fn menu(ui: &mut egui::Ui, actions: &mut Vec<Action>, action: Action, label: &str, shortcut: &str) {
     let response =
         ui.add(egui::Button::new(menu_row(label, shortcut, None)).min_size(egui::vec2(240.0, 0.0)));
+    classic::note_rect(ui, label, response.rect);
     if response.clicked() {
         actions.push(action);
         ui.close();
@@ -1891,6 +1902,7 @@ fn check(ui: &mut egui::Ui, actions: &mut Vec<Action>, action: Action, label: &s
     let response = ui.add(
         egui::Button::new(menu_row(label, "", Some(checked))).min_size(egui::vec2(240.0, 0.0)),
     );
+    classic::note_rect(ui, label, response.rect);
     if response.clicked() {
         actions.push(action);
         ui.close();
@@ -1928,8 +1940,233 @@ mod tests {
                 egui::pos2(0.0, 0.0),
                 egui::pos2(1280.0, 820.0),
             )),
+            focused: true,
             ..Default::default()
         }
+    }
+
+    /// Warm the pointer up on `pos` for one frame (egui hit-tests the previous
+    /// pass), then press and release there.
+    fn click_at(ctx: &Context, app: &mut App, pos: egui::Pos2, time: &mut f64) {
+        let press = vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ];
+        for (frame, events) in [vec![egui::Event::PointerMoved(pos)], press]
+            .into_iter()
+            .enumerate()
+        {
+            let mut input = raw_input();
+            input.time = Some(*time + frame as f64 * 0.4);
+            input.events = events;
+            let _ = ctx.run(input, |ctx| app.draw(ctx));
+        }
+        *time += 2.0;
+    }
+
+    fn click_label(ctx: &Context, app: &mut App, label: &str, time: &mut f64) -> bool {
+        let Some(rect) = classic::rect_of(ctx, label) else {
+            return false;
+        };
+        click_at(ctx, app, rect.center(), time);
+        true
+    }
+
+    /// Paints frames until the given text shows up (windows need a sizing pass
+    /// before their content is drawn).
+    fn painted_once(ctx: &Context, app: &mut App, needle: &str) -> String {
+        let mut text = String::new();
+        for _ in 0..40 {
+            let output = ctx.run(raw_input(), |ctx| app.draw(ctx));
+            text = painted_text(&output.shapes);
+            if text.contains(needle) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        text
+    }
+
+    fn settle(ctx: &Context, app: &mut App, time: &mut f64) {
+        // The registry must only hold controls that are on screen right now,
+        // otherwise a closed menu leaves a stale rect behind.
+        classic::clear_rects(ctx);
+        let mut input = raw_input();
+        input.time = Some(*time);
+        let _ = ctx.run(input, |ctx| app.draw(ctx));
+        *time += 0.4;
+    }
+
+    fn hover(ctx: &Context, app: &mut App, pos: egui::Pos2, time: &mut f64) {
+        let mut input = raw_input();
+        input.time = Some(*time);
+        input.events = vec![egui::Event::PointerMoved(pos)];
+        let _ = ctx.run(input, |ctx| app.draw(ctx));
+        *time += 0.4;
+    }
+
+    /// Walks a menu path such as ["View", "Sort"] and leaves the deepest submenu
+    /// open. Only the first level needs a click; egui opens nested submenus as
+    /// soon as the pointer hovers the parent entry.
+    fn open_menu(ctx: &Context, app: &mut App, path: &[&str], time: &mut f64) -> bool {
+        click_at(ctx, app, egui::pos2(600.0, 700.0), time);
+        for (depth, label) in path.iter().enumerate() {
+            settle(ctx, app, time);
+            let Some(rect) = classic::rect_of(ctx, label) else {
+                return false;
+            };
+            if depth == 0 {
+                click_at(ctx, app, rect.center(), time);
+            } else {
+                hover(ctx, app, rect.center(), time);
+            }
+        }
+        settle(ctx, app, time);
+        true
+    }
+
+    #[test]
+    fn sort_menu_reorders_the_grid() {
+        let dir = std::env::temp_dir().join("lumiere_ui_test_sortmenu");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.png"), vec![b'x'; 10]).unwrap();
+        std::fs::write(dir.join("b.png"), vec![b'x'; 900]).unwrap();
+        std::fs::write(dir.join("c.png"), vec![b'x'; 100]).unwrap();
+
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let mut time = 1.0;
+        assert!(open_menu(&ctx, &mut app, &["View", "Sort"], &mut time));
+        assert!(click_label(&ctx, &mut app, "by Size", &mut time));
+
+        assert_eq!(app.sort, SortKey::Size);
+        let names: Vec<String> = app.entries.iter().map(|e| e.name.clone()).collect();
+        assert_eq!(names, ["a.png", "c.png", "b.png"]);
+
+        assert!(open_menu(&ctx, &mut app, &["View", "Sort"], &mut time));
+        assert!(click_label(&ctx, &mut app, "Reverse order", &mut time));
+        let names: Vec<String> = app.entries.iter().map(|e| e.name.clone()).collect();
+        assert_eq!(names, ["b.png", "c.png", "a.png"]);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn view_menu_toggles_panels_and_thumb_size() {
+        let dir = fixture_dir("viewmenu");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let mut time = 1.0;
+
+        assert!(app.show_tree && app.thumb_size == 120);
+        assert!(open_menu(&ctx, &mut app, &["View"], &mut time));
+        assert!(click_label(&ctx, &mut app, "Folder Tree", &mut time));
+        assert!(!app.show_tree);
+
+        assert!(open_menu(&ctx, &mut app, &["View"], &mut time));
+        assert!(click_label(&ctx, &mut app, "Small Thumbnails", &mut time));
+        assert_eq!(app.thumb_size, 64);
+
+        for label in ["Preview Pane", "Toolbar", "Status Bar"] {
+            assert!(open_menu(&ctx, &mut app, &["View"], &mut time));
+            assert!(click_label(&ctx, &mut app, label, &mut time));
+        }
+        assert!(!app.show_preview && !app.show_toolbar && !app.show_status);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn places_row_navigates_to_the_selected_place() {
+        let dir = fixture_dir("places");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let mut time = 1.0;
+
+        settle(&ctx, &mut app, &mut time);
+        assert!(click_label(&ctx, &mut app, "Macintosh HD", &mut time));
+        assert_eq!(app.dir, PathBuf::from("/"));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn files_filter_applies_from_the_address_row() {
+        let dir = std::env::temp_dir().join("lumiere_ui_test_filter");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("one.png"), vec![b'x'; 10]).unwrap();
+        std::fs::write(dir.join("two.jpg"), vec![b'x'; 10]).unwrap();
+
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let mut time = 1.0;
+
+        settle(&ctx, &mut app, &mut time);
+        assert!(click_label(&ctx, &mut app, "Files filter", &mut time));
+
+        let mut input = raw_input();
+        input.time = Some(time);
+        input.events = vec![
+            egui::Event::Key {
+                key: egui::Key::A,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            },
+            egui::Event::Key {
+                key: egui::Key::A,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            },
+            egui::Event::Text("*.jpg".to_owned()),
+        ];
+        let _ = ctx.run(input, |ctx| app.draw(ctx));
+        time += 0.4;
+
+        settle(&ctx, &mut app, &mut time);
+        assert!(click_label(&ctx, &mut app, "Apply", &mut time));
+
+        assert_eq!(app.filter, "*.jpg");
+        let names: Vec<String> = app.entries.iter().map(|e| e.name.clone()).collect();
+        assert_eq!(names, ["two.jpg"]);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn about_and_explore_dialogs_render_their_content() {
+        let dir = fixture_dir("dialogs");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+
+        app.act(Action::About, &ctx);
+        let text = painted_once(&ctx, &mut app, "Version");
+        assert!(text.contains("Lumiere"));
+        assert!(text.contains("Keys:"));
+
+        app.about_open = false;
+        app.act(Action::ExploreFolder, &ctx);
+        let text = painted_once(&ctx, &mut app, "Explore");
+        eprintln!("DBG explore<<{text}>>END");
+        assert!(text.contains("Explore"));
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     fn fixture_dir(tag: &str) -> PathBuf {

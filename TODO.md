@@ -8,6 +8,7 @@
 - 檢查指令：`cargo fmt --check && cargo clippy --all-targets && cargo test && cargo build --release`
 - 視覺驗證：`./target/release/lumiere /tmp/lumiere_demo`，視窗定位 `osascript ... set position of window 1 to {60,60}`，截圖 `screencapture -x -R 60,60,1120,772 /tmp/shotN.png`
 - 鍵盤驅動測試可用 `osascript -e 'tell application "System Events" to key code ...'`；`click at` 對 egui 視窗無效（沒有原生 AX 元素）
+- headless 滑鼠/選單驅動測試：`classic::note_rect()` 會把有標籤的控制（選單項、工具列按鈕、Places、checkbox、Files 欄位）畫完後的 rect 註冊到 ctx temp data，測試用 `classic::rect_of(ctx, label)` 取座標再點；app.rs tests 有 `click_at / click_label / settle / hover / open_menu` 可沿用。三個坑：(1) egui 對「上一個 pass」的 widget 做 hit test，點擊前要先有一幀；(2) `RawInput.time` 要遞增，否則相鄰兩次點擊會被判成 double click；(3) `settle()` 會先 `clear_rects()`，否則已關閉的選單會留下過期座標
 
 ## 1. Bug / 已知問題
 - [x] 全螢幕 / slideshow 背景是灰色而非黑色：`canvas_color()` 改為 `canvas_dark || fullscreen` 時用黑色 — test `fullscreen_canvas_is_black`
@@ -22,29 +23,30 @@
 
 ## 2. 尚未視覺驗證的功能（用截圖或 headless test 補）
 - [x] Options 對話窗版面（thumb size / show folders / black background / slideshow delay / clear cache / cache folder）— 截圖 shot36
-- [ ] Explore Folder 對話窗
-- [ ] About 對話窗
+- [x] Explore Folder 對話窗（標題 + 目前路徑有畫出來）— test `about_and_explore_dialogs_render_their_content`
+- [x] About 對話窗（名稱 / 版本 / 快捷鍵說明）— test `about_and_explore_dialogs_render_their_content`
 - [ ] Information 面板的 EXIF 欄位（headless 已測 Name/Path/Dimensions/Format，缺真實 EXIF 內容）
-- [ ] Files 萬用字元篩選（Address 列右側）實際效果
-- [ ] Places 列（Home/Desktop/Documents/...）實際效果
-- [ ] 排序 Name/Date/Size/Type + Reverse 的實際效果
-- [ ] 縮圖尺寸 Small/Medium/Large 切換
-- [ ] 隱藏/顯示 資料夾樹、Preview 面板、工具列
-- [ ] Viewer 的 flip horizontal/vertical、actual size、拖曳平移
-- [ ] 上一個/下一個資料夾（Tab / Shift+Tab）
+- [x] Files 萬用字元篩選（Address 列右側）實際效果：點欄位 → Cmd+A → 輸入 `*.jpg` → 按 Apply，只剩符合的檔 — test `files_filter_applies_from_the_address_row`
+- [x] Places 列（Home/Desktop/Documents/...）實際效果：點 "Macintosh HD" 後 `dir == /` — test `places_row_navigates_to_the_selected_place`
+- [x] 排序 Name/Date/Size/Type + Reverse 的實際效果：View ▸ Sort ▸ by Size 後順序變 a/c/b，再勾 Reverse order 變 b/c/a — test `sort_menu_reorders_the_grid`
+- [x] 縮圖尺寸 Small/Medium/Large 切換（View 選單 → thumb_size 64/120/200）— test `view_menu_toggles_panels_and_thumb_size`
+- [x] 隱藏/顯示 資料夾樹、Preview 面板、工具列、狀態列（View 選單）— test `view_menu_toggles_panels_and_thumb_size`
+- [x] Viewer 的 flip horizontal/vertical（mesh UV 鏡射）、actual size（zoom=1）、fit to window、拖曳平移（pan 變化）— test `viewer_flip_actual_size_and_fit` + `viewer_drag_pans_the_image`
+- [x] 上一個/下一個資料夾（Tab / Shift+Tab）— test `tab_moves_between_sibling_folders`
 
 ## 3. 功能缺口（經典 3.x 版有但這裡沒有）
-- [ ] 對磁碟寫入：Rotate（lossless JPEG rotate）/ Flip 存檔
+範圍決定（2026-10）：只做看圖/瀏覽，不做圖片編輯。下面標「不做」的項目不再實作。
+- [ ] 不做：對磁碟寫入 Rotate（lossless JPEG rotate）/ Flip 存檔 — 屬編輯功能；viewer 內的旋轉/鏡射為檢視用
 - [x] Rename（F2）：`Action::Rename` + Rename 對話窗（父資料夾、文字欄、Rename/Cancel、Enter 送出、Esc 取消），`apply_rename()` 改名後 rescan 並選回新檔 — test `rename_updates_disk_and_selection` + 截圖 shot37
 - [x] Move to / Copy to folder：`Transfer` 對話窗（Edit 選單）、`apply_transfer()` 批次搬移/複製（含多選）、`copy_path()` 遞迴複製 — test `move_and_copy_between_folders` + smoke test 開窗
 - [ ] 從資源回收桶還原（目前只有 trash 丟棄，無 undo）
-- [ ] 圖片編輯最小集：Crop、Resize
-- [ ] Rating / Category（stars + categories，存到 XMP sidecar 或 DB）
-- [ ] Print / 匯出縮圖 contact sheet
+- [ ] 不做：圖片編輯最小集 Crop、Resize
+- [ ] 不做：Rating / Category（stars + categories，存到 XMP sidecar 或 DB）
+- [ ] 不做：Print / 匯出縮圖 contact sheet
 - [x] 記住上次資料夾與視窗大小：`src/state.rs`（key=value，無新依賴），`set_dir` / 視窗 resize 時寫 `~/Library/Application Support/Lumiere/state.ini`，無參數啟動時還原 — test `state_round_trips` + 實測 state.ini 與重啟後標題 `/tmp/lumiere_test`
 - [x] 視窗「位置」保存/還原：存 `outer_rect.min`，啟動後用兩段式 `OuterPosition` 修正（winit 與 AX 的 titlebar 偏移差 42px）— 實測移動到 (340,220) 後重啟，位置精確回到 (340,220)
 - [ ] 拖曳檔案到外部 app（drag out）
-- [ ] 巨集 / batch rename（低優先）
+- [ ] 不做：巨集 / batch rename
 
 ## 4. 工程 / 交付
 - [x] README.md：功能、格式、模組表、快捷鍵表、測試與截圖驗證方式 — 已建立 `README.md`
@@ -52,6 +54,7 @@
 - [x] codesign / notarize 步驟文件：寫在 `bundle.sh` 註解（Developer ID + notarytool 步驟）
 - [x] App icon（.icns）：`examples/make_icon.rs` 畫出 1024px PNG，`bundle.sh` 用 sips + iconutil 產生 `AppIcon.icns` 並寫入 `CFBundleIconFile` — 已確認 bundle 內有 icns 且 app 可啟動；Dock 外觀尚未截圖確認
 - [ ] 用 LaunchServices 開檔（`open -a Lumiere.app foo.jpg`）不會帶 argv，需要處理 Apple Events openFile；目前只能靠 argv 或還原上次資料夾
+      卡點：winit 會把開檔事件收進 `Event::Opened`，但 eframe 0.33 的 run loop 完全不處理這個 event（`grep Opened eframe/egui-winit` 無結果），所以 app 端拿不到；要嘛自己用 objc2 掛 NSApplicationDelegate（會和 winit 的 delegate 打架），要嘛等 eframe 支援
 - [x] 啟動時帶圖片檔路徑會切到該檔所在資料夾並選取該檔 — test `opening_a_file_selects_it`
 - [x] CI（fmt + clippy + test + release + bundle）— `.github/workflows/ci.yml`（macos-latest）；本地已重跑 `cargo clippy --all-targets -- -D warnings` 與 `./bundle.sh dist` 全綠
 - [x] 建立 git repo：`git init -b main` + 首個 commit `566bbaf`（18 files，`dist/` 已加入 .gitignore）— manual `git log --oneline`

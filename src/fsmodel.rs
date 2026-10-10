@@ -7,7 +7,7 @@ use std::time::SystemTime;
 
 use crate::imaging;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SortKey {
     Name,
     Date,

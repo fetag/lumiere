@@ -74,6 +74,7 @@ pub fn tool_button(ui: &mut Ui, glyph: Icon, title: &str, enabled: bool) -> Resp
             Sense::hover()
         },
     );
+    note_rect(ui, title, rect);
     if ui.is_rect_visible(rect) {
         let p = ui.painter();
         let pressed = enabled && response.is_pointer_button_down_on();
@@ -631,4 +632,40 @@ pub fn install_cjk_font(ctx: &egui::Context) {
         ctx.set_fonts(fonts);
         return;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Test-only registry of where labelled controls were drawn, so headless tests
+// can click a control by name instead of guessing coordinates.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+type RectMap = std::collections::HashMap<String, egui::Rect>;
+
+#[cfg(test)]
+fn rect_map_id() -> egui::Id {
+    egui::Id::new("lumiere_test_rects")
+}
+
+#[cfg(test)]
+pub fn note_rect(ui: &Ui, label: &str, rect: egui::Rect) {
+    let label = label.to_owned();
+    ui.ctx().data_mut(|d| {
+        d.get_temp_mut_or_default::<RectMap>(rect_map_id())
+            .insert(label, rect);
+    });
+}
+
+#[cfg(not(test))]
+pub fn note_rect(_ui: &Ui, _label: &str, _rect: egui::Rect) {}
+
+#[cfg(test)]
+pub fn rect_of(ctx: &egui::Context, label: &str) -> Option<egui::Rect> {
+    ctx.data_mut(|d| d.get_temp::<RectMap>(rect_map_id()))
+        .and_then(|map| map.get(label).copied())
+}
+
+#[cfg(test)]
+pub fn clear_rects(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove_temp::<RectMap>(rect_map_id()));
 }
