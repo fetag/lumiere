@@ -1,0 +1,499 @@
+//! Image decoding, thumbnail generation, disk thumbnail cache and file metadata.
+
+use std::fs;
+use std::io::{BufReader, Cursor};
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use image::imageops;
+use image::{ImageFormat, ImageReader, RgbaImage};
+
+#[cfg(target_os = "macos")]
+mod macos;
+
+/// A decoded image in raw RGBA8 form.
+pub struct Decoded {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+    /// True when the RGB channels are already multiplied by alpha.
+    pub premultiplied: bool,
+}
+
+impl Decoded {
+    pub fn from_rgba(rgba: RgbaImage) -> Self {
+        let (width, height) = (rgba.width(), rgba.height());
+        Self {
+            width,
+            height,
+            rgba: rgba.into_raw(),
+            premultiplied: false,
+        }
+    }
+
+    pub fn scaled(&self, max_w: u32, max_h: u32) -> Decoded {
+        if self.width == 0 || self.height == 0 {
+            return Decoded {
+                width: 0,
+                height: 0,
+                rgba: Vec::new(),
+                premultiplied: self.premultiplied,
+            };
+        }
+        let scale = (max_w as f64 / self.width as f64).min(max_h as f64 / self.height as f64);
+        let scale = scale.min(1.0);
+        let w = (self.width as f64 * scale).round().max(1.0) as u32;
+        let h = (self.height as f64 * scale).round().max(1.0) as u32;
+        if w == self.width && h == self.height {
+            return Decoded {
+                width: self.width,
+                height: self.height,
+                rgba: self.rgba.clone(),
+                premultiplied: self.premultiplied,
+            };
+        }
+        let img = RgbaImage::from_raw(self.width, self.height, self.rgba.clone())
+            .expect("rgba buffer size mismatch");
+        let out = imageops::thumbnail(&img, w, h);
+        Decoded::from_rgba(out)
+    }
+}
+
+/// Extensions we know how to display.
+pub const SUPPORTED_EXTS: &[&str] = &[
+    "jpg", "jpeg", "jpe", "jfif", "png", "bmp", "rle", "gif", "webp", "tif", "tiff", "tga", "vda",
+    "icb", "vst", "ico", "cur", "pcx", "qoi", "pnm", "pbm", "pgm", "ppm", "heic", "heif", "hif",
+    "avif",
+];
+
+pub fn extension(path: &Path) -> String {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default()
+}
+
+pub fn is_image(path: &Path) -> bool {
+    let ext = extension(path);
+    !ext.is_empty() && SUPPORTED_EXTS.contains(&ext.as_str())
+}
+
+/// Decode an image, applying EXIF orientation when needed.
+pub fn decode(path: &Path) -> Result<Decoded, String> {
+    let ext = extension(path);
+
+    if ext == "pcx" {
+        return decode_pcx(path);
+    }
+
+    // Native ImageIO first for the formats Apple handles best (HEIC/AVIF/TIFF).
+    #[cfg(target_os = "macos")]
+    {
+        if matches!(ext.as_str(), "heic" | "heif" | "hif" | "avif") {
+            return macos::decode(path).map(|img| apply_orientation(path, img));
+        }
+    }
+
+    match decode_with_image(path) {
+        Ok(img) => Ok(apply_orientation(path, img)),
+        #[cfg(target_os = "macos")]
+        Err(primary) => macos::decode(path)
+            .map(|img| apply_orientation(path, img))
+            .map_err(|fallback| format!("{primary}; {fallback}")),
+        #[cfg(not(target_os = "macos"))]
+        Err(primary) => Err(primary),
+    }
+}
+
+fn decode_with_image(path: &Path) -> Result<Decoded, String> {
+    let img = ImageReader::open(path)
+        .map_err(|e| format!("open failed: {e}"))?
+        .with_guessed_format()
+        .map_err(|e| format!("format failed: {e}"))?
+        .decode()
+        .map_err(|e| format!("decode failed: {e}"))?;
+    Ok(Decoded::from_rgba(img.to_rgba8()))
+}
+
+fn decode_pcx(path: &Path) -> Result<Decoded, String> {
+    let mut reader = pcx::Reader::from_file(path).map_err(|e| format!("pcx: {e}"))?;
+    let (w, h) = reader.dimensions();
+    let (w, h) = (w as u32, h as u32);
+    let mut rgb = vec![0u8; (w as usize) * (h as usize) * 3];
+    reader
+        .read_rgb_pixels(&mut rgb)
+        .map_err(|e| format!("pcx: {e}"))?;
+    let mut rgba = Vec::with_capacity((w as usize) * (h as usize) * 4);
+    for chunk in rgb.chunks_exact(3) {
+        rgba.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
+    }
+    Ok(Decoded {
+        width: w,
+        height: h,
+        rgba,
+        premultiplied: false,
+    })
+}
+
+/// Rotate / flip so that the stored EXIF orientation is baked into the pixels.
+fn apply_orientation(path: &Path, img: Decoded) -> Decoded {
+    let orientation = read_orientation(path).unwrap_or(1);
+    if !(2..=8).contains(&orientation) {
+        return img;
+    }
+    let Some(image) = RgbaImage::from_raw(img.width, img.height, img.rgba.clone()) else {
+        return img;
+    };
+    let image = match orientation {
+        2 => {
+            imageops::flip_horizontal(&image);
+            image
+        }
+        3 => imageops::rotate180(&image),
+        4 => {
+            imageops::flip_vertical(&image);
+            image
+        }
+        5 => {
+            imageops::flip_horizontal(&image);
+            imageops::rotate90(&image)
+        }
+        6 => imageops::rotate90(&image),
+        7 => {
+            imageops::flip_horizontal(&image);
+            imageops::rotate270(&image)
+        }
+        8 => imageops::rotate270(&image),
+        _ => image,
+    };
+    Decoded::from_rgba(image)
+}
+
+fn read_orientation(path: &Path) -> Option<u32> {
+    use exif::{In, Reader, Tag, Value};
+    let file = fs::File::open(path).ok()?;
+    let mut reader = BufReader::new(file);
+    let exif = Reader::new().read_from_container(&mut reader).ok()?;
+    let field = exif.get_field(Tag::Orientation, In::PRIMARY)?;
+    match &field.value {
+        Value::Short(values) => values.first().map(|v| u32::from(*v)),
+        _ => None,
+    }
+}
+
+/// Metadata shown in the information pane.
+#[derive(Clone)]
+pub struct Info {
+    pub format: String,
+    pub exif: Vec<(String, String)>,
+}
+
+pub fn info(path: &Path) -> Info {
+    let mut format = extension(path).to_uppercase();
+    if let Ok(reader) = ImageReader::open(path).and_then(|r| r.with_guessed_format()) {
+        if let Some(fmt) = reader.format() {
+            format = format!("{fmt:?}").to_uppercase();
+        }
+    }
+    Info {
+        format,
+        exif: exif_summary(path),
+    }
+}
+
+pub fn exif_summary(path: &Path) -> Vec<(String, String)> {
+    use exif::{In, Reader, Tag};
+
+    let Ok(file) = fs::File::open(path) else {
+        return Vec::new();
+    };
+    let mut reader = BufReader::new(file);
+    let Ok(exif) = Reader::new().read_from_container(&mut reader) else {
+        return Vec::new();
+    };
+
+    let wanted = [
+        (Tag::Make, "Make"),
+        (Tag::Model, "Model"),
+        (Tag::Software, "Software"),
+        (Tag::DateTimeOriginal, "Date/Time"),
+        (Tag::ExposureTime, "Exposure"),
+        (Tag::FNumber, "F-number"),
+        (Tag::ISOSpeed, "ISO"),
+        (Tag::FocalLength, "Focal length"),
+        (Tag::Flash, "Flash"),
+        (Tag::WhiteBalance, "White balance"),
+        (Tag::MeteringMode, "Metering"),
+        (Tag::ExposureProgram, "Exposure program"),
+        (Tag::ExposureBiasValue, "Exposure bias"),
+        (Tag::LensModel, "Lens"),
+        (Tag::Artist, "Artist"),
+        (Tag::ImageDescription, "Description"),
+        (Tag::Orientation, "Orientation"),
+    ];
+
+    let mut out = Vec::new();
+    for (tag, label) in wanted {
+        if let Some(field) = exif.get_field(tag, In::PRIMARY) {
+            let value = field.display_value().to_string();
+            let value = value.trim_matches('"').to_string();
+            if !value.is_empty() {
+                out.push((label.to_string(), value));
+            }
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// On-disk thumbnail cache (the classic "thumbnail database" idea)
+// ---------------------------------------------------------------------------
+
+pub fn cache_root() -> PathBuf {
+    let base = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
+    base.join("Lumiere").join("thumbs")
+}
+
+fn fnv1a(bytes: &[u8], seed: u64) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325 ^ seed;
+    for b in bytes {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+fn cache_key(path: &Path, size: u32) -> PathBuf {
+    let lossy = path.to_string_lossy();
+    let mtime = fs::metadata(path)
+        .and_then(|m| m.modified())
+        .map(|t| {
+            t.duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        })
+        .unwrap_or(0);
+    let h = fnv1a(lossy.as_bytes(), mtime);
+    PathBuf::from(format!("{h:016x}_{size}.png"))
+}
+
+pub fn cached_thumbnail(path: &Path, size: u32) -> Option<PathBuf> {
+    let p = cache_root().join(cache_key(path, size));
+    p.exists().then_some(p)
+}
+
+pub fn store_thumbnail(path: &Path, size: u32, img: &Decoded) {
+    let dir = cache_root();
+    let _ = fs::create_dir_all(&dir);
+    let Some(rgba) = RgbaImage::from_raw(img.width, img.height, img.rgba.clone()) else {
+        return;
+    };
+    let mut buf = Cursor::new(Vec::new());
+    if rgba.write_to(&mut buf, ImageFormat::Png).is_err() {
+        return;
+    }
+    let _ = fs::write(dir.join(cache_key(path, size)), buf.into_inner());
+}
+
+pub fn read_cached_thumbnail(file: &Path) -> Option<Decoded> {
+    let img = image::open(file).ok()?;
+    Some(Decoded::from_rgba(img.to_rgba8()))
+}
+
+/// Delete the oldest cached thumbnails until the cache fits in `max_bytes`.
+/// Returns the number of files removed.
+pub fn prune_cache(dir: &Path, max_bytes: u64) -> std::io::Result<u64> {
+    let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
+    let mut total = 0u64;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else { continue };
+            let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+            total += meta.len();
+            files.push((mtime, meta.len(), path));
+        }
+    }
+    if total <= max_bytes {
+        return Ok(0);
+    }
+    files.sort_by_key(|(mtime, _, _)| *mtime);
+    let mut removed = 0u64;
+    for (_, size, path) in files {
+        if total <= max_bytes {
+            break;
+        }
+        if fs::remove_file(&path).is_ok() {
+            total -= size;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+pub fn prune_thumbnail_cache(max_bytes: u64) -> std::io::Result<u64> {
+    prune_cache(&cache_root(), max_bytes)
+}
+
+pub fn clear_thumbnail_cache() -> std::io::Result<u64> {
+    let dir = cache_root();
+    let mut count = 0u64;
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            if entry
+                .path()
+                .extension()
+                .map(|e| e == "png")
+                .unwrap_or(false)
+                && fs::remove_file(entry.path()).is_ok()
+            {
+                count += 1;
+            }
+        }
+    }
+    Ok(count)
+}
+
+pub fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} {}", UNITS[unit])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+pub fn format_time(time: SystemTime) -> String {
+    chrono::DateTime::<chrono::Local>::from(time)
+        .format("%Y/%m/%d %H:%M:%S")
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_png(path: &Path, w: u32, h: u32) {
+        let mut img = RgbaImage::new(w, h);
+        for (x, y, pixel) in img.enumerate_pixels_mut() {
+            *pixel = image::Rgba([
+                (x % 255) as u8,
+                (y % 255) as u8,
+                128,
+                if (x + y) % 7 == 0 { 0 } else { 255 },
+            ]);
+        }
+        img.save(path).unwrap();
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("lumiere_img_test_{tag}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn decodes_png_and_reports_size() {
+        let dir = temp_dir("png");
+        let path = dir.join("shot.png");
+        write_png(&path, 40, 24);
+        let decoded = decode(&path).expect("png decode");
+        assert_eq!((decoded.width, decoded.height), (40, 24));
+        assert_eq!(decoded.rgba.len(), 40 * 24 * 4);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn scaled_keeps_aspect_ratio_and_never_upscales() {
+        let dir = temp_dir("scale");
+        let path = dir.join("wide.png");
+        write_png(&path, 200, 100);
+        let decoded = decode(&path).unwrap();
+        let small = decoded.scaled(50, 50);
+        assert_eq!((small.width, small.height), (50, 25));
+        let same = decoded.scaled(800, 800);
+        assert_eq!((same.width, same.height), (200, 100));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn thumbnail_cache_round_trip() {
+        let dir = temp_dir("cache");
+        let path = dir.join("cached.png");
+        write_png(&path, 120, 80);
+        let decoded = decode(&path).unwrap();
+        let thumb = decoded.scaled(32, 32);
+        assert!(cached_thumbnail(&path, 32).is_none());
+        store_thumbnail(&path, 32, &thumb);
+        let file = cached_thumbnail(&path, 32).expect("cache entry");
+        let reread = read_cached_thumbnail(&file).expect("cache read");
+        assert_eq!((reread.width, reread.height), (32, 21));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn supported_extensions_cover_classic_formats() {
+        assert!(is_image(Path::new("/tmp/a.HEIC")));
+        assert!(is_image(Path::new("/tmp/a.pcx")));
+        assert!(is_image(Path::new("/tmp/a.tga")));
+        assert!(!is_image(Path::new("/tmp/a.txt")));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn imageio_decodes_heic_when_available() {
+        let candidate = std::fs::read_dir("/System/Library/Desktop Pictures")
+            .ok()
+            .and_then(|entries| {
+                entries
+                    .flatten()
+                    .map(|e| e.path())
+                    .find(|p| extension(p) == "heic")
+            });
+        let Some(path) = candidate else {
+            return;
+        };
+        let decoded = decode(&path).expect("heic decode");
+        assert!(decoded.width > 32 && decoded.height > 32);
+        assert_eq!(
+            decoded.rgba.len(),
+            decoded.width as usize * decoded.height as usize * 4
+        );
+    }
+    #[test]
+    fn prune_cache_removes_oldest_first() {
+        let dir = std::env::temp_dir().join("lumiere_prune_test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        for name in ["a.png", "b.png", "c.png"] {
+            fs::write(dir.join(name), vec![0u8; 1000]).unwrap();
+        }
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        fs::File::open(dir.join("a.png"))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+
+        assert_eq!(prune_cache(&dir, 2500).unwrap(), 1);
+        assert!(!dir.join("a.png").exists());
+        assert!(dir.join("b.png").exists());
+        assert!(dir.join("c.png").exists());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+}

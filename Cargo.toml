@@ -1,0 +1,41 @@
+[package]
+name = "lumiere"
+version = "0.1.0"
+edition = "2021"
+description = "A classic 3.x style image browser / viewer for macOS, written in Rust"
+
+[dependencies]
+chrono = "0.4.45"
+dirs = "7.0.0"
+eframe = "0.33.3"
+image = { version = "0.25", default-features = false, features = [
+    "bmp",
+    "gif",
+    "ico",
+    "jpeg",
+    "png",
+    "pnm",
+    "qoi",
+    "tga",
+    "tiff",
+    "webp",
+] }
+egui = "0.33.3"
+kamadak-exif = "0.6.1"
+log = "0.4"
+pcx = "0.2.5"
+trash = "5"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.5"
+objc2-core-foundation = "0.3.2"
+objc2-core-graphics = { version = "0.3.2", features = [
+    "CGContext",
+    "CGImage",
+    "CGColorSpace",
+] }
+objc2-image-io = "0.3.2"
+
+[profile.release]
+opt-level = 2
+lto = "thin"

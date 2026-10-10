@@ -1,0 +1,232 @@
+//! The single image viewer: zoom, pan, rotate, flip, full screen and slideshow.
+
+use egui::epaint::Vertex;
+use egui::{
+    pos2, vec2, Align2, Color32, FontId, Mesh, Pos2, Rect, Sense, Shape, TextureId, Ui, Vec2,
+};
+
+use crate::app::{Action, App};
+use crate::classic::{self, Icon};
+use crate::loader::Kind;
+
+pub fn view(app: &mut App, ui: &mut Ui) {
+    let Some(path) = app.current_image_path() else {
+        let rect = ui.available_rect_before_wrap();
+        ui.painter().text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            "No image selected",
+            FontId::proportional(14.0),
+            Color32::WHITE,
+        );
+        return;
+    };
+
+    let cached = app
+        .caches
+        .full(&path)
+        .map(|entry| (entry.texture.id(), entry.width, entry.height));
+    if cached.is_none() {
+        app.caches.request(&app.loader, Kind::Full, &path, 0);
+    }
+
+    let canvas = ui.available_rect_before_wrap();
+    let response = ui.allocate_rect(canvas, Sense::click_and_drag());
+
+    let Some((texture, width, height)) = cached else {
+        ui.painter().text(
+            canvas.center(),
+            Align2::CENTER_CENTER,
+            "Loading...",
+            FontId::proportional(14.0),
+            Color32::WHITE,
+        );
+        draw_toolbar(app, ui, canvas);
+        return;
+    };
+
+    // ---- interaction ------------------------------------------------------
+
+    let rotated = app.rotation % 180 != 0;
+    let (base_w, base_h) = if rotated {
+        (height as f32, width as f32)
+    } else {
+        (width as f32, height as f32)
+    };
+    let fit_zoom = (canvas.width() / base_w)
+        .min(canvas.height() / base_h)
+        .max(0.001);
+
+    if response.dragged() {
+        app.pan += response.drag_delta();
+        app.fit = false;
+    }
+    if response.double_clicked() {
+        app.fit = !app.fit;
+        app.pan = Vec2::ZERO;
+    }
+
+    let scroll: f32 = ui.input(|i| i.raw_scroll_delta.y);
+    if scroll.abs() > 0.0 {
+        let old_zoom = if app.fit { fit_zoom } else { app.zoom };
+        let factor = (1.0f32 + scroll.abs() * 0.0015).powf(if scroll > 0.0 { 1.0 } else { -1.0 });
+        let new_zoom = (old_zoom * factor).clamp(0.01, 64.0);
+        if let Some(pointer) = ui.input(|i| i.pointer.hover_pos()) {
+            let center = canvas.center() + app.pan;
+            let k = new_zoom / old_zoom;
+            let new_center = pointer - (pointer - center) * k;
+            app.pan = new_center - canvas.center();
+        }
+        app.zoom = new_zoom;
+        app.fit = false;
+    }
+
+    let zoom = if app.fit {
+        app.zoom = fit_zoom;
+        fit_zoom
+    } else {
+        app.zoom
+    };
+
+    // ---- draw -------------------------------------------------------------
+
+    let center = canvas.center() + app.pan;
+    paint_rotated(
+        ui.painter(),
+        texture,
+        center,
+        vec2(width as f32 * zoom, height as f32 * zoom),
+        app.rotation as f32,
+        app.flip_h,
+        app.flip_v,
+    );
+
+    draw_toolbar(app, ui, canvas);
+
+    let label = format!(
+        "{}  {} x {}  {:.0}%{}",
+        path.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+        width,
+        height,
+        zoom * 100.0,
+        if app.slideshow { "  [slideshow]" } else { "" }
+    );
+    ui.painter().text(
+        pos2(canvas.right() - 8.0, canvas.bottom() - 8.0),
+        Align2::RIGHT_BOTTOM,
+        label,
+        FontId::proportional(12.0),
+        if app.canvas_dark {
+            Color32::from_gray(200)
+        } else {
+            Color32::WHITE
+        },
+    );
+}
+
+fn paint_rotated(
+    painter: &egui::Painter,
+    texture: TextureId,
+    center: Pos2,
+    size: Vec2,
+    degrees: f32,
+    flip_h: bool,
+    flip_v: bool,
+) {
+    let angle = degrees.to_radians();
+    let (cos, sin) = (angle.cos(), angle.sin());
+    let half = size / 2.0;
+
+    let corners = [
+        pos2(center.x - half.x, center.y - half.y),
+        pos2(center.x + half.x, center.y - half.y),
+        pos2(center.x - half.x, center.y + half.y),
+        pos2(center.x + half.x, center.y + half.y),
+    ];
+    let rotated: Vec<Pos2> = corners
+        .iter()
+        .map(|p| {
+            let dx = p.x - center.x;
+            let dy = p.y - center.y;
+            pos2(
+                center.x + dx * cos - dy * sin,
+                center.y + dx * sin + dy * cos,
+            )
+        })
+        .collect();
+
+    let mut uv: [Pos2; 4] = [
+        pos2(0.0, 0.0),
+        pos2(1.0, 0.0),
+        pos2(0.0, 1.0),
+        pos2(1.0, 1.0),
+    ];
+    for uv in uv.iter_mut() {
+        if flip_h {
+            uv.x = 1.0 - uv.x;
+        }
+        if flip_v {
+            uv.y = 1.0 - uv.y;
+        }
+    }
+
+    let mut mesh = Mesh::with_texture(texture);
+    for (pos, uv) in rotated.iter().zip(uv.iter()) {
+        mesh.vertices.push(Vertex {
+            pos: *pos,
+            uv: *uv,
+            color: Color32::WHITE,
+        });
+    }
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(2, 1, 3);
+    painter.add(Shape::mesh(mesh));
+}
+
+/// Floating classic toolbar plus navigation, drawn on top of the canvas.
+fn draw_toolbar(app: &mut App, ui: &mut Ui, canvas: Rect) {
+    let buttons: [(Icon, &str, Action, bool); 12] = [
+        (Icon::First, "First", Action::FirstImage, true),
+        (Icon::Prev, "Previous", Action::PrevImage, true),
+        (Icon::Next, "Next", Action::NextImage, true),
+        (Icon::Last, "Last", Action::LastImage, true),
+        (Icon::ZoomOut, "Zoom out", Action::ZoomOut, true),
+        (Icon::ZoomIn, "Zoom in", Action::ZoomIn, true),
+        (Icon::Fit, "Fit to window", Action::FitWindow, true),
+        (Icon::Actual, "Actual size", Action::ActualSize, true),
+        (Icon::RotateLeft, "Rotate left", Action::RotateCCW, true),
+        (Icon::RotateRight, "Rotate right", Action::RotateCW, true),
+        (
+            Icon::Stop,
+            "Stop slideshow",
+            Action::StopSlideshow,
+            app.slideshow,
+        ),
+        (Icon::Browser, "Back to browser", Action::CloseViewer, true),
+    ];
+
+    let width = buttons.len() as f32 * 32.0 + 12.0;
+    let rect = Rect::from_min_size(
+        pos2(canvas.left() + 8.0, canvas.bottom() - 40.0),
+        vec2(width, 32.0),
+    );
+    ui.painter().rect_filled(rect, 0, classic::FACE);
+    classic::bevel_raised(ui.painter(), rect);
+
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink(4.0))
+            .layout(egui::Layout::left_to_right(egui::Align::Center))
+            .id_salt("viewer_toolbar"),
+    );
+    let ctx = ui.ctx().clone();
+    let mut actions: Vec<Action> = Vec::new();
+    for (glyph, title, action, enabled) in buttons {
+        if classic::tool_button(&mut child, glyph, title, enabled).clicked() {
+            actions.push(action);
+        }
+    }
+    for action in actions {
+        app.act(action, &ctx);
+    }
+}

@@ -1,0 +1,66 @@
+# Lumiere TODO
+
+規則：每完成一項就把 `[ ]` 改成 `[x]`，並在該項後面標註驗證方式（test / screenshot / manual）。
+新發現的工作請加到對應區塊，不要只記在對話裡。
+
+環境提醒：
+- `export PATH="$HOME/.cargo/bin:$PATH"`（cargo 不在預設 PATH）
+- 檢查指令：`cargo fmt --check && cargo clippy --all-targets && cargo test && cargo build --release`
+- 視覺驗證：`./target/release/lumiere /tmp/lumiere_demo`，視窗定位 `osascript ... set position of window 1 to {60,60}`，截圖 `screencapture -x -R 60,60,1120,772 /tmp/shotN.png`
+- 鍵盤驅動測試可用 `osascript -e 'tell application "System Events" to key code ...'`；`click at` 對 egui 視窗無效（沒有原生 AX 元素）
+
+## 1. Bug / 已知問題
+- [x] 全螢幕 / slideshow 背景是灰色而非黑色：`canvas_color()` 改為 `canvas_dark || fullscreen` 時用黑色 — test `fullscreen_canvas_is_black`
+- [x] Slideshow 開頭卡在 "Loading..."：進入 viewer/slideshow 與換圖時呼叫 `Loader::purge_thumbs()`，清掉佇列中的縮圖工作 — 實測按 Space 開 viewer 後 1.5s 內顯示全圖（shot35）
+- [x] `Action::Delete` 只處理圖片：改為以 `current()` 的 entry 作為目標，對話窗文案依 `is_dir()` 顯示 file/folder — test `delete_action_targets_folders_too`
+- [ ] 多選 / Shift 範圍選取 / 右鍵選單只有 headless 層面驗證過，缺滑鼠實測（目前環境無法送滑鼠事件）
+- [ ] Cmd+Click / Shift+Click 的多選依賴 `ui.input(|i| i.modifiers)`，而按鍵事件已證實 `i.modifiers` 可能為 NONE；需確認滑鼠事件路徑是否正確（必要時改用 pointer event 自帶的 modifiers）
+- [x] 選單項目可用鍵盤直達：新增 Cmd+, (Options) 與 Cmd+I (Properties)，選單標籤已顯示快捷鍵 — test `menu_shortcuts_open_dialogs` + 截圖 shot36
+- [ ] 選單列本身仍無法用鍵盤展開（無 Alt+字母 mnemonic）；目前靠直達快捷鍵繞過
+
+## 2. 尚未視覺驗證的功能（用截圖或 headless test 補）
+- [x] Options 對話窗版面（thumb size / show folders / black background / slideshow delay / clear cache / cache folder）— 截圖 shot36
+- [ ] Explore Folder 對話窗
+- [ ] About 對話窗
+- [ ] Information 面板的 EXIF 欄位（headless 已測 Name/Path/Dimensions/Format，缺真實 EXIF 內容）
+- [ ] Files 萬用字元篩選（Address 列右側）實際效果
+- [ ] Places 列（Home/Desktop/Documents/...）實際效果
+- [ ] 排序 Name/Date/Size/Type + Reverse 的實際效果
+- [ ] 縮圖尺寸 Small/Medium/Large 切換
+- [ ] 隱藏/顯示 資料夾樹、Preview 面板、工具列
+- [ ] Viewer 的 flip horizontal/vertical、actual size、拖曳平移
+- [ ] 上一個/下一個資料夾（Tab / Shift+Tab）
+
+## 3. 功能缺口（經典 3.x 版有但這裡沒有）
+- [ ] 對磁碟寫入：Rotate（lossless JPEG rotate）/ Flip 存檔
+- [x] Rename（F2）：`Action::Rename` + Rename 對話窗（父資料夾、文字欄、Rename/Cancel、Enter 送出、Esc 取消），`apply_rename()` 改名後 rescan 並選回新檔 — test `rename_updates_disk_and_selection` + 截圖 shot37
+- [x] Move to / Copy to folder：`Transfer` 對話窗（Edit 選單）、`apply_transfer()` 批次搬移/複製（含多選）、`copy_path()` 遞迴複製 — test `move_and_copy_between_folders` + smoke test 開窗
+- [ ] 從資源回收桶還原（目前只有 trash 丟棄，無 undo）
+- [ ] 圖片編輯最小集：Crop、Resize
+- [ ] Rating / Category（stars + categories，存到 XMP sidecar 或 DB）
+- [ ] Print / 匯出縮圖 contact sheet
+- [x] 記住上次資料夾與視窗大小：`src/state.rs`（key=value，無新依賴），`set_dir` / 視窗 resize 時寫 `~/Library/Application Support/Lumiere/state.ini`，無參數啟動時還原 — test `state_round_trips` + 實測 state.ini 與重啟後標題 `/tmp/lumiere_test`
+- [x] 視窗「位置」保存/還原：存 `outer_rect.min`，啟動後用兩段式 `OuterPosition` 修正（winit 與 AX 的 titlebar 偏移差 42px）— 實測移動到 (340,220) 後重啟，位置精確回到 (340,220)
+- [ ] 拖曳檔案到外部 app（drag out）
+- [ ] 巨集 / batch rename（低優先）
+
+## 4. 工程 / 交付
+- [x] README.md：功能、格式、模組表、快捷鍵表、測試與截圖驗證方式 — 已建立 `README.md`
+- [x] `.app` bundle 打包：`./bundle.sh`（Info.plist、CFBundleDocumentTypes、ad-hoc codesign）— 實測 `open build/Lumiere.app` 可啟動並還原上次資料夾
+- [x] codesign / notarize 步驟文件：寫在 `bundle.sh` 註解（Developer ID + notarytool 步驟）
+- [x] App icon（.icns）：`examples/make_icon.rs` 畫出 1024px PNG，`bundle.sh` 用 sips + iconutil 產生 `AppIcon.icns` 並寫入 `CFBundleIconFile` — 已確認 bundle 內有 icns 且 app 可啟動；Dock 外觀尚未截圖確認
+- [ ] 用 LaunchServices 開檔（`open -a Lumiere.app foo.jpg`）不會帶 argv，需要處理 Apple Events openFile；目前只能靠 argv 或還原上次資料夾
+- [x] 啟動時帶圖片檔路徑會切到該檔所在資料夾並選取該檔 — test `opening_a_file_selects_it`
+- [x] CI（fmt + clippy + test + release + bundle）— `.github/workflows/ci.yml`（macos-latest）；注意此目錄尚未 `git init`
+- [ ] 尚未建立 git repo / 遠端，CI 實際不會跑
+- [ ] 大資料夾效能：1000+ 檔案時的縮圖佇列與記憶體上限
+- [x] 磁碟縮圖快取上限：`imaging::prune_cache()` 依 mtime 刪最舊直到 <512MB，啟動時呼叫 — test `prune_cache_removes_oldest_first`
+
+## 5. 已完成（本輪）
+- [x] 鍵盤選取後捲動到選取項（End/Home/方向鍵）— 截圖 shot15/shot17
+- [x] Cmd 快捷鍵失效修正（改用事件自帶 modifiers，Shift 變體優先匹配）— test `command_shortcuts_read_event_modifiers` + 實測 Cmd+F `AXFullScreen=true`
+- [x] 新增 Cmd+F 全螢幕快捷鍵 — 截圖 shot29
+- [x] Escape 關閉 Confirm Delete / Options / About / Explore — test `escape_closes_open_dialogs` + 截圖 shot22
+- [x] Slideshow / Open Viewer 選到資料夾時自動跳到第一張圖片 — test `slideshow_starts_from_first_image_when_folder_selected` + 截圖 shot31
+- [x] Information 面板 headless 測試 — test `information_tab_lists_file_metadata`
+- [x] 工具列直排修正、Rotate/Browser 圖示、CJK 字型 — 截圖 shot11~shot17
