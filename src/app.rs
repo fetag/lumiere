@@ -10,7 +10,7 @@ use egui::{Context, TextureHandle, TextureOptions, Vec2};
 use crate::classic::{self, Icon};
 use crate::fsmodel::{self, Entry, SortKey, TreeModel};
 use crate::imaging::{self, Info};
-use crate::loader::{Kind, Loader};
+use crate::loader::{Kind, Loader, Request};
 
 pub const APP_TITLE: &str = "Lumiere";
 
@@ -49,11 +49,21 @@ pub struct Caches {
     thumbs_order: VecDeque<(PathBuf, u32)>,
     fulls: HashMap<PathBuf, FullEntry>,
     fulls_order: VecDeque<PathBuf>,
+    thumb_bytes: usize,
+    full_bytes: usize,
     pub pending: HashSet<(Kind, PathBuf, u32)>,
 }
 
 const MAX_THUMBS: usize = 4000;
 const MAX_FULLS: usize = 6;
+/// Resident RGBA budgets, so a folder with thousands of images cannot grow the
+/// texture cache without bound.
+const MAX_THUMB_BYTES: usize = 96 * 1024 * 1024;
+const MAX_FULL_BYTES: usize = 192 * 1024 * 1024;
+
+fn rgba_bytes(width: u32, height: u32) -> usize {
+    width as usize * height as usize * 4
+}
 
 impl Caches {
     pub fn thumb(&self, path: &Path, size: u32) -> Option<&ThumbEntry> {
@@ -62,6 +72,15 @@ impl Caches {
 
     pub fn full(&self, path: &Path) -> Option<&FullEntry> {
         self.fulls.get(path)
+    }
+
+    /// Requests dropped by the loader never come back as replies, so their
+    /// pending markers must be released or the paths are never decoded again.
+    pub fn abandon(&mut self, dropped: &[Request]) {
+        for request in dropped {
+            self.pending
+                .remove(&(request.kind, request.path.clone(), request.size));
+        }
     }
 
     pub fn request(&mut self, loader: &Loader, kind: Kind, path: &Path, size: u32) {
@@ -125,6 +144,13 @@ impl Caches {
             match request.kind {
                 Kind::Thumb | Kind::Preview => {
                     let key = (request.path.clone(), request.size);
+                    if let Some(old) = self.thumbs.remove(&key) {
+                        self.thumb_bytes -= rgba_bytes(old.width, old.height);
+                        if let Some(at) = self.thumbs_order.iter().position(|k| *k == key) {
+                            self.thumbs_order.remove(at);
+                        }
+                    }
+                    self.thumb_bytes += rgba_bytes(width, height);
                     self.thumbs_order.push_back(key.clone());
                     self.thumbs.insert(
                         key,
@@ -137,9 +163,17 @@ impl Caches {
                 }
                 Kind::Full => {
                     let info = imaging::info(&request.path);
-                    self.fulls_order.push_back(request.path.clone());
+                    let key = request.path.clone();
+                    if let Some(old) = self.fulls.remove(&key) {
+                        self.full_bytes -= rgba_bytes(old.width, old.height);
+                        if let Some(at) = self.fulls_order.iter().position(|k| *k == key) {
+                            self.fulls_order.remove(at);
+                        }
+                    }
+                    self.full_bytes += rgba_bytes(width, height);
+                    self.fulls_order.push_back(key.clone());
                     self.fulls.insert(
-                        request.path.clone(),
+                        key,
                         FullEntry {
                             texture,
                             width,
@@ -155,14 +189,20 @@ impl Caches {
     }
 
     fn trim(&mut self) {
-        while self.thumbs_order.len() > MAX_THUMBS {
-            if let Some(key) = self.thumbs_order.pop_front() {
-                self.thumbs.remove(&key);
+        while self.thumbs_order.len() > MAX_THUMBS || self.thumb_bytes > MAX_THUMB_BYTES {
+            let Some(key) = self.thumbs_order.pop_front() else {
+                break;
+            };
+            if let Some(old) = self.thumbs.remove(&key) {
+                self.thumb_bytes -= rgba_bytes(old.width, old.height);
             }
         }
-        while self.fulls_order.len() > MAX_FULLS {
-            if let Some(key) = self.fulls_order.pop_front() {
-                self.fulls.remove(&key);
+        while self.fulls_order.len() > MAX_FULLS || self.full_bytes > MAX_FULL_BYTES {
+            let Some(key) = self.fulls_order.pop_front() else {
+                break;
+            };
+            if let Some(old) = self.fulls.remove(&key) {
+                self.full_bytes -= rgba_bytes(old.width, old.height);
             }
         }
     }
@@ -170,6 +210,7 @@ impl Caches {
     pub fn clear_thumbs(&mut self) {
         self.thumbs.clear();
         self.thumbs_order.clear();
+        self.thumb_bytes = 0;
     }
 }
 
@@ -408,7 +449,8 @@ impl App {
         self.anchor = self.selected;
         self.multi.clear();
         self.path_edit = self.dir.display().to_string();
-        self.loader.bump_generation();
+        let (_, dropped) = self.loader.bump_generation();
+        self.caches.abandon(&dropped);
     }
 
     pub fn set_dir(&mut self, dir: PathBuf) {
@@ -579,13 +621,15 @@ impl App {
             }
             Action::NextImage => {
                 if self.mode == Mode::Viewer {
-                    self.loader.purge_thumbs();
+                    let dropped = self.loader.purge_thumbs();
+                    self.caches.abandon(&dropped);
                 }
                 self.step_image(1);
             }
             Action::PrevImage => {
                 if self.mode == Mode::Viewer {
-                    self.loader.purge_thumbs();
+                    let dropped = self.loader.purge_thumbs();
+                    self.caches.abandon(&dropped);
                 }
                 self.step_image(-1);
             }
@@ -595,7 +639,8 @@ impl App {
                 self.ensure_image_selected();
                 if self.current_image_path().is_some() {
                     self.mode = Mode::Viewer;
-                    self.loader.purge_thumbs();
+                    let dropped = self.loader.purge_thumbs();
+                    self.caches.abandon(&dropped);
                     self.fit = true;
                     self.pan = Vec2::ZERO;
                 }
@@ -633,7 +678,8 @@ impl App {
                 }
                 self.ensure_image_selected();
                 self.mode = Mode::Viewer;
-                self.loader.purge_thumbs();
+                let dropped = self.loader.purge_thumbs();
+                self.caches.abandon(&dropped);
                 self.slideshow = true;
                 self.slideshow_at = Instant::now();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
@@ -835,7 +881,8 @@ impl App {
                 self.act(Action::StopSlideshow, ctx);
                 self.notify("Slideshow finished");
             } else {
-                self.loader.purge_thumbs();
+                let dropped = self.loader.purge_thumbs();
+                self.caches.abandon(&dropped);
                 self.step_image(1);
             }
         }
@@ -1343,7 +1390,8 @@ impl App {
         if clear_cache {
             let removed = imaging::clear_thumbnail_cache().unwrap_or(0);
             self.caches.clear_thumbs();
-            self.loader.bump_generation();
+            let (_, dropped) = self.loader.bump_generation();
+            self.caches.abandon(&dropped);
             self.notify(format!("Cleared {removed} cached thumbnail(s)"));
         }
         if rescan {
@@ -2135,6 +2183,80 @@ mod tests {
         assert!(other.join("two.png").exists());
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn purged_thumbnail_work_clears_the_pending_marker() {
+        let loader = Loader::new(0);
+        let mut caches = Caches::default();
+        let path = Path::new("/tmp/lumiere_pending.png");
+
+        caches.request(&loader, Kind::Thumb, path, 100);
+        assert_eq!(loader.queued(), 1);
+
+        let dropped = loader.purge_thumbs();
+        caches.abandon(&dropped);
+        assert_eq!(loader.queued(), 0);
+        assert!(caches.pending.is_empty());
+
+        caches.request(&loader, Kind::Thumb, path, 100);
+        assert_eq!(loader.queued(), 1);
+        loader.shutdown();
+    }
+
+    #[test]
+    fn stale_generation_work_is_dropped_and_releasable() {
+        let loader = Loader::new(0);
+        let mut caches = Caches::default();
+
+        caches.request(
+            &loader,
+            Kind::Preview,
+            Path::new("/tmp/lumiere_stale.png"),
+            100,
+        );
+        let (generation, dropped) = loader.bump_generation();
+        assert_eq!(generation, 2);
+        assert_eq!(dropped.len(), 1);
+
+        caches.abandon(&dropped);
+        assert!(caches.pending.is_empty());
+        loader.shutdown();
+    }
+
+    #[test]
+    fn thumb_cache_evicts_to_stay_within_budget() {
+        let ctx = egui::Context::default();
+        let mut caches = Caches::default();
+        let image = egui::ColorImage::filled([1000, 1000], egui::Color32::WHITE);
+
+        for index in 0..60 {
+            let texture =
+                ctx.load_texture(format!("thumb{index}"), image.clone(), Default::default());
+            let key = (
+                PathBuf::from(format!("/tmp/lumiere_budget_{index}.png")),
+                100,
+            );
+            caches.thumb_bytes += rgba_bytes(1000, 1000);
+            caches.thumbs_order.push_back(key.clone());
+            caches.thumbs.insert(
+                key,
+                ThumbEntry {
+                    texture,
+                    width: 1000,
+                    height: 1000,
+                },
+            );
+        }
+        caches.trim();
+
+        let expected = MAX_THUMB_BYTES / rgba_bytes(1000, 1000);
+        assert_eq!(caches.thumbs.len(), expected);
+        assert_eq!(caches.thumbs_order.len(), expected);
+        assert!(caches.thumb_bytes <= MAX_THUMB_BYTES);
+        assert!(caches
+            .thumbs
+            .contains_key(&(PathBuf::from("/tmp/lumiere_budget_59.png"), 100)));
     }
 
     fn painted_text(shapes: &[egui::epaint::ClippedShape]) -> String {

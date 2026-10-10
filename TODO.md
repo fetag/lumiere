@@ -12,6 +12,7 @@
 ## 1. Bug / 已知問題
 - [x] 全螢幕 / slideshow 背景是灰色而非黑色：`canvas_color()` 改為 `canvas_dark || fullscreen` 時用黑色 — test `fullscreen_canvas_is_black`
 - [x] Slideshow 開頭卡在 "Loading..."：進入 viewer/slideshow 與換圖時呼叫 `Loader::purge_thumbs()`，清掉佇列中的縮圖工作 — 實測按 Space 開 viewer 後 1.5s 內顯示全圖（shot35）
+- [x] 承上：被 purge 掉的佇列工作永遠不會回 reply，`Caches::pending` 的標記會永久卡住那些檔案（回到 browser 後縮圖再也不會載入）— `purge_thumbs()` / `bump_generation()` 現在回傳被丟掉的 `Request`，`Caches::abandon()` 清掉標記 — test `purged_thumbnail_work_clears_the_pending_marker` + `stale_generation_work_is_dropped_and_releasable`
 - [x] `Action::Delete` 只處理圖片：改為以 `current()` 的 entry 作為目標，對話窗文案依 `is_dir()` 顯示 file/folder — test `delete_action_targets_folders_too`
 - [ ] 多選 / Shift 範圍選取 / 右鍵選單只有 headless 層面驗證過，缺滑鼠實測（目前環境無法送滑鼠事件）
       註：headless 已可合成滑鼠事件（`PointerMoved` 一幀 + 下一幀 press/release，且 `RawInput.time` 要遞增，否則 egui 會把相鄰兩次點擊判成 double click）
@@ -55,7 +56,7 @@
 - [x] CI（fmt + clippy + test + release + bundle）— `.github/workflows/ci.yml`（macos-latest）；本地已重跑 `cargo clippy --all-targets -- -D warnings` 與 `./bundle.sh dist` 全綠
 - [x] 建立 git repo：`git init -b main` + 首個 commit `566bbaf`（18 files，`dist/` 已加入 .gitignore）— manual `git log --oneline`
 - [ ] 遠端 repo 未建立（`gh` 未登入：需 `gh auth login` 後 `gh repo create` + push，CI 才會真的跑）
-- [ ] 大資料夾效能：1000+ 檔案時的縮圖佇列與記憶體上限
+- [x] 大資料夾效能：texture cache 加 byte 預算（thumbs 96MB / fulls 192MB，`trim()` 依 LRU 淘汰到數量與容量都上線以內；同 key 重複插入不重複計數）— test `thumb_cache_evicts_to_stay_within_budget` + 實測 `/tmp/lumiere_big`（1500 檔）RSS 203MB vs 空目錄 160MB、6s 後 CPU idle
 - [x] 磁碟縮圖快取上限：`imaging::prune_cache()` 依 mtime 刪最舊直到 <512MB，啟動時呼叫 — test `prune_cache_removes_oldest_first`
 
 ## 5. 已完成（本輪）

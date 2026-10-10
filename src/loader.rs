@@ -49,7 +49,7 @@ impl Loader {
         let (tx, rx) = channel();
         let shutdown = Arc::new(AtomicBool::new(false));
 
-        for _ in 0..workers.max(1) {
+        for _ in 0..workers {
             let queue = Arc::clone(&queue);
             let tx = tx.clone();
             let shutdown = Arc::clone(&shutdown);
@@ -88,26 +88,53 @@ impl Loader {
         self.generation.load(Ordering::Relaxed)
     }
 
-    pub fn bump_generation(&self) -> u64 {
+    pub fn bump_generation(&self) -> (u64, Vec<Request>) {
         let value = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
-        self.purge_stale();
-        value
+        (value, self.purge_stale())
     }
 
-    /// Drop queued work that belongs to an older visible set.
-    fn purge_stale(&self) {
+    /// Drop queued work that belongs to an older visible set. The dropped
+    /// requests never produce a reply, so callers must release their pending
+    /// markers or those paths would never be decoded again.
+    fn purge_stale(&self) -> Vec<Request> {
         let generation = self.generation();
         let (lock, _) = &*self.queue;
         let mut pending = lock.lock().unwrap();
-        pending.retain(|request| request.generation >= generation);
+        let mut dropped = Vec::new();
+        pending.retain(|request| {
+            if request.generation >= generation {
+                true
+            } else {
+                dropped.push(request.clone());
+                false
+            }
+        });
+        dropped
     }
 
     /// Drop queued thumbnail work, used when the grid is not visible so the
     /// viewer's full-size requests are not stuck behind a wall of thumbnails.
-    pub fn purge_thumbs(&self) {
+    pub fn purge_thumbs(&self) -> Vec<Request> {
         let (lock, _) = &*self.queue;
         let mut pending = lock.lock().unwrap();
-        pending.retain(|request| request.kind != Kind::Thumb);
+        let mut dropped = Vec::new();
+        pending.retain(|request| {
+            if request.kind != Kind::Thumb {
+                true
+            } else {
+                dropped.push(request.clone());
+                false
+            }
+        });
+        dropped
+    }
+
+    /// How many requests are still waiting for a worker. Test-only seam: the
+    /// queue is otherwise opaque and timing-dependent.
+    #[cfg(test)]
+    pub fn queued(&self) -> usize {
+        let (lock, _) = &*self.queue;
+        lock.lock().unwrap().len()
     }
 
     pub fn submit(&self, kind: Kind, path: PathBuf, size: u32) {
