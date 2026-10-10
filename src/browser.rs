@@ -89,6 +89,13 @@ pub fn tree_pane(app: &mut App, ui: &mut Ui) {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
+struct Cell {
+    thumb: u32,
+    w: f32,
+    h: f32,
+}
+
+#[derive(Clone, Copy)]
 enum Click {
     Select(usize),
     AddToSelection(usize),
@@ -96,10 +103,35 @@ enum Click {
     Open(usize),
 }
 
+/// Modifiers held during the click that produced this frame's pointer release.
+///
+/// `InputState::modifiers` is a frame-start snapshot supplied by the backend and
+/// can be stale (it has been observed as `NONE` for injected events), so the
+/// pointer event's own modifiers are preferred.
+fn click_modifiers(events: &[egui::Event], fallback: egui::Modifiers) -> egui::Modifiers {
+    events
+        .iter()
+        .rev()
+        .find_map(|event| match event {
+            egui::Event::PointerButton {
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers,
+                ..
+            } => Some(*modifiers),
+            _ => None,
+        })
+        .unwrap_or(fallback)
+}
+
 pub fn grid(app: &mut App, ui: &mut Ui) {
-    let size = app.thumb_size;
-    let cell_w = size as f32 + 14.0;
-    let cell_h = size as f32 + 36.0;
+    let cell = Cell {
+        thumb: app.thumb_size,
+        w: app.thumb_size as f32 + 14.0,
+        h: app.thumb_size as f32 + 36.0,
+    };
+    let cell_w = cell.w;
+    let cell_h = cell.h;
     let available_width = ui.available_width();
     let cols = ((available_width - 8.0) / cell_w).floor().max(1.0) as usize;
 
@@ -131,7 +163,7 @@ pub fn grid(app: &mut App, ui: &mut Ui) {
         }
     }
 
-    let (command, shift) = ui.input(|i| (i.modifiers.command, i.modifiers.shift));
+    let modifiers = ui.input(|i| click_modifiers(&i.events, i.modifiers));
 
     // Move the entry list out of `app` so the cells can mutate the caches.
     let entries = std::mem::take(&mut app.entries);
@@ -162,7 +194,7 @@ pub fn grid(app: &mut App, ui: &mut Ui) {
                         let Some(entry) = entries.get(index) else {
                             break;
                         };
-                        if let Some(hit) = cell(app, ui, entry, index, size, cell_w, cell_h) {
+                        if let Some(hit) = thumbnail(app, ui, entry, index, cell, modifiers) {
                             click = Some(hit);
                         }
                     }
@@ -213,19 +245,18 @@ pub fn grid(app: &mut App, ui: &mut Ui) {
             }
         }
     }
-    let _ = (command, shift);
 }
 
-fn cell(
+fn thumbnail(
     app: &mut App,
     ui: &mut Ui,
     entry: &crate::fsmodel::Entry,
     index: usize,
-    size: u32,
-    cell_w: f32,
-    cell_h: f32,
+    cell: Cell,
+    modifiers: egui::Modifiers,
 ) -> Option<Click> {
-    let (rect, response) = ui.allocate_exact_size(vec2(cell_w, cell_h), Sense::click());
+    let size = cell.thumb;
+    let (rect, response) = ui.allocate_exact_size(vec2(cell.w, cell.h), Sense::click());
     if !ui.is_rect_visible(rect) {
         return None;
     }
@@ -299,7 +330,7 @@ fn cell(
         ..Default::default()
     };
     let mut job = LayoutJob::single_section(entry.name.clone(), format);
-    job.wrap = TextWrapping::truncate_at_width(cell_w - 4.0);
+    job.wrap = TextWrapping::truncate_at_width(cell.w - 4.0);
     job.halign = Align::Center;
     job.justify = false;
     let galley = painter.layout_job(job);
@@ -340,15 +371,14 @@ fn cell(
         }
     });
 
-    let modifiers = ui.input(|i| (i.modifiers.command, i.modifiers.shift));
     if response.double_clicked() {
         return Some(Click::Open(index));
     }
     if response.clicked() {
-        if modifiers.1 {
+        if modifiers.shift {
             return Some(Click::Range(index));
         }
-        if modifiers.0 {
+        if modifiers.command {
             return Some(Click::AddToSelection(index));
         }
         return Some(Click::Select(index));
@@ -482,5 +512,114 @@ pub fn preview_pane(app: &mut App, ui: &mut Ui) {
                         }
                     });
             });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn raw_input(time: f64) -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_max(pos2(0.0, 0.0), pos2(1280.0, 820.0))),
+            time: Some(time),
+            focused: true,
+            ..Default::default()
+        }
+    }
+
+    fn pointer_events(pos: egui::Pos2, modifiers: egui::Modifiers) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers,
+            },
+        ]
+    }
+
+    #[test]
+    fn click_modifiers_prefers_the_pointer_event() {
+        let events = pointer_events(pos2(10.0, 10.0), egui::Modifiers::COMMAND);
+        assert_eq!(
+            click_modifiers(&events, egui::Modifiers::NONE),
+            egui::Modifiers::COMMAND
+        );
+        assert_eq!(
+            click_modifiers(&[], egui::Modifiers::SHIFT),
+            egui::Modifiers::SHIFT
+        );
+    }
+
+    fn click_column(
+        ctx: &egui::Context,
+        app: &mut App,
+        column: usize,
+        modifiers: egui::Modifiers,
+        time: f64,
+    ) {
+        let cell_w = app.thumb_size as f32 + 14.0;
+        let cell_h = app.thumb_size as f32 + 36.0;
+        let spacing = ctx.style().spacing.item_spacing.x;
+        let pad = 8.0;
+        let pos = pos2(
+            pad + column as f32 * (cell_w + spacing) + cell_w * 0.5,
+            pad + cell_h * 0.5,
+        );
+        // egui hit-tests against the previous pass, so the cells must be laid
+        // out once before they can receive a click.
+        for (n, events) in [
+            vec![egui::Event::PointerMoved(pos)],
+            pointer_events(pos, modifiers),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut input = raw_input(time + n as f64);
+            input.events = events;
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| grid(app, ui));
+            });
+        }
+    }
+
+    #[test]
+    fn cmd_and_shift_clicks_extend_the_selection() {
+        let dir = std::env::temp_dir().join("lumiere_grid_test_clicks");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["one.png", "two.png", "three.png"] {
+            let img = image::RgbaImage::from_pixel(64, 48, image::Rgba([9, 99, 199, 255]));
+            img.save(dir.join(name)).unwrap();
+        }
+
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+
+        click_column(&ctx, &mut app, 0, egui::Modifiers::NONE, 1.0);
+        assert_eq!(app.selected, 0);
+        assert_eq!(app.multi.len(), 1);
+
+        click_column(&ctx, &mut app, 2, egui::Modifiers::COMMAND, 2.0);
+        assert_eq!(app.selected, 2);
+        assert_eq!(app.multi.len(), 2);
+
+        click_column(&ctx, &mut app, 1, egui::Modifiers::SHIFT, 3.0);
+        assert_eq!(app.selected, 1);
+        assert!(!app.multi.contains(&0));
+        assert!(app.multi.contains(&1) && app.multi.contains(&2));
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

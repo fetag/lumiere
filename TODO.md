@@ -14,7 +14,8 @@
 - [x] Slideshow 開頭卡在 "Loading..."：進入 viewer/slideshow 與換圖時呼叫 `Loader::purge_thumbs()`，清掉佇列中的縮圖工作 — 實測按 Space 開 viewer 後 1.5s 內顯示全圖（shot35）
 - [x] `Action::Delete` 只處理圖片：改為以 `current()` 的 entry 作為目標，對話窗文案依 `is_dir()` 顯示 file/folder — test `delete_action_targets_folders_too`
 - [ ] 多選 / Shift 範圍選取 / 右鍵選單只有 headless 層面驗證過，缺滑鼠實測（目前環境無法送滑鼠事件）
-- [ ] Cmd+Click / Shift+Click 的多選依賴 `ui.input(|i| i.modifiers)`，而按鍵事件已證實 `i.modifiers` 可能為 NONE；需確認滑鼠事件路徑是否正確（必要時改用 pointer event 自帶的 modifiers）
+      註：headless 已可合成滑鼠事件（`PointerMoved` 一幀 + 下一幀 press/release，且 `RawInput.time` 要遞增，否則 egui 會把相鄰兩次點擊判成 double click）
+- [x] Cmd+Click / Shift+Click 的多選依賴 `ui.input(|i| i.modifiers)`（frame 開始時的後端快照，注入事件時可能為 NONE）：改為讀 pointer release event 自帶的 modifiers（`browser::click_modifiers`，無 pointer 事件時才退回快照）— test `click_modifiers_prefers_the_pointer_event` + `cmd_and_shift_clicks_extend_the_selection`（合成滑鼠事件走完整 grid 路徑）
 - [x] 選單項目可用鍵盤直達：新增 Cmd+, (Options) 與 Cmd+I (Properties)，選單標籤已顯示快捷鍵 — test `menu_shortcuts_open_dialogs` + 截圖 shot36
 - [ ] 選單列本身仍無法用鍵盤展開（無 Alt+字母 mnemonic）；目前靠直達快捷鍵繞過
 
@@ -51,8 +52,9 @@
 - [x] App icon（.icns）：`examples/make_icon.rs` 畫出 1024px PNG，`bundle.sh` 用 sips + iconutil 產生 `AppIcon.icns` 並寫入 `CFBundleIconFile` — 已確認 bundle 內有 icns 且 app 可啟動；Dock 外觀尚未截圖確認
 - [ ] 用 LaunchServices 開檔（`open -a Lumiere.app foo.jpg`）不會帶 argv，需要處理 Apple Events openFile；目前只能靠 argv 或還原上次資料夾
 - [x] 啟動時帶圖片檔路徑會切到該檔所在資料夾並選取該檔 — test `opening_a_file_selects_it`
-- [x] CI（fmt + clippy + test + release + bundle）— `.github/workflows/ci.yml`（macos-latest）；注意此目錄尚未 `git init`
-- [ ] 尚未建立 git repo / 遠端，CI 實際不會跑
+- [x] CI（fmt + clippy + test + release + bundle）— `.github/workflows/ci.yml`（macos-latest）；本地已重跑 `cargo clippy --all-targets -- -D warnings` 與 `./bundle.sh dist` 全綠
+- [x] 建立 git repo：`git init -b main` + 首個 commit `566bbaf`（18 files，`dist/` 已加入 .gitignore）— manual `git log --oneline`
+- [ ] 遠端 repo 未建立（`gh` 未登入：需 `gh auth login` 後 `gh repo create` + push，CI 才會真的跑）
 - [ ] 大資料夾效能：1000+ 檔案時的縮圖佇列與記憶體上限
 - [x] 磁碟縮圖快取上限：`imaging::prune_cache()` 依 mtime 刪最舊直到 <512MB，啟動時呼叫 — test `prune_cache_removes_oldest_first`
 
