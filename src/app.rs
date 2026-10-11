@@ -49,6 +49,7 @@ pub struct Caches {
     thumbs_order: VecDeque<(PathBuf, u32)>,
     fulls: HashMap<PathBuf, FullEntry>,
     fulls_order: VecDeque<PathBuf>,
+    infos: HashMap<PathBuf, Info>,
     thumb_bytes: usize,
     full_bytes: usize,
     pub pending: HashSet<(Kind, PathBuf, u32)>,
@@ -72,6 +73,17 @@ impl Caches {
 
     pub fn full(&self, path: &Path) -> Option<&FullEntry> {
         self.fulls.get(path)
+    }
+
+    /// Format + EXIF without decoding pixels, cached because the Information
+    /// panel asks for it every frame.
+    pub fn info(&mut self, path: &Path) -> Info {
+        if let Some(info) = self.infos.get(path) {
+            return info.clone();
+        }
+        let info = imaging::info(path);
+        self.infos.insert(path.to_path_buf(), info.clone());
+        info
     }
 
     /// Requests dropped by the loader never come back as replies, so their
@@ -2505,6 +2517,38 @@ mod tests {
             }
         }
         out
+    }
+
+    #[test]
+    fn information_panel_lists_exif_fields() {
+        let dir = std::env::temp_dir().join("lumiere_ui_test_exif");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let shot = dir.join("shot.jpg");
+        imaging::write_exif_jpeg(&shot).unwrap();
+
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        app.selected = app.image_indices()[0];
+        app.preview_tab = 1;
+
+        // Only the first rows fit in the panel without scrolling.
+        let text = painted_once(&ctx, &mut app, "Make");
+        assert!(text.contains("Format"));
+        assert!(text.contains("JPEG"));
+        assert!(text.contains("LumiereTest"));
+        assert!(text.contains("CAM-1"));
+
+        let exif: std::collections::HashMap<String, String> =
+            app.caches.info(&shot).exif.into_iter().collect();
+        assert_eq!(
+            exif.get("Date/Time").map(String::as_str),
+            Some("2026-10-11 09:30:00")
+        );
+        assert_eq!(exif.get("Exposure").map(String::as_str), Some("1/125"));
+        assert_eq!(exif.get("ISO").map(String::as_str), Some("200"));
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

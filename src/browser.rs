@@ -498,6 +498,9 @@ pub fn preview_pane(app: &mut App, ui: &mut Ui) {
                     app.caches
                         .request(&app.loader, Kind::Preview, &entry.path, width as u32);
                     rows.push(("Dimensions".into(), "loading...".into()));
+                    let info = app.caches.info(&entry.path);
+                    rows.push(("Format".into(), info.format));
+                    rows.extend(info.exif);
                 }
 
                 egui::Grid::new("info_grid")

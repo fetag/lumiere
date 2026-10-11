@@ -219,7 +219,8 @@ pub fn exif_summary(path: &Path) -> Vec<(String, String)> {
         (Tag::DateTimeOriginal, "Date/Time"),
         (Tag::ExposureTime, "Exposure"),
         (Tag::FNumber, "F-number"),
-        (Tag::ISOSpeed, "ISO"),
+        (Tag::PhotographicSensitivity, "ISO"),
+        (Tag::ISOSpeed, "ISO speed"),
         (Tag::FocalLength, "Focal length"),
         (Tag::Flash, "Flash"),
         (Tag::WhiteBalance, "White balance"),
@@ -243,6 +244,141 @@ pub fn exif_summary(path: &Path) -> Vec<(String, String)> {
         }
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// Test fixtures
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+fn ascii_entry(tag: u16, value: &str, data: &mut Vec<u8>, data_start: usize) -> [u8; 12] {
+    let bytes = format!("{value}\0").into_bytes();
+    let mut entry = [0u8; 12];
+    entry[0..2].copy_from_slice(&tag.to_le_bytes());
+    entry[2..4].copy_from_slice(&2u16.to_le_bytes());
+    entry[4..8].copy_from_slice(&(bytes.len() as u32).to_le_bytes());
+    if bytes.len() <= 4 {
+        entry[8..8 + bytes.len()].copy_from_slice(&bytes);
+    } else {
+        let offset = (data_start + data.len()) as u32;
+        entry[8..12].copy_from_slice(&offset.to_le_bytes());
+        data.extend_from_slice(&bytes);
+    }
+    entry
+}
+
+#[cfg(test)]
+fn rational_entry(
+    tag: u16,
+    numerator: u32,
+    denominator: u32,
+    data: &mut Vec<u8>,
+    data_start: usize,
+) -> [u8; 12] {
+    let mut entry = [0u8; 12];
+    entry[0..2].copy_from_slice(&tag.to_le_bytes());
+    entry[2..4].copy_from_slice(&5u16.to_le_bytes());
+    entry[4..8].copy_from_slice(&1u32.to_le_bytes());
+    let offset = (data_start + data.len()) as u32;
+    entry[8..12].copy_from_slice(&offset.to_le_bytes());
+    data.extend_from_slice(&numerator.to_le_bytes());
+    data.extend_from_slice(&denominator.to_le_bytes());
+    entry
+}
+
+#[cfg(test)]
+fn short_entry(tag: u16, value: u16) -> [u8; 12] {
+    let mut entry = [0u8; 12];
+    entry[0..2].copy_from_slice(&tag.to_le_bytes());
+    entry[2..4].copy_from_slice(&3u16.to_le_bytes());
+    entry[4..8].copy_from_slice(&1u32.to_le_bytes());
+    entry[8..10].copy_from_slice(&value.to_le_bytes());
+    entry
+}
+
+/// Writes a real JPEG with an APP1/EXIF block, so the Information panel can be
+/// tested against actual metadata instead of an empty tag list.
+#[cfg(test)]
+pub fn write_exif_jpeg(path: &Path) -> std::io::Result<()> {
+    let image = image::RgbImage::from_pixel(32, 24, image::Rgb([9, 99, 199]));
+    image
+        .save(path)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let jpeg = std::fs::read(path)?;
+
+    // IFD0: 4 strings, Orientation and the Exif sub-IFD pointer.
+    let strings = [
+        (0x010Fu16, "LumiereTest"),
+        (0x0110, "CAM-1"),
+        (0x0131, "Lumiere test"),
+        (0x013B, "J. Lin"),
+    ];
+    let count = strings.len() + 2;
+    let data_start = 8 + 2 + count * 12 + 4;
+
+    let mut data = Vec::new();
+    let mut entries: Vec<(u16, [u8; 12])> = Vec::new();
+    for (tag, value) in strings {
+        entries.push((tag, ascii_entry(tag, value, &mut data, data_start)));
+    }
+    entries.push((0x0112, short_entry(0x0112, 1)));
+
+    // Camera settings belong in the Exif sub-IFD, not in IFD0.
+    let sub_ifd_at = data_start + data.len();
+    let sub_strings = [(0x9003u16, "2026:10:11 09:30:00")];
+    let sub_rationals = [(0x829Au16, 1u32, 125u32), (0x829D, 28, 10), (0x920A, 35, 1)];
+    let sub_count = sub_strings.len() + sub_rationals.len() + 1;
+    let sub_data_start = sub_ifd_at + 2 + sub_count * 12 + 4;
+
+    let mut sub_data = Vec::new();
+    let mut sub_entries: Vec<(u16, [u8; 12])> = Vec::new();
+    for (tag, value) in sub_strings {
+        sub_entries.push((tag, ascii_entry(tag, value, &mut sub_data, sub_data_start)));
+    }
+    for (tag, numerator, denominator) in sub_rationals {
+        sub_entries.push((
+            tag,
+            rational_entry(tag, numerator, denominator, &mut sub_data, sub_data_start),
+        ));
+    }
+    sub_entries.push((0x8827, short_entry(0x8827, 200)));
+    sub_entries.sort_by_key(|(tag, _)| *tag);
+
+    let mut exif_pointer = [0u8; 12];
+    exif_pointer[0..2].copy_from_slice(&0x8769u16.to_le_bytes());
+    exif_pointer[2..4].copy_from_slice(&4u16.to_le_bytes());
+    exif_pointer[4..8].copy_from_slice(&1u32.to_le_bytes());
+    exif_pointer[8..12].copy_from_slice(&(sub_ifd_at as u32).to_le_bytes());
+    entries.push((0x8769, exif_pointer));
+    entries.sort_by_key(|(tag, _)| *tag);
+
+    let mut tiff = Vec::new();
+    tiff.extend_from_slice(b"II");
+    tiff.extend_from_slice(&42u16.to_le_bytes());
+    tiff.extend_from_slice(&8u32.to_le_bytes());
+    tiff.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+    for (_, entry) in &entries {
+        tiff.extend_from_slice(entry);
+    }
+    tiff.extend_from_slice(&0u32.to_le_bytes());
+    tiff.extend_from_slice(&data);
+
+    tiff.extend_from_slice(&(sub_entries.len() as u16).to_le_bytes());
+    for (_, entry) in &sub_entries {
+        tiff.extend_from_slice(entry);
+    }
+    tiff.extend_from_slice(&0u32.to_le_bytes());
+    tiff.extend_from_slice(&sub_data);
+
+    let payload = [b"Exif\0\0".to_vec(), tiff].concat();
+    let mut segment = vec![0xFF, 0xE1];
+    segment.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+    segment.extend_from_slice(&payload);
+
+    let mut with_exif = vec![0xFF, 0xD8];
+    with_exif.extend_from_slice(&segment);
+    with_exif.extend_from_slice(&jpeg[2..]);
+    std::fs::write(path, with_exif)
 }
 
 // ---------------------------------------------------------------------------
@@ -405,6 +541,29 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn exif_summary_reads_a_real_jpeg_block() {
+        let dir = temp_dir("exif");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("shot.jpg");
+        write_exif_jpeg(&path).unwrap();
+
+        let summary = exif_summary(&path);
+        let found: std::collections::HashMap<String, String> = summary.into_iter().collect();
+        assert_eq!(found.get("Make").map(String::as_str), Some("LumiereTest"));
+        assert_eq!(found.get("Model").map(String::as_str), Some("CAM-1"));
+        assert_eq!(
+            found.get("Date/Time").map(String::as_str),
+            Some("2026-10-11 09:30:00")
+        );
+        assert_eq!(found.get("Exposure").map(String::as_str), Some("1/125"));
+        assert_eq!(found.get("ISO").map(String::as_str), Some("200"));
+        assert_eq!(found.get("Focal length").map(String::as_str), Some("35"));
+
+        assert_eq!(info(&path).format, "JPEG");
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

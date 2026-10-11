@@ -18,6 +18,8 @@
 - [ ] 多選 / Shift 範圍選取 / 右鍵選單只有 headless 層面驗證過，缺滑鼠實測（目前環境無法送滑鼠事件）
       註：headless 已可合成滑鼠事件（`PointerMoved` 一幀 + 下一幀 press/release，且 `RawInput.time` 要遞增，否則 egui 會把相鄰兩次點擊判成 double click）
 - [x] Cmd+Click / Shift+Click 的多選依賴 `ui.input(|i| i.modifiers)`（frame 開始時的後端快照，注入事件時可能為 NONE）：改為讀 pointer release event 自帶的 modifiers（`browser::click_modifiers`，無 pointer 事件時才退回快照）— test `click_modifiers_prefers_the_pointer_event` + `cmd_and_shift_clicks_extend_the_selection`（合成滑鼠事件走完整 grid 路徑）
+- [x] Information 面板在 browser 模式永遠沒有 Format / EXIF / 真實 Dimensions：面板只 request `Kind::Preview`，但那些欄位讀的是 `caches.full()`（只有 viewer 會填）。改為另用 `imaging::info()`（只讀 marker、不解碼像素，經 `Caches::info()` 快取避免每檔重複開檔）— test `information_panel_lists_exif_fields`
+- [x] Information 的 ISO 欄位用錯 tag：kamadak 的 `Tag::ISOSpeed` 是 0x8833，相機實際寫的是 0x8827 → 改用 `Tag::PhotographicSensitivity`（另保留 0x8833 顯示為 "ISO speed"）— test `exif_summary_reads_a_real_jpeg_block`
 - [x] 選單項目可用鍵盤直達：新增 Cmd+, (Options) 與 Cmd+I (Properties)，選單標籤已顯示快捷鍵 — test `menu_shortcuts_open_dialogs` + 截圖 shot36
 - [ ] 選單列本身仍無法用鍵盤展開（無 Alt+字母 mnemonic）；目前靠直達快捷鍵繞過
 
@@ -25,7 +27,7 @@
 - [x] Options 對話窗版面（thumb size / show folders / black background / slideshow delay / clear cache / cache folder）— 截圖 shot36
 - [x] Explore Folder 對話窗（標題 + 目前路徑有畫出來）— test `about_and_explore_dialogs_render_their_content`
 - [x] About 對話窗（名稱 / 版本 / 快捷鍵說明）— test `about_and_explore_dialogs_render_their_content`
-- [ ] Information 面板的 EXIF 欄位（headless 已測 Name/Path/Dimensions/Format，缺真實 EXIF 內容）
+- [x] Information 面板的 EXIF 欄位：`imaging::write_exif_jpeg()` 會產生真正帶 APP1/EXIF 的 JPEG（Make/Model/Software/Artist/DateTimeOriginal/Exposure/FNumber/ISO/Focal/Orientation）— test `exif_summary_reads_a_real_jpeg_block` + `information_panel_lists_exif_fields`（面板只畫得出前幾列，後面的被 ScrollArea 裁掉，所以長欄位改查 `caches.info().exif`）
 - [x] Files 萬用字元篩選（Address 列右側）實際效果：點欄位 → Cmd+A → 輸入 `*.jpg` → 按 Apply，只剩符合的檔 — test `files_filter_applies_from_the_address_row`
 - [x] Places 列（Home/Desktop/Documents/...）實際效果：點 "Macintosh HD" 後 `dir == /` — test `places_row_navigates_to_the_selected_place`
 - [x] 排序 Name/Date/Size/Type + Reverse 的實際效果：View ▸ Sort ▸ by Size 後順序變 a/c/b，再勾 Reverse order 變 b/c/a — test `sort_menu_reorders_the_grid`
