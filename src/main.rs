@@ -7,6 +7,7 @@ mod dnd;
 mod fsmodel;
 mod imaging;
 mod loader;
+mod macos_open;
 mod menu;
 mod panels;
 mod state;
@@ -18,6 +19,8 @@ use eframe::egui;
 use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Register the document class before AppKit handles the launch document.
+    macos_open::prepare();
     let saved = state::State::load();
     let width = if saved.width > 0.0 {
         saved.width

@@ -46,10 +46,33 @@ cat > "$APP/Contents/Info.plist" <<PLIST
         <dict>
             <key>CFBundleTypeName</key>     <string>Image</string>
             <key>CFBundleTypeRole</key>     <string>Viewer</string>
+            <key>NSDocumentClass</key>      <string>LumiereDocument</string>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>jpg</string><string>jpeg</string><string>jpe</string><string>jfif</string>
+                <string>png</string><string>gif</string><string>bmp</string>
+                <string>tif</string><string>tiff</string><string>webp</string>
+                <string>ico</string><string>cur</string><string>tga</string><string>vda</string>
+                <string>icb</string><string>vst</string><string>pcx</string>
+                <string>pnm</string><string>ppm</string><string>pgm</string>
+                <string>pbm</string><string>qoi</string><string>heic</string>
+                <string>heif</string><string>hif</string><string>avif</string>
+                <string>dng</string><string>cr2</string><string>cr3</string>
+                <string>nef</string><string>nrw</string><string>arw</string>
+                <string>srf</string><string>sr2</string><string>orf</string>
+                <string>rw2</string><string>raf</string><string>pef</string><string>raw</string>
+            </array>
             <key>LSItemContentTypes</key>
             <array>
                 <string>public.image</string>
-                <string>public.folder</string>
+                <string>public.jpeg</string>
+                <string>public.png</string>
+                <string>com.compuserve.gif</string>
+                <string>com.microsoft.bmp</string>
+                <string>public.tiff</string>
+                <string>org.webmproject.webp</string>
+                <string>com.microsoft.ico</string>
+                <string>public.pnm</string>
             </array>
         </dict>
     </array>

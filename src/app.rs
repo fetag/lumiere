@@ -626,6 +626,11 @@ impl Item {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, start: Option<PathBuf>) -> Self {
+        // eframe creates the AppKit application and its delegate immediately
+        // before calling the app factory. Register after that setup: doing it
+        // earlier lets AppKit replace the Apple-event handler while starting.
+        crate::macos_open::install();
+        crate::macos_open::attach_context(cc.egui_ctx.clone());
         Self::build(&cc.egui_ctx, start)
     }
 
@@ -782,6 +787,29 @@ impl App {
         self.recent_dirs.retain(|p| p != &self.dir);
         self.recent_dirs.insert(0, self.dir.clone());
         self.recent_dirs.truncate(5);
+    }
+
+    /// Open a document received from Finder/LaunchServices in the viewer.
+    /// This mirrors pressing Enter on the selected thumbnail.
+    pub fn open_document(&mut self, file: PathBuf) {
+        if !file.is_file() {
+            return;
+        }
+        let Some(parent) = file.parent().map(Path::to_path_buf) else {
+            return;
+        };
+        self.set_dir(parent);
+        if let Some(index) = self.entries.iter().position(|entry| entry.path == file) {
+            self.selected = index;
+            self.anchor = index;
+            self.multi.insert(index);
+            self.scroll_to_selected = true;
+            self.mode = Mode::Viewer;
+            let dropped = self.loader.purge_thumbs();
+            self.caches.abandon(&dropped);
+            self.fit = true;
+            self.pan = Vec2::ZERO;
+        }
     }
 
     /// Pin a folder into the sidebar's Locations section.
@@ -2722,6 +2750,12 @@ impl eframe::App for App {
 impl App {
     /// One frame of UI, usable from tests as well as the eframe backend.
     pub fn draw(&mut self, ctx: &Context) {
+        // Finder can send this while Lumiere is already running. Drain all
+        // documents so a multi-file Open With request has deterministic
+        // last-document-selected behaviour.
+        for file in crate::macos_open::take_opened_files() {
+            self.open_document(file);
+        }
         // The text fields are re-collected as the panels are laid out; a
         // focused button or grid cell must not count as "typing".
         self.text_field_ids.clear();
@@ -5056,6 +5090,24 @@ mod tests {
         assert_eq!(app.current().map(|e| e.name.as_str()), Some("two.png"));
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn opening_a_document_switches_folders_and_selects_it() {
+        let first = fixture_dir("open_document_first");
+        let second = fixture_dir("open_document_second");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(first.clone()));
+
+        app.open_document(second.join("three.png"));
+
+        assert_eq!(app.dir, second);
+        assert_eq!(app.current().map(|entry| entry.name.as_str()), Some("three.png"));
+        assert!(app.scroll_to_selected);
+        assert_eq!(app.mode, Mode::Viewer);
+
+        std::fs::remove_dir_all(&first).unwrap();
+        std::fs::remove_dir_all(&app.dir).unwrap();
     }
 
     #[test]

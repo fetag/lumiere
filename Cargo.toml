@@ -28,6 +28,7 @@ trash = "5"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.5"
+objc2-core-services = "0.3.2"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "std",
     "block2",
@@ -37,6 +38,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSButton",
     "NSCell",
     "NSControl",
+    "NSDocument",
     "NSEvent",
     "NSMenu",
     "NSMenuItem",
@@ -63,7 +65,11 @@ objc2-core-graphics = { version = "0.3.2", features = [
 ] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "std",
+    "NSAppleEventDescriptor",
+    "NSAppleEventManager",
+    "objc2-core-services",
     "NSArray",
+    "NSError",
     "NSObjCRuntime",
     "NSString",
     "NSProcessInfo",
