@@ -128,12 +128,13 @@
     1. **Favorites**：Home/Desktop/Documents/Downloads/Pictures/Movies（僅列出存在的目錄）。
     2. **Locations**：Macintosh HD（`/`）＋使用者 pin 的資料夾（`sidebar_dirs`）。
     3. **Recents**：`recent_dirs`，`set_dir` 自動記錄、newest first、上限 5、不重複、渲染時過濾已不存在者。
-    - 目前所在的列以 `visuals.selection.bg_fill` 高亮（整列 hit target，同 grid cell 的 `allocate_exact_size`＋`ui.interact` 模式）。
+    - 高亮列以 `visuals.selection.bg_fill` 底紋畫出（整列 hit target，同 grid cell 的 `allocate_exact_size`＋`ui.interact` 模式）。**同一時間最多一列點亮**：`sidebar_pane` 以讀取順序（Favorites→Locations→Recents）找第一個路徑**精確等於**目前目錄的列（`active_row`）——不用祖先匹配（所有路徑都 `starts_with("/")`，Macintosh HD 會永遠反白；Finder 也是只亮精確位置），同一個資料夾重複出現在多個 section（如 Home 同時在 Favorites 與 Recents）時只有較前 section 的列亮。
     - **工具列**：最前新增 `Show Sidebar` toggle（`theme::tool_button_toggle`，`Icon::Sidebar`）；View 選單原 Show Sidebar/Show Inspector 不變。
     - **Filter popover**：address 列常駐 wildcard 欄改為 `Filter…` 按鈕（顯示目前 pattern）＋`egui::Area`（id `lumiere filter popover`，`Order::Foreground`）；欄位 lost_focus／Apply／Clear 皆 commit pattern，Esc／Apply／Clear 關閉。
     - **Add/Remove from Sidebar**：grid 資料夾 cell 右鍵選單（Reveal in Finder 之後）；pinned 的 Locations 列自身右鍵選單可移除。
     - **窄視窗**：viewport 寬 < 700 px 時兩側面板都不繪製（內容優先，`ctx.input(|i| i.viewport_rect().width())`），on/off 狀態保留、變寬自動回來；未知寬度視為寬。
     - **狀態保存**：`state.ini` 新增 `show_sidebar`/`show_inspector`（-1=未存）、`sidebar_dir_N`/`recent_dir_N`（上限 64）；toggle 與 pin/unpin 皆標 `state_dirty`。
+  - 修復（2026-10-11，使用者回報）：高亮原本用 `starts_with` 祖先匹配，導致 Macintosh HD 常亮、多列同時反白；改為單一 `active_row` 精確匹配（見上）。新增 `sidebar_lights_at_most_one_row`：fixture 目錄 0 列亮、Home 在 Favorites＋Recents 重複時只亮 1 列、進入 Home 子資料夾時祖先不亮（headless 數左面板 clip 內的 5px 圓角 selection 底紋 shape）。
   - 測試：`arrow_keys_operate_the_sidebar`（平鋪列鍵盤導覽）、`sidebar_navigates_to_the_selected_place`、`clicking_a_sidebar_folder_navigates_to_it`（含 Recents 列導覽）、`files_filter_applies_from_the_filter_popover`、`narrow_window_keeps_the_content_pane_usable`（600 px 兩面板消失、toggle 狀態保留、變寬回來）、`context_menu_pins_a_folder_to_the_sidebar`（grid pin → sidebar 列右鍵 unpin → 再 pin 後列可導覽）、`recents_track_visits_newest_first`、`sidebar_and_inspector_state_survive_a_restart`；`browser_toolbar_keeps_only_browser_controls` 改為 14 鈕；`preview_pane_holds_the_width_the_user_set` 改測 `sidebar` 面板（預設 200 px）。
   - 實機驗證（AX＋合成事件）：sidebar 三段渲染、左鍵列導覽、工具列 toggle、Filter popover（欄位＋Apply/Clear）、grid 右鍵 Add to Sidebar、pinned 列右鍵 Remove from Sidebar、pin/recents/可見性跨重啟恢復、600 px 窄窗兩面板自動讓位且放大回來。
   - 踩坑記錄：egui 0.33.3 的 `Frame::show` 包層會讓行內 `ui.interact` 在**實體視窗**收不到 pointer 事件（headless 卻正常，故以 grid cell 的 flat 模式取代 Frame 底紋）；popup 內容的 `ui.close()` 若無條件呼叫會在第一幀關掉剛打開的選單。

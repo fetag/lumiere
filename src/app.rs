@@ -3742,6 +3742,76 @@ mod tests {
         assert_eq!(app.dir, dir);
     }
 
+    /// The sidebar lights at most one row at a time: the first row, in
+    /// reading order, of the exact current location — never an ancestor
+    /// (every path starts with `/`, so the disk root would light
+    /// everywhere otherwise), and never twice when the folder shows up in
+    /// more than one section (Favorites and Recents).
+    #[test]
+    fn sidebar_lights_at_most_one_row() {
+        let dir = fixture_dir("sidebarlight");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let mut time = 1.0;
+        let home = dirs::home_dir().expect("home dir");
+
+        // A lit row paints its selection tint: a 5px-rounded fill clipped
+        // to the 200px-wide sidebar panel (the toolbar toggles share the
+        // tint but are clipped to the toolbar and round at 2px).
+        let selection_bg = ctx.style().visuals.selection.bg_fill;
+        let lit_rows = |shapes: &[egui::epaint::ClippedShape]| {
+            shapes
+                .iter()
+                .filter(|clipped| {
+                    let egui::Shape::Rect(shape) = &clipped.shape else {
+                        return false;
+                    };
+                    clipped.clip_rect.max.x <= 200.0
+                        && shape.corner_radius.nw == 5
+                        && shape.fill == selection_bg
+                })
+                .count()
+        };
+        let mut frame = |app: &mut App| {
+            time += 0.4;
+            let mut input = raw_input();
+            input.time = Some(time);
+            ctx.run(input, |ctx| app.draw(ctx))
+        };
+
+        // In the fixture folder no sidebar row is the current location.
+        for _ in 0..3 {
+            frame(&mut app);
+        }
+        let output = frame(&mut app);
+        assert_eq!(
+            lit_rows(&output.shapes),
+            0,
+            "nothing lights in the fixture dir"
+        );
+
+        // Home now sits in Favorites *and* Recents: only one row lights.
+        app.set_dir(home.clone());
+        let output = frame(&mut app);
+        assert_eq!(
+            lit_rows(&output.shapes),
+            1,
+            "one row lights for the duplicated location"
+        );
+
+        // Inside Home but at a folder that is only a recent: the recent's
+        // row lights, Home's (an ancestor now) does not.
+        app.set_dir(home.join("Library"));
+        let output = frame(&mut app);
+        assert_eq!(
+            lit_rows(&output.shapes),
+            1,
+            "only the exact location's row lights, not its ancestors"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn files_filter_applies_from_the_filter_popover() {
         let dir = std::env::temp_dir().join("lumiere_ui_test_filter");

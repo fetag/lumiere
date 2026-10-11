@@ -112,6 +112,13 @@ pub fn sidebar_pane(app: &mut App, ui: &mut Ui) {
         .chain(recents.iter())
         .collect();
 
+    // Exactly one row may light up: the first one, in reading order,
+    // whose folder the browser is in. The same folder can show up in
+    // more than one section (Favorites and Recents, for instance), and
+    // only the earlier section's row counts as "selected" — the way
+    // Finder's sidebar lights a single item at a time.
+    let active_row = flat.iter().position(|row| row.path == app.dir);
+
     // Which row (if any) holds the keyboard focus right now.
     let focused_row = match ui.ctx().memory(|m| m.focused()) {
         Some(focused_id) => (0..total).find(|index| sidebar_row_id(*index) == focused_id),
@@ -159,9 +166,25 @@ pub fn sidebar_pane(app: &mut App, ui: &mut Ui) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let mut base = 0usize;
-            sidebar_section(app, ui, "Favorites", &favorites, &mut base, false);
-            sidebar_section(app, ui, "Locations", &locations, &mut base, true);
-            sidebar_section(app, ui, "Recents", &recents, &mut base, false);
+            sidebar_section(
+                app,
+                ui,
+                "Favorites",
+                &favorites,
+                &mut base,
+                false,
+                active_row,
+            );
+            sidebar_section(
+                app,
+                ui,
+                "Locations",
+                &locations,
+                &mut base,
+                true,
+                active_row,
+            );
+            sidebar_section(app, ui, "Recents", &recents, &mut base, false, active_row);
         });
 }
 
@@ -174,6 +197,7 @@ fn sidebar_section(
     rows: &[SideRow],
     base: &mut usize,
     removable: bool,
+    active_row: Option<usize>,
 ) {
     if rows.is_empty() {
         return;
@@ -185,7 +209,10 @@ fn sidebar_section(
         *base += 1;
         let label = row.label.clone();
         let path = row.path.clone();
-        let active = app.dir.starts_with(&path);
+        // Only the one row `active_row` names lights up; the same folder
+        // can sit in several sections at once, and the whole sidebar
+        // selects at most one of them.
+        let active = Some(index) == active_row;
 
         // A whole-row hit target laid out exactly like the grid cells
         // (allocate the hover rect, then layer the click `interact` on the
@@ -194,7 +221,6 @@ fn sidebar_section(
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
         let painter = ui.painter();
         let text_color = ui.visuals().text_color();
-        // Finder lights the row of the current location.
         if active {
             painter.rect_filled(
                 rect.shrink2(vec2(2.0, 1.0)),
