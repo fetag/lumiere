@@ -39,13 +39,13 @@
 - [ ] 不做：對磁碟寫入 Rotate（lossless JPEG rotate）/ Flip 存檔 — 屬編輯功能；viewer 內的旋轉/鏡射為檢視用
 - [x] Rename（F2）：`Action::Rename` + Rename 對話窗（父資料夾、文字欄、Rename/Cancel、Enter 送出、Esc 取消），`apply_rename()` 改名後 rescan 並選回新檔 — test `rename_updates_disk_and_selection` + 截圖 shot37
 - [x] Move to / Copy to folder：`Transfer` 對話窗（Edit 選單）、`apply_transfer()` 批次搬移/複製（含多選）、`copy_path()` 遞迴複製 — test `move_and_copy_between_folders` + smoke test 開窗
-- [ ] 從資源回收桶還原（目前只有 trash 丟棄，無 undo）
+- [ ] 不做：從資源回收桶還原 — 確認刪除後進系統回收桶即可，undo 由 Finder 負責
 - [ ] 不做：圖片編輯最小集 Crop、Resize
 - [ ] 不做：Rating / Category（stars + categories，存到 XMP sidecar 或 DB）
 - [ ] 不做：Print / 匯出縮圖 contact sheet
 - [x] 記住上次資料夾與視窗大小：`src/state.rs`（key=value，無新依賴），`set_dir` / 視窗 resize 時寫 `~/Library/Application Support/Lumiere/state.ini`，無參數啟動時還原 — test `state_round_trips` + 實測 state.ini 與重啟後標題 `/tmp/lumiere_test`
 - [x] 視窗「位置」保存/還原：存 `outer_rect.min`，啟動後用兩段式 `OuterPosition` 修正（winit 與 AX 的 titlebar 偏移差 42px）— 實測移動到 (340,220) 後重啟，位置精確回到 (340,220)
-- [ ] 拖曳檔案到外部 app（drag out）
+- [ ] 不做：拖曳檔案到外部 app（drag out）
 - [ ] 不做：巨集 / batch rename
 
 ## 4. 工程 / 交付
