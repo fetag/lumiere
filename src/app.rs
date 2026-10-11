@@ -1345,7 +1345,6 @@ impl App {
 
     fn tool_row(&mut self, ui: &mut egui::Ui) {
         let mut pending: Vec<Action> = Vec::new();
-        let mut open_dialog = false;
         ui.horizontal(|ui| {
             if theme::tool_button(ui, Icon::FolderUp, "Up one level", true).clicked() {
                 pending.push(Action::UpFolder);
@@ -1426,11 +1425,14 @@ impl App {
             {
                 pending.push(Action::MoveToTrash);
             }
-            if theme::tool_button(ui, Icon::Info, "Get Info", true).clicked() {
-                open_dialog = true;
-                pending.push(Action::GetInfo);
+            // The Information view was merged into the preview pane, so this
+            // button carries that pane: it shows the pane and, when it is
+            // already open, hides it again.
+            if theme::tool_button_toggle(ui, Icon::Info, "Get Info", true, self.show_inspector)
+                .clicked()
+            {
+                pending.push(Action::ToggleInspector);
             }
-            let _ = open_dialog;
         });
 
         for action in pending {
@@ -3875,6 +3877,45 @@ mod tests {
         // The sidebar holds its default width too (its full-width ScrollArea
         // already keeps the content from dictating the pane's width).
         assert_eq!(width_of("foldertree"), Some(240.0));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The Get Info toolbar button shows and hides the preview pane (the
+    /// Information view was merged into it): hidden, the pane's content
+    /// disappears from the paint output; clicking again brings it back.
+    #[test]
+    fn get_info_button_toggles_the_preview_pane() {
+        let dir = fixture_dir("getinfo");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        app.selected = app.image_indices()[0];
+
+        // The pane is open by default, so its metadata is painted.
+        let text = painted_once(&ctx, &mut app, "Dimensions");
+        assert!(text.contains("Dimensions"));
+
+        let mut time = 1.0;
+
+        // Click the Get Info button: the pane goes away.
+        settle(&ctx, &mut app, &mut time);
+        assert!(click_label(&ctx, &mut app, "Get Info", &mut time));
+        assert!(!app.show_inspector);
+        time += 0.4;
+        let mut input = raw_input();
+        input.time = Some(time);
+        let output = ctx.run(input, |ctx| app.draw(ctx));
+        assert!(!painted_text(&output.shapes).contains("Dimensions"));
+
+        // Click it again: the pane is back.
+        settle(&ctx, &mut app, &mut time);
+        assert!(click_label(&ctx, &mut app, "Get Info", &mut time));
+        assert!(app.show_inspector);
+        time += 0.4;
+        let mut input = raw_input();
+        input.time = Some(time);
+        let output = ctx.run(input, |ctx| app.draw(ctx));
+        assert!(painted_text(&output.shapes).contains("Dimensions"));
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

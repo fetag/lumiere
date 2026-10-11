@@ -116,6 +116,19 @@ fn load_font(path: &str) -> Option<Vec<u8>> {
 /// borderless at rest, with a subtle rounded background that appears on hover
 /// and press, all in colours taken from the current light/dark visuals.
 pub fn tool_button(ui: &mut Ui, glyph: Icon, title: &str, enabled: bool) -> Response {
+    tool_button_toggle(ui, glyph, title, enabled, false)
+}
+
+/// [`tool_button`] for toggle controls: while `active` the button keeps a
+/// filled, selection-tinted background, so the user can see that what it
+/// toggles (e.g. the inspector pane) is currently shown.
+pub fn tool_button_toggle(
+    ui: &mut Ui,
+    glyph: Icon,
+    title: &str,
+    enabled: bool,
+    active: bool,
+) -> Response {
     let size = vec2(30.0, 26.0);
     let (rect, response) = ui.allocate_exact_size(
         size,
@@ -157,6 +170,14 @@ pub fn tool_button(ui: &mut Ui, glyph: Icon, title: &str, enabled: bool) -> Resp
                 visuals.widgets.hovered.weak_bg_fill,
                 visuals.widgets.hovered.corner_radius.nw as f32,
                 visuals.widgets.hovered.fg_stroke.color,
+            )
+        } else if active {
+            // The persistent "on" look of a toggle: the same selection tint a
+            // selected thumbnail gets, with the ordinary text colour on top.
+            (
+                visuals.selection.bg_fill,
+                visuals.widgets.inactive.corner_radius.nw as f32,
+                visuals.text_color(),
             )
         } else {
             (

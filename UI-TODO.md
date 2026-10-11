@@ -139,6 +139,7 @@
   - 實作方向：採 macOS selection tint 與 sidebar/list selection 規則；縮圖保留適當留白、支援多行檔名或省略號與完整名稱 tooltip；Inspector 使用標準 segmented control/tab 樣式，內容採 key/value 對齊、可複製的 metadata 與明確 loading/error state。
   - 驗收：明暗模式、Increase Contrast 下仍能一眼辨識選取項；長檔名不會只靠 11 px 文字難以識別，至少可懸停取得完整名稱；Inspector 的焦點、選擇與讀取狀態清楚。
   - 進度（部分完成，經使用者指示）：Preview／Information 兩個 tab 已合併——**Information 整個移除**，其多出來的欄位（Type、Path、Dimensions、Format、EXIF）直接併入 Preview 面板下方（`src/browser.rs` 的 `preview_pane`，去掉了 tab row 與 `inspector_tab` 狀態欄位；`Get Info`／右鍵選單只負責打開面板）。因此實作方向裡的「segmented control/tab 樣式」已無對象；剩餘：selection tint、長檔名省略號／tooltip、metadata 可複製、loading/error state（現況 `Dimensions: loading...` 在完整解碼前恆顯示，路徑等長值無省略號，皆沿用舊樣式未改）。
+  - 進度（2026-10-11，經使用者指示）：工具列 `Get Info` 按鈕改為 Inspector（Preview）面板的顯示／隱藏 toggle——推 `Action::ToggleInspector`（取代原「只打開」的 `GetInfo`，並移除殘留的死變數 `open_dialog`）；`theme::tool_button` 拆出 `tool_button_toggle`，active 時以 `visuals.selection.bg_fill` 常亮底色，面板開關狀態一眼可見（明暗自適應）。選單 `⌘I` Get Info（打開）、`⌥⌘I` Show Inspector（toggle）與右鍵選單 `Get Info`（打開）行為不變。headless 測試 `get_info_button_toggles_the_preview_pane` 驗證隱藏後 metadata 不再繪製、再點回來。
 
 - [ ] **建立狀態、錯誤與進度回饋的 macOS 語言。**
   - 現況／依據：`src/app.rs:1372-1412` 使用三格 Win95 status field；`src/app.rs:1710-1732`、`src/app.rs:1750-1755` 只產生短暫 toast／字串錯誤；`src/viewer.rs:39-47` 僅畫出 `Loading…`。
