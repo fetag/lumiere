@@ -70,12 +70,16 @@ pub fn tree_pane(app: &mut App, ui: &mut Ui) {
                     classic::draw_icon(ui.painter(), icon_rect.center(), 14.0, icon, classic::TEXT);
 
                     let text_response = ui.add(
-                        egui::Label::new(egui::RichText::new(label).size(13.0))
+                        egui::Label::new(egui::RichText::new(label.clone()).size(13.0))
                             .selectable(false)
                             .truncate(),
                     );
+                    let text_response =
+                        ui.interact(text_response.rect, ui.id().with(("tree", index)), Sense::click());
+                    classic::note_rect(ui, &format!("tree:{label}"), text_response.rect);
                     if text_response.clicked() {
                         app.tree_selected = Some(index);
+                        app.tree.ensure_loaded(index);
                         app.tree.set_expanded(index, true);
                         app.set_dir(path.clone());
                     }

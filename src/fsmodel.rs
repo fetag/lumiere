@@ -310,6 +310,7 @@ impl TreeModel {
                 None => break,
             }
         }
+        self.ensure_loaded(index);
         self.nodes[index].expanded = true;
         Some(index)
     }
