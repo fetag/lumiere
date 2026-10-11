@@ -18,11 +18,11 @@ pub const ZOOM_MIN: f32 = 0.02;
 pub const ZOOM_MAX: f32 = 64.0;
 
 /// How far the trackpad must travel horizontally before a swipe pages to the
-/// neighbouring image.
+/// neighbouring image. Once a swipe has paged, the gesture is locked: no
+/// matter how far the same gesture keeps travelling (the flick's momentum
+/// included) it cannot page a second time — only a pause or an equal swipe
+/// the other way starts a fresh one.
 const SWIPE_PX: f32 = 120.0;
-/// After a swipe switched the image, further horizontal input is swallowed
-/// for this long, so a flick's momentum cannot page through several images.
-const SWIPE_COOLDOWN: Duration = Duration::from_millis(350);
 /// A pause longer than this starts a fresh swipe instead of extending the
 /// last one.
 const SWIPE_GAP: Duration = Duration::from_millis(400);
@@ -132,26 +132,39 @@ pub fn view(app: &mut App, ui: &mut Ui) {
             app.pan -= scroll;
         } else if scroll.x.abs() > scroll.y.abs() {
             let now = Instant::now();
-            if now < app.swipe_cooldown {
+            if now.duration_since(app.swipe_last) > SWIPE_GAP {
+                // A long pause ends the gesture: the next input starts a
+                // fresh swipe.
                 app.swipe_x = 0.0;
-            } else {
-                if now.duration_since(app.swipe_last) > SWIPE_GAP {
-                    // A long pause starts a fresh swipe.
-                    app.swipe_x = 0.0;
+                app.swipe_against = 0.0;
+            }
+            app.swipe_last = now;
+            if app.swipe_x.abs() >= SWIPE_PX {
+                // A swipe already paged within this gesture. Same-direction
+                // input — the flick's momentum, however far it travels — is
+                // discarded; only an equal swipe against the locked
+                // direction pages back.
+                if scroll.x.signum() != app.swipe_x.signum() {
+                    app.swipe_against += scroll.x.abs();
+                    if app.swipe_against >= SWIPE_PX {
+                        app.swipe_against = 0.0;
+                        app.swipe_x = -app.swipe_x;
+                        let action = if app.swipe_x < 0.0 {
+                            Action::PrevImage
+                        } else {
+                            Action::NextImage
+                        };
+                        app.act(action, ui.ctx());
+                    }
                 }
-                app.swipe_x += scroll.x;
-                app.swipe_last = now;
-                if app.swipe_x.abs() >= SWIPE_PX {
-                    app.swipe_x = 0.0;
-                    app.swipe_cooldown = now + SWIPE_COOLDOWN;
+            } else {
+                app.swipe_x = (app.swipe_x + scroll.x).clamp(-SWIPE_PX, SWIPE_PX);
+                if app.swipe_x == SWIPE_PX {
                     // Swiping left (content moves left) reveals the next
                     // picture, the way a photo carousel does.
-                    let action = if scroll.x > 0.0 {
-                        Action::NextImage
-                    } else {
-                        Action::PrevImage
-                    };
-                    app.act(action, ui.ctx());
+                    app.act(Action::NextImage, ui.ctx());
+                } else if app.swipe_x == -SWIPE_PX {
+                    app.act(Action::PrevImage, ui.ctx());
                 }
             }
         }

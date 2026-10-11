@@ -444,11 +444,15 @@ pub struct App {
     pub slideshow_saved: Option<SlideshowView>,
 
     /// Horizontal trackpad input accumulated toward a left/right image swipe
-    /// (see `viewer::view`); the cooldown keeps a flick's momentum from
-    /// paging through several images at once.
+    /// (see `viewer::view`); once it reaches the threshold the image switches
+    /// and the gesture is locked, so no matter how far the same swipe keeps
+    /// travelling (the flick's momentum included) it cannot page a second
+    /// time.
     pub swipe_x: f32,
+    /// Opposite-direction input accumulated against a locked swipe; reaching
+    /// the threshold here pages back and re-locks the other way.
+    pub swipe_against: f32,
     pub swipe_last: Instant,
-    pub swipe_cooldown: Instant,
 
     pub fullscreen: bool,
 
@@ -677,8 +681,8 @@ impl App {
             slideshow_fullscreen: true,
             slideshow_saved: None,
             swipe_x: 0.0,
+            swipe_against: 0.0,
             swipe_last: Instant::now(),
-            swipe_cooldown: Instant::now(),
             fullscreen: false,
             settings_open: false,
             text_focused: false,
@@ -4604,8 +4608,8 @@ mod tests {
     }
 
     /// While the picture fits, a horizontal swipe pages to the neighbouring
-    /// image: only past a real swipe distance, in either direction, and a
-    /// flick's momentum must not page through several images at once.
+    /// image: only past a real swipe distance, and one swipe — however far
+    /// it keeps travelling, momentum included — pages exactly once.
     #[test]
     fn horizontal_swipe_browses_when_the_picture_fits() {
         let dir = fixture_dir("swipe");
@@ -4626,27 +4630,43 @@ mod tests {
         assert_eq!(app.swipe_x, 60.0);
         assert_eq!(app.selected, first);
 
-        // The rest of it crosses the threshold: one step forward.
+        // The rest of it crosses the threshold: one step forward, and the
+        // gesture locks at the threshold.
         scroll_frame(&ctx, &mut app, &mut time, egui::vec2(60.0, 0.0));
         assert_eq!(app.selected, next, "a left swipe reveals the next image");
-        assert_eq!(app.swipe_x, 0.0);
+        assert_eq!(app.swipe_x, 120.0, "a paged swipe locks at the threshold");
 
-        // The flick's momentum arrives within the cooldown: swallowed.
+        // The flick's momentum keeps the gesture locked: no matter how far
+        // the same swipe keeps travelling, it cannot page a second time.
         scroll_frame(&ctx, &mut app, &mut time, egui::vec2(200.0, 0.0));
         assert_eq!(app.selected, next, "momentum must not page again");
-        assert_eq!(app.swipe_x, 0.0);
+        scroll_frame(&ctx, &mut app, &mut time, egui::vec2(600.0, 0.0));
+        assert_eq!(app.selected, next, "one far swipe pages exactly once");
 
-        // A swipe the other way pages back.
-        app.swipe_cooldown = std::time::Instant::now();
+        // A fresh swipe the other way pages back.
         scroll_frame(&ctx, &mut app, &mut time, egui::vec2(-130.0, 0.0));
         assert_eq!(
             app.selected, first,
             "a right swipe reveals the previous image"
         );
+        assert_eq!(app.swipe_x, -120.0, "the lock flips with the page");
+
+        // And a fresh gesture that is huge from the start pages exactly
+        // once.
+        app.swipe_x = 0.0;
+        app.swipe_against = 0.0;
+        scroll_frame(&ctx, &mut app, &mut time, egui::vec2(500.0, 0.0));
+        assert_eq!(app.selected, next);
+        assert_eq!(app.swipe_x, 120.0);
+        scroll_frame(&ctx, &mut app, &mut time, egui::vec2(500.0, 0.0));
+        assert_eq!(
+            app.selected, next,
+            "the rest of the same swipe is discarded"
+        );
 
         // A vertical scroll while fitted does nothing at all.
         scroll_frame(&ctx, &mut app, &mut time, egui::vec2(0.0, -400.0));
-        assert_eq!(app.selected, first);
+        assert_eq!(app.selected, next);
         assert!(app.fit, "a vertical scroll while fitted must not zoom");
 
         std::fs::remove_dir_all(&dir).unwrap();
