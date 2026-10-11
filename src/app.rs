@@ -32,6 +32,8 @@ pub struct FullEntry {
     pub texture: TextureHandle,
     pub width: u32,
     pub height: u32,
+    /// Bytes of the uploaded texture (clamped), not of the decoded original.
+    pub bytes: usize,
     pub info: Info,
 }
 
@@ -53,6 +55,9 @@ pub struct Caches {
     thumb_bytes: usize,
     full_bytes: usize,
     pub pending: HashSet<(Kind, PathBuf, u32)>,
+    /// Full-size decodes that failed: re-requesting them every frame would put
+    /// the viewer into the same Loading-flicker loop as the eviction bug.
+    failed_fulls: HashSet<PathBuf>,
 }
 
 const MAX_THUMBS: usize = 4000;
@@ -61,6 +66,10 @@ const MAX_FULLS: usize = 6;
 /// texture cache without bound.
 const MAX_THUMB_BYTES: usize = 96 * 1024 * 1024;
 const MAX_FULL_BYTES: usize = 192 * 1024 * 1024;
+/// Longest side of an uploaded full-size texture (~144 MB RGBA at the limit).
+const MAX_FULL_TEXTURE_SIDE: u32 = 6000;
+/// Neighbour prefetch skips pictures whose decode would dwarf the budget.
+const MAX_PREFETCH_PIXELS: u64 = 50_000_000;
 
 fn rgba_bytes(width: u32, height: u32) -> usize {
     width as usize * height as usize * 4
@@ -73,6 +82,15 @@ impl Caches {
 
     pub fn full(&self, path: &Path) -> Option<&FullEntry> {
         self.fulls.get(path)
+    }
+
+    pub fn full_failed(&self, path: &Path) -> bool {
+        self.failed_fulls.contains(path)
+    }
+
+    /// Forget failed decodes, e.g. after a refresh: the file may have changed.
+    pub fn clear_failures(&mut self) {
+        self.failed_fulls.clear();
     }
 
     /// Format + EXIF without decoding pixels, cached because the Information
@@ -121,8 +139,24 @@ impl Caches {
         self.pending.insert(key);
     }
 
+    /// Move a full-size entry to the back of the LRU so the image actually on
+    /// screen is never the one evicted by `trim` — otherwise the viewer and its
+    /// neighbour prefetch chase each other and the picture flickers.
+    pub fn protect_full(&mut self, path: &Path) {
+        if !self.fulls.contains_key(path) {
+            return;
+        }
+        if let Some(at) = self.fulls_order.iter().position(|k| k == path) {
+            let key = self.fulls_order.remove(at).expect("position found");
+            self.fulls_order.push_back(key);
+        }
+    }
+
     /// Move finished decodes into the texture caches. Returns how many arrived.
-    pub fn pump(&mut self, ctx: &Context, loader: &Loader) -> usize {
+    /// `protect` is the picture currently on screen: it is moved to the back of
+    /// the LRU before eviction so a prefetch landing behind it cannot push the
+    /// displayed image out (the classic viewer flicker).
+    pub fn pump(&mut self, ctx: &Context, loader: &Loader, protect: Option<&Path>) -> usize {
         let replies = loader.drain(24);
         let arrived = replies.len();
         for reply in replies {
@@ -131,15 +165,26 @@ impl Caches {
                 .remove(&(request.kind, request.path.clone(), request.size));
             let built = match reply.result {
                 Ok(decoded) => {
-                    let image = if decoded.premultiplied {
+                    // Never hand the GPU a texture bigger than it advertises:
+                    // an oversized upload fails, the cache entry never sticks and
+                    // the viewer re-requests the same picture every frame.
+                    let max_side = ctx.input(|i| i.max_texture_side).max(512) as u32;
+                    // A full-size texture also has to fit the resident byte
+                    // budget, or one panorama evicts everything and thrashes.
+                    let cap = match request.kind {
+                        Kind::Full => max_side.min(MAX_FULL_TEXTURE_SIDE),
+                        _ => max_side,
+                    };
+                    let upload = decoded.scaled(cap, cap);
+                    let image = if upload.premultiplied {
                         egui::ColorImage::from_rgba_premultiplied(
-                            [decoded.width as usize, decoded.height as usize],
-                            &decoded.rgba,
+                            [upload.width as usize, upload.height as usize],
+                            &upload.rgba,
                         )
                     } else {
                         egui::ColorImage::from_rgba_unmultiplied(
-                            [decoded.width as usize, decoded.height as usize],
-                            &decoded.rgba,
+                            [upload.width as usize, upload.height as usize],
+                            &upload.rgba,
                         )
                     };
                     let name = format!(
@@ -157,14 +202,23 @@ impl Caches {
                         Kind::Full => TextureOptions::LINEAR,
                     };
                     let texture = ctx.load_texture(name, image, options);
-                    Some((texture, decoded.width, decoded.height))
+                    Some((
+                        texture,
+                        upload.width,
+                        upload.height,
+                        decoded.width,
+                        decoded.height,
+                    ))
                 }
                 Err(error) => {
                     log::warn!("{}: {error}", request.path.display());
+                    if request.kind == Kind::Full {
+                        self.failed_fulls.insert(request.path.clone());
+                    }
                     None
                 }
             };
-            let Some((texture, width, height)) = built else {
+            let Some((texture, tex_w, tex_h, width, height)) = built else {
                 continue;
             };
             match request.kind {
@@ -176,7 +230,7 @@ impl Caches {
                             self.thumbs_order.remove(at);
                         }
                     }
-                    self.thumb_bytes += rgba_bytes(width, height);
+                    self.thumb_bytes += rgba_bytes(tex_w, tex_h);
                     self.thumbs_order.push_back(key.clone());
                     self.thumbs.insert(
                         key,
@@ -190,13 +244,15 @@ impl Caches {
                 Kind::Full => {
                     let info = imaging::info(&request.path);
                     let key = request.path.clone();
+                    self.failed_fulls.remove(&key);
                     if let Some(old) = self.fulls.remove(&key) {
-                        self.full_bytes -= rgba_bytes(old.width, old.height);
+                        self.full_bytes -= old.bytes;
                         if let Some(at) = self.fulls_order.iter().position(|k| *k == key) {
                             self.fulls_order.remove(at);
                         }
                     }
-                    self.full_bytes += rgba_bytes(width, height);
+                    let bytes = rgba_bytes(tex_w, tex_h);
+                    self.full_bytes += bytes;
                     self.fulls_order.push_back(key.clone());
                     self.fulls.insert(
                         key,
@@ -204,17 +260,18 @@ impl Caches {
                             texture,
                             width,
                             height,
+                            bytes,
                             info,
                         },
                     );
                 }
             }
         }
-        self.trim();
+        self.trim(protect);
         arrived
     }
 
-    fn trim(&mut self) {
+    fn trim(&mut self, protect: Option<&Path>) {
         while self.thumbs_order.len() > MAX_THUMBS || self.thumb_bytes > MAX_THUMB_BYTES {
             let Some(key) = self.thumbs_order.pop_front() else {
                 break;
@@ -223,12 +280,22 @@ impl Caches {
                 self.thumb_bytes -= rgba_bytes(old.width, old.height);
             }
         }
-        while self.fulls_order.len() > MAX_FULLS || self.full_bytes > MAX_FULL_BYTES {
+        // The displayed picture goes to the back of the LRU *before* eviction:
+        // arrivals queued behind it must be the ones that fall out.
+        if let Some(path) = protect {
+            if let Some(at) = self.fulls_order.iter().position(|k| k == path) {
+                let key = self.fulls_order.remove(at).expect("position found");
+                self.fulls_order.push_back(key);
+            }
+        }
+        while self.fulls_order.len() > 1
+            && (self.fulls_order.len() > MAX_FULLS || self.full_bytes > MAX_FULL_BYTES)
+        {
             let Some(key) = self.fulls_order.pop_front() else {
                 break;
             };
             if let Some(old) = self.fulls.remove(&key) {
-                self.full_bytes -= rgba_bytes(old.width, old.height);
+                self.full_bytes -= old.bytes;
             }
         }
     }
@@ -534,7 +601,11 @@ impl App {
             neighbours.push(self.entries[indices[next]].path.clone());
         }
         for path in neighbours {
-            if self.caches.full(&path).is_none() {
+            if self.caches.full(&path).is_none() && !self.caches.full_failed(&path) {
+                let info = self.caches.info(&path);
+                if (info.width as u64) * (info.height as u64) > MAX_PREFETCH_PIXELS {
+                    continue;
+                }
                 self.caches.prefetch(&self.loader, Kind::Full, &path, 0);
             }
         }
@@ -636,7 +707,10 @@ impl App {
                     self.set_dir(pics);
                 }
             }
-            Action::Refresh => self.rescan(),
+            Action::Refresh => {
+                self.rescan();
+                self.caches.clear_failures();
+            }
             Action::Delete => {
                 if let Some(entry) = self.current() {
                     self.confirm_delete = Some(entry.path.clone());
@@ -969,7 +1043,12 @@ impl App {
     }
 
     fn pump(&mut self, ctx: &Context) {
-        let arrived = self.caches.pump(ctx, &self.loader);
+        let protect = if self.mode == Mode::Viewer {
+            self.current_image_path()
+        } else {
+            None
+        };
+        let arrived = self.caches.pump(ctx, &self.loader, protect.as_deref());
         if arrived > 0 || !self.caches.pending.is_empty() {
             ctx.request_repaint_after(Duration::from_millis(40));
         }
@@ -2215,6 +2294,37 @@ mod tests {
     }
 
     #[test]
+    fn clicking_a_tree_folder_navigates_to_it() {
+        let home = dirs::home_dir().expect("home dir");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(home.clone()));
+        let mut time = 1.0;
+
+        let home_label = home.file_name().unwrap().to_string_lossy().to_string();
+        settle(&ctx, &mut app, &mut time);
+        assert!(click_label(&ctx, &mut app, &format!("tree:{home_label}"), &mut time));
+        assert_eq!(app.dir, home);
+        assert!(app.tree_selected.is_some());
+
+        settle(&ctx, &mut app, &mut time);
+        let child_label = {
+            let index = app.tree.find(&home).expect("home node");
+            app.tree
+                .node(index)
+                .children
+                .first()
+                .map(|&c| app.tree.node(c).label.clone())
+                .expect("a child folder")
+        };
+        let child_path = {
+            let index = app.tree.find(&home).expect("home node");
+            app.tree.node(app.tree.node(index).children[0]).path.clone()
+        };
+        assert!(click_label(&ctx, &mut app, &format!("tree:{child_label}"), &mut time));
+        assert_eq!(app.dir, child_path);
+    }
+
+    #[test]
     fn files_filter_applies_from_the_address_row() {
         let dir = std::env::temp_dir().join("lumiere_ui_test_filter");
         let _ = std::fs::remove_dir_all(&dir);
@@ -2279,6 +2389,169 @@ mod tests {
         assert!(text.contains("Explore"));
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn viewer_keeps_the_current_image_when_the_full_cache_overflows() {
+        let dir = std::env::temp_dir().join("lumiere_ui_test_fullcache");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // 5000x5000 RGBA is ~100 MB each: three of them blow the full budget.
+        for name in ["a.png", "b.png", "c.png"] {
+            image::RgbaImage::from_pixel(5000, 5000, image::Rgba([9, 99, 199, 255]))
+                .save(dir.join(name))
+                .unwrap();
+        }
+
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        app.act(Action::NextImage, &ctx);
+        app.act(Action::OpenViewer, &ctx);
+        let current = app.current_image_path().expect("current image");
+
+        // A backend that can hold the 5000x5000 uploads, so the byte budget
+        // (not the texture clamp) is what overflows here.
+        let big_input = || {
+            let mut input = raw_input();
+            input.max_texture_side = Some(16384);
+            input
+        };
+
+        let mut arrived = false;
+        for frame in 0..120 {
+            let mut input = big_input();
+            input.time = Some(1.0 + frame as f64 * 0.1);
+            let _ = ctx.run(input, |ctx| app.draw(ctx));
+            if app.caches.full(&current).is_some() {
+                arrived = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        assert!(arrived, "current image never made it into the full cache");
+
+        // Let the neighbour prefetches land; they overflow the budget and must
+        // evict the neighbours, not the image on screen.
+        for frame in 0..120 {
+            let mut input = big_input();
+            input.time = Some(20.0 + frame as f64 * 0.1);
+            let _ = ctx.run(input, |ctx| app.draw(ctx));
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        assert!(
+            app.caches.full(&current).is_some(),
+            "the displayed image was evicted: the viewer would flicker"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn oversized_images_are_clamped_to_the_texture_limit() {
+        let dir = std::env::temp_dir().join("lumiere_ui_test_texclamp");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        image::RgbaImage::from_pixel(3000, 3000, image::Rgba([9, 99, 199, 255]))
+            .save(dir.join("big.png"))
+            .unwrap();
+
+        // Default test context advertises max_texture_side = 2048.
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        app.act(Action::OpenViewer, &ctx);
+        let current = app.current_image_path().expect("current image");
+
+        for frame in 0..120 {
+            let mut input = raw_input();
+            input.time = Some(1.0 + frame as f64 * 0.1);
+            let _ = ctx.run(input, |ctx| app.draw(ctx));
+            if app.caches.full(&current).is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        let entry = app.caches.full(&current).expect("clamped texture cached");
+        assert_eq!((entry.width, entry.height), (3000, 3000));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn real_photo_1jpg_stays_cached() {
+        let dir = PathBuf::from("/Users/james/Pictures/Photo");
+        if !dir.join("1.jpg").is_file() {
+            return;
+        }
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let idx = app.entries.iter().position(|e| e.name == "1.jpg").expect("1.jpg listed");
+        app.selected = idx;
+        app.act(Action::OpenViewer, &ctx);
+        let current = dir.join("1.jpg");
+
+        let mut missing_after_arrival = 0;
+        let mut arrived = false;
+        for frame in 0..300 {
+            let mut input = raw_input();
+            input.time = Some(1.0 + frame as f64 * 0.1);
+            let _ = ctx.run(input, |ctx| app.draw(ctx));
+            if app.caches.full(&current).is_some() {
+                arrived = true;
+            } else if arrived {
+                missing_after_arrival += 1;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(arrived, "1.jpg never made it into the full cache");
+        assert_eq!(
+            missing_after_arrival, 0,
+            "1.jpg disappeared from the cache after arriving: flicker"
+        );
+    }
+
+    #[test]
+    fn real_photo_huge_image_stays_cached() {
+        let dir = PathBuf::from("/Users/james/Pictures/Photo");
+        let huge = dir.join("影像.jpg");
+        if !huge.is_file() {
+            return;
+        }
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let idx = app
+            .entries
+            .iter()
+            .position(|e| e.path == huge)
+            .expect("影像.jpg listed");
+        app.selected = idx;
+        app.act(Action::OpenViewer, &ctx);
+
+        let mut arrived = false;
+        let mut frames_after_arrival = 0;
+        let mut missing_after_arrival = 0;
+        for frame in 0..600 {
+            let mut input = raw_input();
+            input.time = Some(1.0 + frame as f64 * 0.1);
+            let _ = ctx.run(input, |ctx| app.draw(ctx));
+            if app.caches.full(&huge).is_some() {
+                arrived = true;
+                frames_after_arrival += 1;
+                if frames_after_arrival > 40 {
+                    break;
+                }
+            } else if arrived {
+                missing_after_arrival += 1;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(arrived, "影像.jpg never decoded into the full cache");
+        assert_eq!(
+            missing_after_arrival, 0,
+            "the huge image was evicted while displayed: flicker"
+        );
+        let entry = app.caches.full(&huge).expect("cached entry");
+        assert!(entry.bytes <= MAX_FULL_BYTES, "texture over budget");
+        assert_eq!((entry.width, entry.height), (10200, 14031));
     }
 
     fn fixture_dir(tag: &str) -> PathBuf {
@@ -2677,7 +2950,7 @@ mod tests {
                 },
             );
         }
-        caches.trim();
+        caches.trim(None);
 
         let expected = MAX_THUMB_BYTES / rgba_bytes(1000, 1000);
         assert_eq!(caches.thumbs.len(), expected);
@@ -2758,3 +3031,4 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
+

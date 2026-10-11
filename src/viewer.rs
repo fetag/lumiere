@@ -26,7 +26,10 @@ pub fn view(app: &mut App, ui: &mut Ui) {
         .caches
         .full(&path)
         .map(|entry| (entry.texture.id(), entry.width, entry.height));
-    if cached.is_none() {
+    if cached.is_some() {
+        app.caches.protect_full(&path);
+    }
+    if cached.is_none() && !app.caches.full_failed(&path) {
         app.caches.request(&app.loader, Kind::Full, &path, 0);
     }
     app.prefetch_neighbours();
@@ -35,10 +38,15 @@ pub fn view(app: &mut App, ui: &mut Ui) {
     let response = ui.allocate_rect(canvas, Sense::click_and_drag());
 
     let Some((texture, width, height)) = cached else {
+        let label = if app.caches.full_failed(&path) {
+            "Failed to load image"
+        } else {
+            "Loading..."
+        };
         ui.painter().text(
             canvas.center(),
             Align2::CENTER_CENTER,
-            "Loading...",
+            label,
             FontId::proportional(14.0),
             Color32::WHITE,
         );

@@ -70,7 +70,17 @@ impl Loader {
                         };
                         drop(pending);
 
-                        let result = produce(&request);
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            produce(&request)
+                        }))
+                        .unwrap_or_else(|panic| {
+                            let msg = panic
+                                .downcast_ref::<String>()
+                                .cloned()
+                                .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                                .unwrap_or_else(|| "panic".to_string());
+                            Err(format!("decoder panicked: {msg}"))
+                        });
                         let _ = tx.send(Reply { request, result });
                     }
                 });

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use image::imageops;
-use image::{ImageFormat, ImageReader, RgbaImage};
+use image::{ImageDecoder, ImageFormat, ImageReader, RgbaImage};
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -188,7 +188,17 @@ fn read_orientation(path: &Path) -> Option<u32> {
 #[derive(Clone)]
 pub struct Info {
     pub format: String,
+    pub width: u32,
+    pub height: u32,
     pub exif: Vec<(String, String)>,
+}
+
+/// Header-only dimensions: no pixels are decoded.
+pub fn pixel_size(path: &Path) -> Option<(u32, u32)> {
+    let reader = ImageReader::open(path).ok()?.with_guessed_format().ok()?;
+    let decoder = reader.into_decoder().ok()?;
+    let (w, h) = decoder.dimensions();
+    (w > 0 && h > 0).then_some((w, h))
 }
 
 pub fn info(path: &Path) -> Info {
@@ -198,8 +208,11 @@ pub fn info(path: &Path) -> Info {
             format = format!("{fmt:?}").to_uppercase();
         }
     }
+    let (width, height) = pixel_size(path).unwrap_or((0, 0));
     Info {
         format,
+        width,
+        height,
         exif: exif_summary(path),
     }
 }
