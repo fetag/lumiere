@@ -184,7 +184,7 @@ fn read_orientation(path: &Path) -> Option<u32> {
     }
 }
 
-/// Metadata shown in the information pane.
+/// Metadata shown in the preview pane.
 #[derive(Clone)]
 pub struct Info {
     pub format: String,
@@ -312,7 +312,7 @@ fn short_entry(tag: u16, value: u16) -> [u8; 12] {
     entry
 }
 
-/// Writes a real JPEG with an APP1/EXIF block, so the Information panel can be
+/// Writes a real JPEG with an APP1/EXIF block, so the preview pane can be
 /// tested against actual metadata instead of an empty tag list.
 #[cfg(test)]
 pub fn write_exif_jpeg(path: &Path) -> std::io::Result<()> {

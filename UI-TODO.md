@@ -61,10 +61,22 @@
     - 自動化操作注意：本環境下 `System Events` 的 `keystroke`／`key code` 送不到 modal 面板（Cmd+Shift+G、Cmd+↑ 皆無效，原因未明），但 **AXPress 可用**：面板在 AX 中是 Lumiere process 的 `AXDialog` 視窗，路徑 popup（`Where:` pop up button）、其 menu items、以及 New Folder/Cancel/Choose/Move/Copy 按鈕都可 `perform action "AXPress"`。側欄 row 的 AXPress 則不會觸發導航（要導航請用路徑 popup）。
     - 跨平台 fallback 路徑（非 macOS 的 `Unavailable` stub）只能人工檢查（本機只有 `aarch64-apple-darwin` target）。
 
-- [ ] **把刪除流程改成 macOS「移到垃圾桶」語言與標準 destructive alert。**
+- [x] **把刪除流程改成 macOS「移到垃圾桶」語言與標準 destructive alert。**
   - 現況／依據：`src/app.rs:1736-1766` 使用標題 `Confirm Delete` 與 `Yes`/`No`；README 指出實際是用 `trash` crate 移至 Trash，功能意義與介面文案不一致。
   - 實作方向：命令命名為 `Move to Trash`，快捷鍵為 `⌘⌫`；使用原生 alert 或等效 macOS alert，明確列出檔名與數量，主要破壞性按鈕標為「Move to Trash」，次要按鈕為「Cancel」，預設焦點為取消。多選時一次處理並顯示結果。
   - 驗收：刪除一張或多張照片時，使用者會看到「Move to Trash」而非 Delete/Yes/No；按 `⌘⌫` 能完成、Esc/Cancel 不會變更檔案；檔案可從 Finder 垃圾桶復原。
+  - 已完成（交接）：
+    - 新增 `src/alerts.rs`：`Confirmation`（`Confirmed`／`Cancelled`／`Unavailable`）與 `confirm_trash(paths)`。macOS 用真 `NSAlert`（`setAlertStyle`、`runModal`；modal、blocking，模式與 `panels.rs` 相同，egui canvas 在 alert 期間凍結在後面）。安全門與 `panels.rs` 一致：test build 直接回 `Unavailable`（沒有 `NSApplication` run loop 可託 modal），非主執行緒亦回 `Unavailable`；兩條 fallback 路徑都走內建確認對話框 `confirm_trash_window`。
+    - 文案兩端共用：`trash_alert_text(paths)` 產生 messageText `Move to Trash`＋informative text——單項 `Move "name" to the Trash?`；多項 `Move N items to the Trash?` 加編碼列出檔名，超過 5 項截斷為 `…and N more`。`trash_names()` 取檔名（無檔名時回退完整路徑）。內建對話框（標題 `Move to Trash`、按鈕 `Move to Trash`／`Cancel`）复用同一份文字，原生與 fallback 不可能走字。
+    - **預設焦點＝Cancel**：NSAlert 第一個加入的按鈕就是 default（Return），標題為 `Cancel` 的按鈕另外自動拿 Esc，所以「Cancel」先加、「Move to Trash」後加——鍵盤兩條路都只能取消，無法直接移到垃圾桶。AX 實測 Cancel 按鈕 `AXFocused=1`。**注意副作用**：視覺按鈕順序變成 [Move to Trash][Cancel]（窄 alert 時上下排列），這是「預設焦點為取消」的直接後果；若要慣例的 [Cancel][Move to Trash] 順序，就得把 default 換回移動鈕，與規格衝突。
+    - alert 等級用 `NSAlertStyleWarning` 而非 `Critical`：AppKit 文件明載 caution 徽章「不應使用於目的只是移除資料的動作，例如存檔或清空垃圾桶」——垃圾桶可復原，屬可預期移除。
+    - 多選：`Action::MoveToTrash` → `begin_trash(selection_paths())`（原 `transfer_paths` 改名，P0-4 的兩條 transfer 路徑一併改用）；multi 索引先排序，讓 alert 列出的順序＝grid 順序。右鍵選單是 item 層級（只傳被點的那一項），與該選單其他項（View／Get Info 皆單項語意）一致。右鍵選單 `Delete` 按鈕改名 `Move to Trash`，順帶把 `Properties` 對齊 `Get Info`（P1-4 只剩排序與 Share 等）。
+    - `apply_trash(paths)`：一次批次以 `trash` crate 移動，失敗逐項記（檔名、error），成功才清選取＋`rescan`。結果 toast：單項成功 `Moved name to the Trash`、多項成功 `Moved N items to the Trash`、部分失敗 `Moved x of N items to the Trash: name — error`、全失敗 `Couldn't move N items to the Trash: name`。
+    - 狀態欄位：`confirm_delete: Option<PathBuf>` → `confirm_trash: Option<Vec<PathBuf>>`（只由內建對話框使用；macOS 走原生 alert 時恆為 `None`）。Esc 仍關閉內建對話框（`escape_closes_open_dialogs` 已更新）。
+    - 依賴：`objc2-app-kit` 加 features `NSAlert`、`NSButton`、`NSView`（`addButtonWithTitle` 需要後兩者）。
+    - 測試：`trash_confirm_covers_the_whole_selection`（`⌘⌫` 納入整組 multi 選取、grid 順序）、`apply_trash_reports_the_result`（真的把 fixture 檔移進垃圾桶並驗成功／失敗文案；順帶證實 `trash` crate 在 headless test build 可用）、`alerts.rs` 三個純字串測試。52 passed，`cargo fmt --check`、`cargo clippy --all-targets` 全綠。
+    - live 驗證（AX）：AXPress 觸發 File ▸ Move to Trash → NSAlert 顯示 `Move to Trash`／`Move "sub" to the Trash?`，按鈕 Move to Trash／Cancel，Cancel `AXFocused=1`；按 Cancel 後檔案原封不動、無殘留視窗；Select All＋Move to Trash → `Move 3 items to the Trash?`＋1./2./3. 列出三張圖；按 Move to Trash 後三檔離開目錄（進垃圾桶）、未選取的資料夾保留、grid 自動 rescan；主視窗 `⌘⌫`（key code 51＋Command）直接觸發。本環境 keystroke 送不到 modal alert（同 P0-4 的 NSOpenPanel 限制），default 鍵語義改以 `AXFocused` 屬性驗證。
+    - 留給後面的（未動）：右鍵選單的 `Open with default app` 文案與整體排序（P1-4）；批次結果仍是單一 toast，失敗檔案清單＋Show in Finder／Retry 留給狀態回饋項（P1-6）。
 
 - [ ] **建立最小可用的原生 Accessibility 基礎。**
   - 現況／依據：README 的 Testing 段落明載「egui windows 沒有 native accessibility elements」；`src/browser.rs` 的縮圖、`src/viewer.rs` 的浮動工具列與 `src/theme.rs` 的 `draw_icon` 圖示皆由 canvas 繪製。
@@ -104,6 +116,7 @@
   - 現況／依據：`src/browser.rs:282-374` 將選取縮圖整塊填為 `classic::NAVY`，檔名固定 11 px；`src/browser.rs:425-` 以兩個裸文字 tab 呈現 Preview / Information；`src/classic.rs:120-133` 使用深藍色 section label。
   - 實作方向：採 macOS selection tint 與 sidebar/list selection 規則；縮圖保留適當留白、支援多行檔名或省略號與完整名稱 tooltip；Inspector 使用標準 segmented control/tab 樣式，內容採 key/value 對齊、可複製的 metadata 與明確 loading/error state。
   - 驗收：明暗模式、Increase Contrast 下仍能一眼辨識選取項；長檔名不會只靠 11 px 文字難以識別，至少可懸停取得完整名稱；Inspector 的焦點、選擇與讀取狀態清楚。
+  - 進度（部分完成，經使用者指示）：Preview／Information 兩個 tab 已合併——**Information 整個移除**，其多出來的欄位（Type、Path、Dimensions、Format、EXIF）直接併入 Preview 面板下方（`src/browser.rs` 的 `preview_pane`，去掉了 tab row 與 `inspector_tab` 狀態欄位；`Get Info`／右鍵選單只負責打開面板）。因此實作方向裡的「segmented control/tab 樣式」已無對象；剩餘：selection tint、長檔名省略號／tooltip、metadata 可複製、loading/error state（現況 `Dimensions: loading...` 在完整解碼前恆顯示，路徑等長值無省略號，皆沿用舊樣式未改）。
 
 - [ ] **建立狀態、錯誤與進度回饋的 macOS 語言。**
   - 現況／依據：`src/app.rs:1372-1412` 使用三格 Win95 status field；`src/app.rs:1710-1732`、`src/app.rs:1750-1755` 只產生短暫 toast／字串錯誤；`src/viewer.rs:39-47` 僅畫出 `Loading…`。

@@ -1,5 +1,6 @@
 //! Lumiere - a classic 3.x style image browser and viewer for macOS.
 
+mod alerts;
 mod app;
 mod browser;
 mod fsmodel;

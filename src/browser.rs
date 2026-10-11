@@ -412,15 +412,14 @@ fn thumbnail(
             app.set_dir(entry.path.clone());
             ui.close();
         }
-        if ui.button("Properties").clicked() {
+        if ui.button("Get Info").clicked() {
             app.selected = index;
-            app.inspector_tab = 1;
             app.show_inspector = true;
             ui.close();
         }
-        if ui.button("Delete").clicked() {
+        if ui.button("Move to Trash").clicked() {
             app.selected = index;
-            app.confirm_delete = Some(entry.path.clone());
+            app.begin_trash(vec![entry.path.clone()]);
             ui.close();
         }
     });
@@ -441,22 +440,10 @@ fn thumbnail(
 }
 
 // ---------------------------------------------------------------------------
-// Right pane: preview + information
+// Right pane: preview with the file's metadata below it
 // ---------------------------------------------------------------------------
 
 pub fn preview_pane(app: &mut App, ui: &mut Ui) {
-    let mut tab = app.inspector_tab;
-    ui.horizontal(|ui| {
-        if ui.selectable_label(tab == 0, "Preview").clicked() {
-            tab = 0;
-        }
-        if ui.selectable_label(tab == 1, "Information").clicked() {
-            tab = 1;
-        }
-    });
-    ui.separator();
-    app.inspector_tab = tab;
-
     let Some(entry) = app.current().cloned() else {
         ui.label("No selection");
         return;
@@ -529,56 +516,53 @@ pub fn preview_pane(app: &mut App, ui: &mut Ui) {
         imaging::format_time(entry.modified)
     ));
 
-    if tab == 1 {
-        ui.add_space(6.0);
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                let mut rows: Vec<(String, String)> = vec![
-                    ("Name".into(), entry.name.clone()),
-                    (
-                        "Type".into(),
-                        if entry.is_dir {
-                            "Folder".to_owned()
-                        } else {
-                            imaging::extension(&entry.path).to_uppercase()
-                        },
-                    ),
-                    ("Size".into(), imaging::human_bytes(entry.size)),
-                    ("Modified".into(), imaging::format_time(entry.modified)),
-                    ("Path".into(), entry.path.display().to_string()),
-                ];
-                if let Some(full) = app.caches.full(&entry.path) {
-                    rows.push((
-                        "Dimensions".into(),
-                        format!("{} x {}", full.width, full.height),
-                    ));
-                    rows.push(("Format".into(), full.info.format.clone()));
-                    for (key, value) in &full.info.exif {
-                        rows.push((key.clone(), value.clone()));
-                    }
-                } else if entry.is_image {
-                    app.caches
-                        .request(&app.loader, Kind::Preview, &entry.path, width as u32);
-                    rows.push(("Dimensions".into(), "loading...".into()));
-                    let info = app.caches.info(&entry.path);
-                    rows.push(("Format".into(), info.format));
-                    rows.extend(info.exif);
-                }
-
-                egui::Grid::new("info_grid")
-                    .num_columns(2)
-                    .spacing([8.0, 3.0])
-                    .striped(false)
-                    .show(ui, |ui| {
-                        for (key, value) in rows {
-                            ui.label(egui::RichText::new(key).weak().size(12.0));
-                            ui.label(egui::RichText::new(value).size(12.0).monospace());
-                            ui.end_row();
-                        }
-                    });
-            });
+    // The metadata below the picture. It omits the rows the header above
+    // already prints (name, size, modified) and scrolls when it overflows.
+    let mut rows: Vec<(String, String)> = vec![
+        (
+            "Type".into(),
+            if entry.is_dir {
+                "Folder".to_owned()
+            } else {
+                imaging::extension(&entry.path).to_uppercase()
+            },
+        ),
+        ("Path".into(), entry.path.display().to_string()),
+    ];
+    if let Some(full) = app.caches.full(&entry.path) {
+        rows.push((
+            "Dimensions".into(),
+            format!("{} x {}", full.width, full.height),
+        ));
+        rows.push(("Format".into(), full.info.format.clone()));
+        for (key, value) in &full.info.exif {
+            rows.push((key.clone(), value.clone()));
+        }
+    } else if entry.is_image {
+        app.caches
+            .request(&app.loader, Kind::Preview, &entry.path, width as u32);
+        rows.push(("Dimensions".into(), "loading...".into()));
+        let info = app.caches.info(&entry.path);
+        rows.push(("Format".into(), info.format));
+        rows.extend(info.exif);
     }
+
+    ui.add_space(6.0);
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            egui::Grid::new("info_grid")
+                .num_columns(2)
+                .spacing([8.0, 3.0])
+                .striped(false)
+                .show(ui, |ui| {
+                    for (key, value) in rows {
+                        ui.label(egui::RichText::new(key).weak().size(12.0));
+                        ui.label(egui::RichText::new(value).size(12.0).monospace());
+                        ui.end_row();
+                    }
+                });
+        });
 }
 
 // ---------------------------------------------------------------------------

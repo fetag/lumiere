@@ -94,8 +94,8 @@ impl Caches {
         self.failed_fulls.clear();
     }
 
-    /// Format + EXIF without decoding pixels, cached because the Information
-    /// panel asks for it every frame.
+    /// Format + EXIF without decoding pixels, cached because the preview pane
+    /// asks for it every frame.
     pub fn info(&mut self, path: &Path) -> Info {
         if let Some(info) = self.infos.get(path) {
             return info.clone();
@@ -392,7 +392,6 @@ pub struct App {
     pub show_toolbar: bool,
     pub show_places: bool,
     pub show_status: bool,
-    pub inspector_tab: usize,
 
     pub zoom: f32,
     pub fit: bool,
@@ -414,7 +413,9 @@ pub struct App {
     pub about_open: bool,
     pub explore_open: bool,
     pub explore_path: PathBuf,
-    pub confirm_delete: Option<PathBuf>,
+    /// Paths pending the built-in "move to Trash" confirmation; on macOS the
+    /// native alert is shown instead and this stays `None`.
+    pub confirm_trash: Option<Vec<PathBuf>>,
     pub rename_target: Option<PathBuf>,
     pub rename_text: String,
     pub transfer: Option<Transfer>,
@@ -506,7 +507,6 @@ impl App {
             show_toolbar: true,
             show_places: true,
             show_status: true,
-            inspector_tab: 0,
             zoom: 1.0,
             fit: true,
             pan: Vec2::ZERO,
@@ -523,7 +523,7 @@ impl App {
             about_open: false,
             explore_open: false,
             explore_path: dir.clone(),
-            confirm_delete: None,
+            confirm_trash: None,
             rename_target: None,
             rename_text: String::new(),
             transfer: None,
@@ -731,11 +731,7 @@ impl App {
                 self.rescan();
                 self.caches.clear_failures();
             }
-            Action::MoveToTrash => {
-                if let Some(entry) = self.current() {
-                    self.confirm_delete = Some(entry.path.clone());
-                }
-            }
+            Action::MoveToTrash => self.begin_trash(self.selection_paths()),
             Action::Rename => {
                 if let Some(entry) = self.current().cloned() {
                     self.rename_text = entry.name.clone();
@@ -744,10 +740,7 @@ impl App {
             }
             Action::MoveToFolder => self.begin_transfer(false),
             Action::CopyToFolder => self.begin_transfer(true),
-            Action::GetInfo => {
-                self.inspector_tab = 1;
-                self.show_inspector = true;
-            }
+            Action::GetInfo => self.show_inspector = true,
             Action::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             Action::SelectAll => {
                 self.multi.clear();
@@ -936,14 +929,14 @@ impl App {
                 actions.push(Action::LastImage);
             }
             if i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
-                if self.confirm_delete.is_some()
+                if self.confirm_trash.is_some()
                     || self.rename_target.is_some()
                     || self.transfer.is_some()
                     || self.settings_open
                     || self.about_open
                     || self.explore_open
                 {
-                    self.confirm_delete = None;
+                    self.confirm_trash = None;
                     self.rename_target = None;
                     self.transfer = None;
                     self.settings_open = false;
@@ -1748,11 +1741,12 @@ impl App {
         }
     }
 
-    /// The files/folders a transfer acts on: the multi-selection, or the
-    /// current entry when nothing is selected.
-    fn transfer_paths(&self) -> Vec<PathBuf> {
-        let mut paths: Vec<PathBuf> = self
-            .multi
+    /// The files/folders a batch operation acts on: the multi-selection, in
+    /// grid order, or the current entry when nothing is selected.
+    fn selection_paths(&self) -> Vec<PathBuf> {
+        let mut indices: Vec<usize> = self.multi.iter().copied().collect();
+        indices.sort_unstable();
+        let mut paths: Vec<PathBuf> = indices
             .iter()
             .filter_map(|&index| self.entries.get(index))
             .map(|entry| entry.path.clone())
@@ -1769,7 +1763,7 @@ impl App {
     /// shown and the transfer happens as soon as the user picks a folder;
     /// anywhere else the built-in dialog is shown and applied on confirm.
     fn begin_transfer(&mut self, copy: bool) {
-        let paths = self.transfer_paths();
+        let paths = self.selection_paths();
         if paths.is_empty() {
             return;
         }
@@ -1788,7 +1782,7 @@ impl App {
     /// Fallback (non-native) transfer: remember the pending paths and the
     /// destination the user will type, applied when the dialog confirms.
     fn start_transfer(&mut self, copy: bool) {
-        let paths = self.transfer_paths();
+        let paths = self.selection_paths();
         if paths.is_empty() {
             return;
         }
@@ -1830,6 +1824,64 @@ impl App {
             self.multi.clear();
             self.rescan();
         }
+    }
+
+    /// The "move to Trash" flow for `paths`: confirm first, then apply. On
+    /// macOS the confirmation is a native alert; elsewhere — and in a test
+    /// build — the built-in dialog confirms.
+    pub fn begin_trash(&mut self, paths: Vec<PathBuf>) {
+        if paths.is_empty() {
+            return;
+        }
+        match crate::alerts::confirm_trash(&paths) {
+            crate::alerts::Confirmation::Confirmed => self.apply_trash(&paths),
+            crate::alerts::Confirmation::Cancelled => {}
+            crate::alerts::Confirmation::Unavailable => {
+                self.confirm_trash = Some(paths);
+            }
+        }
+    }
+
+    /// Move `paths` to the Trash with the `trash` crate — the items stay in
+    /// the Finder's Trash, so the operation is recoverable — and report what
+    /// happened for a multi-selection.
+    pub fn apply_trash(&mut self, paths: &[PathBuf]) {
+        let names = crate::alerts::trash_names(paths);
+        let mut moved = 0usize;
+        let mut failures: Vec<(String, String)> = Vec::new();
+        for (path, name) in paths.iter().zip(&names) {
+            match trash::delete(path) {
+                Ok(()) => moved += 1,
+                Err(error) => failures.push((name.clone(), error.to_string())),
+            }
+        }
+        if moved > 0 {
+            self.multi.clear();
+            self.rescan();
+        }
+        let message = match (paths.len(), moved, failures.is_empty()) {
+            (1, 1, _) => format!("Moved {} to the Trash", names[0]),
+            (1, 0, _) => {
+                format!("Couldn't move {} to the Trash: {}", names[0], failures[0].1)
+            }
+            (_, _, true) => format!("Moved {moved} items to the Trash"),
+            (_, 0, _) => {
+                format!(
+                    "Couldn't move {} items to the Trash: {}",
+                    paths.len(),
+                    failures[0].0
+                )
+            }
+            (_, _, _) => {
+                format!(
+                    "Moved {moved} of {} items to the Trash: {} — {}",
+                    paths.len(),
+                    failures[0].0,
+                    failures[0].1
+                )
+            }
+        };
+        self.notify(message);
     }
 
     fn transfer_window(&mut self, ctx: &Context) {
@@ -1911,32 +1963,28 @@ impl App {
         }
     }
 
-    fn confirm_delete_window(&mut self, ctx: &Context) {
-        let Some(path) = self.confirm_delete.clone() else {
+    /// The built-in confirmation dialog, shown where no native alert is
+    /// available. It reuses the alert's own text, so the fallback and the
+    /// native alert cannot drift apart.
+    fn confirm_trash_window(&mut self, ctx: &Context) {
+        let Some(paths) = self.confirm_trash.clone() else {
             return;
         };
-        egui::Window::new("Confirm Delete")
+        let detail = crate::alerts::trash_alert_text(&paths).1;
+        egui::Window::new("Move to Trash")
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                let noun = if path.is_dir() { "folder" } else { "file" };
-                ui.label(format!("Move this {noun} to the Trash?"));
-                ui.label(egui::RichText::new(path.display().to_string()).monospace());
+                ui.label(&detail);
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Yes").clicked() {
-                        match trash::delete(&path) {
-                            Ok(()) => self.notify(format!("Trashed {}", path.display())),
-                            Err(error) => {
-                                self.notify(format!("Delete failed: {error}"));
-                            }
-                        }
-                        self.confirm_delete = None;
-                        self.rescan();
+                    if ui.button("Move to Trash").clicked() {
+                        self.confirm_trash = None;
+                        self.apply_trash(&paths);
                     }
-                    if ui.button("No").clicked() {
-                        self.confirm_delete = None;
+                    if ui.button("Cancel").clicked() {
+                        self.confirm_trash = None;
                     }
                 });
             });
@@ -2112,7 +2160,7 @@ impl App {
         self.explore_window(ctx);
         self.rename_window(ctx);
         self.transfer_window(ctx);
-        self.confirm_delete_window(ctx);
+        self.confirm_trash_window(ctx);
     }
 }
 
@@ -2587,7 +2635,7 @@ mod tests {
         for (path, key, modifiers) in cases {
             let before = (
                 app.rotation,
-                app.confirm_delete.clone(),
+                app.confirm_trash.clone(),
                 app.show_sidebar,
                 app.dir.clone(),
             );
@@ -2602,7 +2650,7 @@ mod tests {
             let _ = ctx.run(input, |ctx| app.draw(ctx));
             let after = (
                 app.rotation,
-                app.confirm_delete.clone(),
+                app.confirm_trash.clone(),
                 app.show_sidebar,
                 app.dir.clone(),
             );
@@ -3057,7 +3105,7 @@ mod tests {
         app.act(Action::OpenFolder, &ctx);
         app.act(Action::MoveToFolder, &ctx);
         assert!(app.transfer.is_some());
-        app.confirm_delete = Some(dir.join("one.png"));
+        app.confirm_trash = Some(vec![dir.join("one.png")]);
         let output = ctx.run(raw_input(), |ctx| app.draw(ctx));
         assert!(output.shapes.len() > plain);
 
@@ -3088,10 +3136,10 @@ mod tests {
         let dir = fixture_dir("escape");
         let ctx = egui::Context::default();
         let mut app = App::build(&ctx, Some(dir.clone()));
-        app.confirm_delete = Some(dir.join("one.png"));
+        app.confirm_trash = Some(vec![dir.join("one.png")]);
         app.act(Action::Settings, &ctx);
         let _ = ctx.run(raw_input(), |ctx| app.draw(ctx));
-        assert!(app.confirm_delete.is_some() && app.settings_open);
+        assert!(app.confirm_trash.is_some() && app.settings_open);
 
         let mut input = raw_input();
         input.events.push(egui::Event::Key {
@@ -3102,7 +3150,7 @@ mod tests {
             repeat: false,
         });
         let _ = ctx.run(input, |ctx| app.draw(ctx));
-        assert!(app.confirm_delete.is_none() && !app.settings_open);
+        assert!(app.confirm_trash.is_none() && !app.settings_open);
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -3178,11 +3226,68 @@ mod tests {
         app.selected = folder;
         app.act(Action::MoveToTrash, &ctx);
         assert_eq!(
-            app.confirm_delete.as_deref(),
-            Some(dir.join("nested").as_path())
+            app.confirm_trash.as_deref(),
+            Some([dir.join("nested")].as_slice())
         );
 
-        app.confirm_delete = None;
+        app.confirm_trash = None;
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// `⌘⌫` on a multi-selection confirms the whole selection, not just the
+    /// current entry, in grid order.
+    #[test]
+    fn trash_confirm_covers_the_whole_selection() {
+        let dir = fixture_dir("trashmulti");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let images = app.image_indices();
+        assert!(images.len() >= 2, "fixture has several images");
+        let (first, last) = (images[0], *images.last().unwrap());
+        app.selected = last;
+        app.multi.clear();
+        app.multi.insert(last);
+        app.multi.insert(first);
+        app.act(Action::MoveToTrash, &ctx);
+        let paths = app.confirm_trash.clone().unwrap_or_default();
+        assert_eq!(
+            paths,
+            vec![
+                app.entries[first].path.clone(),
+                app.entries[last].path.clone()
+            ]
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Applying a trashed set removes the files and reports the result;
+    /// nothing is reported when every item fails.
+    #[test]
+    fn apply_trash_reports_the_result() {
+        let dir = fixture_dir("trashapply");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let image = app.image_indices()[0];
+        let path = app.entries[image].path.clone();
+        app.selected = image;
+
+        app.apply_trash(std::slice::from_ref(&path));
+        assert!(!path.exists(), "the file must be gone");
+        let (message, _) = app.toast.clone().unwrap();
+        assert!(message.contains("to the Trash"), "{message}");
+        assert!(
+            message.contains(&crate::alerts::trash_names(std::slice::from_ref(&path))[0]),
+            "{message}"
+        );
+        assert!(app.multi.is_empty());
+
+        // A file that is already gone cannot be moved: that is reported, not
+        // silently swallowed.
+        app.apply_trash(std::slice::from_ref(&path));
+        let (message, _) = app.toast.clone().unwrap();
+        assert!(message.contains("Couldn't move"), "{message}");
+
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -3203,7 +3308,7 @@ mod tests {
         }
         let _ = ctx.run(input, |ctx| app.draw(ctx));
         assert!(app.settings_open);
-        assert_eq!(app.inspector_tab, 1);
+        assert!(app.show_inspector);
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -3427,7 +3532,7 @@ mod tests {
     }
 
     #[test]
-    fn information_panel_lists_exif_fields() {
+    fn preview_panel_lists_exif_fields() {
         let dir = std::env::temp_dir().join("lumiere_ui_test_exif");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -3437,7 +3542,6 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = App::build(&ctx, Some(dir.clone()));
         app.selected = app.image_indices()[0];
-        app.inspector_tab = 1;
 
         // Only the first rows fit in the panel without scrolling.
         let text = painted_once(&ctx, &mut app, "Make");
@@ -3459,12 +3563,11 @@ mod tests {
     }
 
     #[test]
-    fn information_tab_lists_file_metadata() {
+    fn preview_panel_lists_file_metadata() {
         let dir = fixture_dir("info");
         let ctx = egui::Context::default();
         let mut app = App::build(&ctx, Some(dir.clone()));
         app.selected = app.image_indices()[0];
-        app.inspector_tab = 1;
 
         let mut text = String::new();
         for _ in 0..40 {
@@ -3476,8 +3579,9 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(25));
         }
 
-        assert!(text.contains("Name"));
+        // The name appears in the header, not as a grid row.
         assert!(text.contains("one.png"));
+        assert!(text.contains("Type"));
         assert!(text.contains("Path"));
         assert!(text.contains("Dimensions"));
         assert!(text.contains("PNG"));

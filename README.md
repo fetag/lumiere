@@ -36,7 +36,8 @@ Session state (last folder, window size and position) is stored in
 - Built-in via the `image` crate: JPEG, PNG, GIF, BMP, TIFF, WebP, TGA, PCX, ICO, …
 - HEIC / HEIF / AVIF via macOS ImageIO (`src/imaging/macos.rs`, `objc2-image-io`)
 - EXIF via `kamadak-exif`
-- Delete moves to the macOS Trash (`trash` crate)
+- "Move to Trash" (`⌘⌫`) confirms with a native alert and moves items to the
+  macOS Trash (`trash` crate), so they stay recoverable from Finder
 - Thumbnail cache: `~/Library/Caches/net.fetag.Lumiere/thumbs`
 
 ## Layout
