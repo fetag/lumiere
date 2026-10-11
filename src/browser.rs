@@ -1,7 +1,8 @@
-//! The classic three pane browser: folder tree, thumbnail grid, preview pane.
+//! The classic three pane browser: sidebar, thumbnail grid, preview pane.
 
 use egui::text::{LayoutJob, TextWrapping};
 use egui::{pos2, vec2, Align, Color32, FontId, Rect, Sense, Stroke, TextFormat, Ui, Vec2};
+use std::path::{Path, PathBuf};
 
 use crate::app::{Action, App, Mode};
 use crate::imaging;
@@ -14,9 +15,9 @@ pub(crate) fn grid_cell_id(index: usize) -> egui::Id {
     egui::Id::new("lumiere grid cell").with(index)
 }
 
-/// The stable identity of a folder-tree row.
-pub(crate) fn tree_row_id(index: usize) -> egui::Id {
-    egui::Id::new("lumiere tree row").with(index)
+/// The stable identity of a sidebar row.
+pub(crate) fn sidebar_row_id(index: usize) -> egui::Id {
+    egui::Id::new("lumiere sidebar row").with(index)
 }
 
 /// The arrow keys act on the focused pane's rows/cells and must not be
@@ -32,29 +33,96 @@ fn focus_lock() -> egui::EventFilter {
 }
 
 // ---------------------------------------------------------------------------
-// Left pane: folder tree
+// Left pane: sidebar (Favorites / Locations / Recents)
 // ---------------------------------------------------------------------------
 
-pub fn tree_pane(app: &mut App, ui: &mut Ui) {
-    // Which row (if any) holds the keyboard focus right now; `None` also
-    // covers "focus is on something else entirely". The tracker is kept in
-    // step with the live focus.
-    let visible = app.tree.visible();
+/// One row in the sidebar.
+#[derive(Clone)]
+pub struct SideRow {
+    pub label: String,
+    pub path: PathBuf,
+}
+
+/// A folder's sidebar label: its file name, falling back to the full path
+/// for a volume root.
+fn path_label(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+/// The sidebar's rows in section order: the standard favorite places, the
+/// volume root plus the folders the user pinned, then the folders visited
+/// most recently.
+fn sidebar_rows(app: &App) -> (Vec<SideRow>, Vec<SideRow>, Vec<SideRow>) {
+    let mut favorites: Vec<SideRow> = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        favorites.push(SideRow {
+            label: "Home".to_owned(),
+            path: home,
+        });
+    }
+    for (label, dir) in [
+        ("Desktop", dirs::desktop_dir()),
+        ("Documents", dirs::document_dir()),
+        ("Downloads", dirs::download_dir()),
+        ("Pictures", dirs::picture_dir()),
+        ("Movies", dirs::video_dir()),
+    ] {
+        if let Some(path) = dir.filter(|p| p.is_dir()) {
+            favorites.push(SideRow {
+                label: label.to_owned(),
+                path,
+            });
+        }
+    }
+
+    let mut locations: Vec<SideRow> = vec![SideRow {
+        label: "Macintosh HD".to_owned(),
+        path: PathBuf::from("/"),
+    }];
+    for path in &app.sidebar_dirs {
+        locations.push(SideRow {
+            label: path_label(path),
+            path: path.clone(),
+        });
+    }
+
+    // Recents is a living list: a folder that vanished stops being recent.
+    let recents: Vec<SideRow> = app
+        .recent_dirs
+        .iter()
+        .filter(|path| path.is_dir())
+        .map(|path| SideRow {
+            label: path_label(path),
+            path: path.clone(),
+        })
+        .collect();
+
+    (favorites, locations, recents)
+}
+
+pub fn sidebar_pane(app: &mut App, ui: &mut Ui) {
+    let (favorites, locations, recents) = sidebar_rows(app);
+    let total = favorites.len() + locations.len() + recents.len();
+    let flat: Vec<&SideRow> = favorites
+        .iter()
+        .chain(locations.iter())
+        .chain(recents.iter())
+        .collect();
+
+    // Which row (if any) holds the keyboard focus right now.
     let focused_row = match ui.ctx().memory(|m| m.focused()) {
-        Some(focused_id) => visible
-            .iter()
-            .find(|(index, _)| tree_row_id(*index) == focused_id)
-            .map(|(index, _)| *index),
+        Some(focused_id) => (0..total).find(|index| sidebar_row_id(*index) == focused_id),
         None => None,
     };
-    app.tree_focus = focused_row;
+    app.sidebar_focus = focused_row;
 
-    // Row navigation, only while a tree row is the one that has focus.
+    // Flat row navigation, only while a sidebar row has the focus.
     if focused_row.is_some() {
         let mut delta: Option<isize> = None;
         let mut open = false;
-        let mut collapse = false;
-        let mut expand = false;
         ui.ctx().input_mut(|i| {
             if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
                 delta = Some(1);
@@ -62,158 +130,137 @@ pub fn tree_pane(app: &mut App, ui: &mut Ui) {
                 delta = Some(-1);
             } else if i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
                 open = true;
-            } else if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight) {
-                expand = true;
-            } else if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft) {
-                collapse = true;
             }
         });
-
         if open {
             if let Some(index) = focused_row {
-                app.tree_selected = Some(index);
-                app.tree.ensure_loaded(index);
-                app.tree.set_expanded(index, true);
-                app.set_dir(app.tree.node(index).path.clone());
-            }
-        }
-        if expand || collapse {
-            if let Some(index) = focused_row {
-                if app.tree.node(index).has_children || !app.tree.node(index).loaded {
-                    // Load the children first, exactly like the expander's
-                    // click does, so an opened row actually reveals them.
-                    app.tree.ensure_loaded(index);
-                    app.tree.set_expanded(index, expand);
+                app.sidebar_selected = Some(index);
+                if let Some(row) = flat.get(index) {
+                    app.set_dir(row.path.clone());
                 }
-                // Keep the focus on the row while it opens or closes; the
-                // search the arrow would otherwise start is cancelled.
-                ui.ctx()
-                    .memory_mut(|m| m.move_focus(egui::FocusDirection::None));
             }
         }
         if let Some(delta) = delta {
-            let count = visible.len() as isize;
-            if count > 0 {
-                let row = focused_row
-                    .map(|index| visible.iter().position(|(i, _)| *i == index).unwrap_or(0))
-                    .unwrap_or(0);
-                let next = (row as isize + delta).clamp(0, count - 1) as usize;
-                let index = visible[next].0;
-                app.tree_selected = Some(index);
+            if total > 0 {
+                let row = focused_row.unwrap_or(0);
+                let next = (row as isize + delta).clamp(0, total as isize - 1) as usize;
+                app.sidebar_selected = Some(next);
                 // The row follows the selection, and egui's own directional
                 // focus search is cancelled so the two never drift apart.
                 ui.ctx().memory_mut(|m| {
                     m.move_focus(egui::FocusDirection::None);
-                    m.request_focus(tree_row_id(index));
+                    m.request_focus(sidebar_row_id(next));
                 });
             }
         }
     }
 
-    let items = visible;
-
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            for (index, depth) in items {
-                let path = app.tree.node(index).path.clone();
-                let label = app.tree.node(index).label.clone();
-                let expanded = app.tree.node(index).expanded;
-                let loaded = app.tree.node(index).loaded;
-                let may_have_children = !loaded || app.tree.node(index).has_children;
-                let selected = app.tree_selected == Some(index);
-
-                ui.horizontal(|ui| {
-                    ui.add_space(depth as f32 * 12.0);
-
-                    if may_have_children {
-                        let (rect, response) =
-                            ui.allocate_exact_size(vec2(11.0, 11.0), Sense::click());
-                        if ui.is_rect_visible(rect) {
-                            let p = ui.painter();
-                            // A quiet plus/minus in the ambient text colour.
-                            let center = rect.center();
-                            let stroke = egui::Stroke::new(1.2, ui.visuals().weak_text_color());
-                            p.line_segment(
-                                [
-                                    pos2(center.x - 3.0, center.y),
-                                    pos2(center.x + 3.0, center.y),
-                                ],
-                                stroke,
-                            );
-                            if !expanded {
-                                p.line_segment(
-                                    [
-                                        pos2(center.x, center.y - 3.0),
-                                        pos2(center.x, center.y + 3.0),
-                                    ],
-                                    stroke,
-                                );
-                            }
-                        }
-                        if response.clicked() {
-                            app.tree.toggle(index);
-                        }
-                    } else {
-                        ui.add_space(15.0);
-                    }
-
-                    let icon = if selected {
-                        Icon::FolderUp
-                    } else {
-                        Icon::Folder
-                    };
-                    let (icon_rect, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
-                    theme::draw_icon(
-                        ui.painter(),
-                        icon_rect.center(),
-                        14.0,
-                        icon,
-                        ui.visuals().text_color(),
-                    );
-
-                    let text_response = ui.add(
-                        egui::Label::new(egui::RichText::new(label.clone()).size(13.0))
-                            .selectable(false)
-                            .truncate(),
-                    );
-                    let row_id = tree_row_id(index);
-                    let text_response = ui.interact(text_response.rect, row_id, Sense::click());
-
-                    // A screen reader should hear this row the way Finder's
-                    // sidebar rows are heard: a named, selectable tree item
-                    // whose children are opened or closed.
-                    ui.ctx().accesskit_node_builder(text_response.id, |node| {
-                        node.set_role(egui::accesskit::Role::TreeItem);
-                        node.set_label(label.as_str());
-                        node.set_selected(selected);
-                        if may_have_children {
-                            node.set_expanded(expanded);
-                        }
-                    });
-
-                    // Keyboard focus lands here through Tab or a screen
-                    // reader; remember it, ring it, and lock the arrows so
-                    // navigation stays inside the sidebar.
-                    if text_response.has_focus() {
-                        app.tree_focus = Some(index);
-                        theme::focus_ring(ui, text_response.rect, 2.0);
-                        ui.ctx()
-                            .memory_mut(|m| m.set_focus_lock_filter(row_id, focus_lock()));
-                    }
-                    if text_response.gained_focus() {
-                        ui.scroll_to_rect(text_response.rect, None);
-                    }
-                    theme::note_rect(ui, &format!("tree:{label}"), text_response.rect);
-                    if text_response.clicked() {
-                        app.tree_selected = Some(index);
-                        app.tree.ensure_loaded(index);
-                        app.tree.set_expanded(index, true);
-                        app.set_dir(path.clone());
-                    }
-                });
-            }
+            let mut base = 0usize;
+            sidebar_section(app, ui, "Favorites", &favorites, &mut base, false);
+            sidebar_section(app, ui, "Locations", &locations, &mut base, true);
+            sidebar_section(app, ui, "Recents", &recents, &mut base, false);
         });
+}
+
+/// One titled block of rows. Pinned Locations rows accept a right-click
+/// "Remove from Sidebar"; the standard rows do not.
+fn sidebar_section(
+    app: &mut App,
+    ui: &mut Ui,
+    title: &str,
+    rows: &[SideRow],
+    base: &mut usize,
+    removable: bool,
+) {
+    if rows.is_empty() {
+        return;
+    }
+    ui.add_space(8.0);
+    ui.label(egui::RichText::new(title).small().weak());
+    for row in rows {
+        let index = *base;
+        *base += 1;
+        let label = row.label.clone();
+        let path = row.path.clone();
+        let active = app.dir.starts_with(&path);
+
+        // A whole-row hit target laid out exactly like the grid cells
+        // (allocate the hover rect, then layer the click `interact` on the
+        // same rect): a Frame wrapper around the row swallowed the pointer
+        // events on a live window, so the row stays flat instead.
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
+        let painter = ui.painter();
+        let text_color = ui.visuals().text_color();
+        // Finder lights the row of the current location.
+        if active {
+            painter.rect_filled(
+                rect.shrink2(vec2(2.0, 1.0)),
+                5.0,
+                ui.visuals().selection.bg_fill,
+            );
+        }
+        theme::draw_icon(
+            painter,
+            pos2(rect.min.x + 10.0, rect.center().y),
+            13.0,
+            Icon::Folder,
+            text_color,
+        );
+        // The row's name, left-aligned and truncated to the row width.
+        let format = TextFormat {
+            font_id: FontId::proportional(13.0),
+            ..Default::default()
+        };
+        let mut job = LayoutJob::single_section(label.clone(), format);
+        job.wrap = TextWrapping::truncate_at_width(rect.width() - 26.0);
+        job.halign = Align::LEFT;
+        job.justify = false;
+        let galley = painter.layout_job(job);
+        painter.galley(
+            pos2(rect.min.x + 22.0, rect.center().y - galley.size().y / 2.0),
+            galley,
+            text_color,
+        );
+
+        // The stable row id that keyboard tracking and focus requests address.
+        let row_id = sidebar_row_id(index);
+        let response = ui.interact(rect, row_id, Sense::click());
+        ui.ctx().accesskit_node_builder(response.id, |node| {
+            node.set_role(egui::accesskit::Role::ListItem);
+            node.set_label(label.as_str());
+            node.set_selected(active);
+        });
+        if response.has_focus() {
+            app.sidebar_focus = Some(index);
+            theme::focus_ring(ui, response.rect, 2.0);
+            ui.ctx()
+                .memory_mut(|m| m.set_focus_lock_filter(row_id, focus_lock()));
+        }
+        if response.gained_focus() {
+            ui.scroll_to_rect(response.rect, None);
+        }
+        theme::note_rect(ui, &format!("sidebar:{label}"), response.rect);
+
+        if response.clicked() {
+            app.sidebar_selected = Some(index);
+            app.set_dir(path.clone());
+        }
+        // Pinned Locations rows can be unpinned from a right-click.
+        if removable {
+            response.context_menu(|ui| {
+                let resp = ui.button("Remove from Sidebar");
+                // Registered so the headless tests can find and click it.
+                theme::note_rect(ui, "Remove from Sidebar", resp.rect);
+                if resp.clicked() {
+                    app.sidebar_remove(&path);
+                    ui.close();
+                }
+            });
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -609,6 +656,22 @@ fn thumbnail(
             app.reveal_selection(vec![entry.path.clone()]);
             ui.close();
         }
+        if entry.is_dir {
+            let pinned = app.sidebar_dirs.contains(&entry.path);
+            let label = if pinned {
+                "Remove from Sidebar"
+            } else {
+                "Add to Sidebar"
+            };
+            if row(ui, label) {
+                if pinned {
+                    app.sidebar_remove(&entry.path);
+                } else {
+                    app.sidebar_add(entry.path.clone());
+                }
+                ui.close();
+            }
+        }
         if entry.is_image {
             if row(ui, "Open with default app") {
                 app.selected = index;
@@ -623,6 +686,7 @@ fn thumbnail(
         if row(ui, "Get Info") {
             app.selected = index;
             app.show_inspector = true;
+            app.state_dirty = true;
             ui.close();
         }
         ui.separator();

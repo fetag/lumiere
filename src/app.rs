@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use egui::{Context, TextureHandle, TextureOptions, Vec2};
 
-use crate::fsmodel::{self, Entry, SortKey, TreeModel};
+use crate::fsmodel::{self, Entry, SortKey};
 use crate::imaging::{self, Info};
 use crate::loader::{Kind, Loader, Request};
 use crate::menu::{Item, Key, Shortcut};
@@ -376,13 +376,18 @@ pub struct App {
     pub multi: HashSet<usize>,
     pub anchor: usize,
 
-    pub tree: TreeModel,
-    pub tree_selected: Option<usize>,
-    /// The grid cell / tree row that has keyboard focus, if any; kept in sync
-    /// with egui's focus each frame so arrow keys move selection and focus
-    /// together.
+    /// The grid cell / sidebar row that has keyboard focus, if any; kept in
+    /// sync with egui's focus each frame so arrow keys move selection and
+    /// focus together.
     pub grid_focus: Option<usize>,
-    pub tree_focus: Option<usize>,
+    /// The sidebar row the keyboard is on, if any (index into the flat row
+    /// list drawn by `browser::sidebar_pane`).
+    pub sidebar_selected: Option<usize>,
+    pub sidebar_focus: Option<usize>,
+    /// Folders pinned into the sidebar's Locations section.
+    pub sidebar_dirs: Vec<PathBuf>,
+    /// Recently visited folders, most recent first.
+    pub recent_dirs: Vec<PathBuf>,
 
     pub caches: Caches,
     pub loader: Loader,
@@ -396,8 +401,9 @@ pub struct App {
     pub show_sidebar: bool,
     pub show_inspector: bool,
     pub show_toolbar: bool,
-    pub show_places: bool,
     pub show_status: bool,
+    /// The wildcard-filter popover on the address row, when it is open.
+    pub filter_open: bool,
 
     pub zoom: f32,
     pub fit: bool,
@@ -604,10 +610,11 @@ impl App {
             selected: 0,
             multi: HashSet::new(),
             anchor: 0,
-            tree: TreeModel::new(),
-            tree_selected: None,
             grid_focus: None,
-            tree_focus: None,
+            sidebar_selected: None,
+            sidebar_focus: None,
+            sidebar_dirs: Vec::new(),
+            recent_dirs: Vec::new(),
             caches: Caches::default(),
             loader: Loader::new(4),
             sort: SortKey::Name,
@@ -618,10 +625,10 @@ impl App {
             show_sidebar: true,
             show_inspector: true,
             show_toolbar: true,
-            show_places: true,
             // Off by default: feedback rides the floating notice card, and
             // the legacy three-cell bar is an opt-in from the View menu.
             show_status: false,
+            filter_open: false,
             zoom: 1.0,
             fit: true,
             pan: Vec2::ZERO,
@@ -662,7 +669,6 @@ impl App {
             last_title: String::new(),
             scroll_to_selected: false,
         };
-        app.tree.reveal(&app.dir.clone());
         apply_preferences(&mut app, &saved);
         app.rescan();
         if let Some(file) = start_file {
@@ -700,8 +706,26 @@ impl App {
         self.mode = Mode::Browser;
         self.state_dirty = true;
         self.rescan();
-        self.tree.reveal(&self.dir.clone());
-        self.tree_selected = self.tree.find(&self.dir.clone());
+        // The sidebar's Recents: most recent first, no duplicates, capped.
+        self.recent_dirs.retain(|p| p != &self.dir);
+        self.recent_dirs.insert(0, self.dir.clone());
+        self.recent_dirs.truncate(5);
+    }
+
+    /// Pin a folder into the sidebar's Locations section.
+    pub fn sidebar_add(&mut self, path: PathBuf) {
+        if path.is_dir() && !self.sidebar_dirs.contains(&path) {
+            self.sidebar_dirs.push(path);
+            self.state_dirty = true;
+        }
+    }
+
+    /// Unpin a folder from the sidebar's Locations section.
+    pub fn sidebar_remove(&mut self, path: &Path) {
+        if let Some(i) = self.sidebar_dirs.iter().position(|p| p == path) {
+            self.sidebar_dirs.remove(i);
+            self.state_dirty = true;
+        }
     }
 
     pub fn image_indices(&self) -> Vec<usize> {
@@ -968,8 +992,14 @@ impl App {
             Action::SortByType => self.sort = SortKey::Type,
             Action::ToggleReverse => self.sort_reverse = !self.sort_reverse,
             Action::ToggleFolders => self.show_folders = !self.show_folders,
-            Action::ToggleSidebar => self.show_sidebar = !self.show_sidebar,
-            Action::ToggleInspector => self.show_inspector = !self.show_inspector,
+            Action::ToggleSidebar => {
+                self.show_sidebar = !self.show_sidebar;
+                self.state_dirty = true;
+            }
+            Action::ToggleInspector => {
+                self.show_inspector = !self.show_inspector;
+                self.state_dirty = true;
+            }
             Action::ToggleToolbar => self.show_toolbar = !self.show_toolbar,
             Action::ToggleStatus => self.show_status = !self.show_status,
             Action::Settings => self.settings_open = true,
@@ -1465,6 +1495,13 @@ impl App {
         let has_image = self.entries.iter().any(|e| e.is_image);
         let mut pending: Vec<Action> = Vec::new();
         ui.horizontal(|ui| {
+            // The sidebar toggle leads the row, the way Finder's does.
+            if theme::tool_button_toggle(ui, Icon::Sidebar, "Show Sidebar", true, self.show_sidebar)
+                .clicked()
+            {
+                pending.push(Action::ToggleSidebar);
+            }
+            theme::vtool_separator(ui);
             if theme::tool_button(ui, Icon::FolderUp, "Up one level", true).clicked() {
                 pending.push(Action::UpFolder);
             }
@@ -1524,14 +1561,18 @@ impl App {
         }
     }
 
+    /// The address row is the current-location control: an editable path
+    /// with a Go button, plus a button that opens the wildcard filter as a
+    /// popover instead of a standing DOS-style filter field.
     fn address_row(&mut self, ui: &mut egui::Ui) {
         let mut navigate: Option<PathBuf> = None;
         let mut rescan = false;
+        let mut filter_anchor: Option<egui::Rect> = None;
 
         ui.horizontal(|ui| {
             ui.label("Address:");
             let response = ui.add_sized(
-                [(ui.available_width() - 190.0).max(120.0), 20.0],
+                [(ui.available_width() - 230.0).max(120.0), 20.0],
                 egui::TextEdit::singleline(&mut self.path_edit).font(egui::FontId::monospace(12.0)),
             );
             self.text_field_ids.push(response.id);
@@ -1543,27 +1584,76 @@ impl App {
             if go.clicked() {
                 navigate = Some(PathBuf::from(self.path_edit.trim()));
             }
-            ui.label("Files:");
-            let filter_response = ui.add_sized(
-                [90.0, 20.0],
-                egui::TextEdit::singleline(&mut self.filter_edit),
-            );
-            self.text_field_ids.push(filter_response.id);
-            theme::note_rect(ui, "Files filter", filter_response.rect);
-            let filter_lost_focus = filter_response.lost_focus();
-            if filter_lost_focus && self.filter_edit != self.filter {
-                self.filter = self.filter_edit.clone();
-                self.state_dirty = true;
-                rescan = true;
-            }
-            let apply = ui.button("Apply");
-            theme::note_rect(ui, "Apply", apply.rect);
-            if apply.clicked() {
-                self.filter = self.filter_edit.clone();
-                self.state_dirty = true;
-                rescan = true;
+            // The button wears the active pattern, so an unusual filter is
+            // visible at a glance.
+            let filter_label = if self.filter == "*.*" {
+                "Filter\u{2026}".to_owned()
+            } else {
+                self.filter.clone()
+            };
+            let filter_btn = ui.button(filter_label);
+            theme::note_rect(ui, "Filter", filter_btn.rect);
+            filter_anchor = Some(filter_btn.rect);
+            if filter_btn.clicked() {
+                self.filter_open = !self.filter_open;
             }
         });
+
+        if self.filter_open {
+            // The popover hangs below the button that opened it. An Area
+            // keeps it out of the row's layout and above the content.
+            let mut commit = false;
+            let mut close = false;
+            if let Some(anchor) = filter_anchor {
+                let x = (anchor.min.x + 210.0).min(ui.ctx().viewport_rect().max.x - 220.0);
+                egui::Area::new(egui::Id::new("lumiere filter popover"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(egui::pos2(x, anchor.max.y + 4.0))
+                    .show(ui.ctx(), |ui| {
+                        egui::Frame::window(ui.style()).show(ui, |ui| {
+                            ui.set_min_width(200.0);
+                            ui.label("Files:");
+                            ui.horizontal(|ui| {
+                                let response = ui.add_sized(
+                                    [130.0, 20.0],
+                                    egui::TextEdit::singleline(&mut self.filter_edit),
+                                );
+                                self.text_field_ids.push(response.id);
+                                theme::note_rect(ui, "Files filter", response.rect);
+                                // A commit on focus loss keeps a typed
+                                // pattern from being lost by clicking away.
+                                if response.lost_focus() {
+                                    commit = true;
+                                }
+                                let apply = ui.button("Apply");
+                                theme::note_rect(ui, "Apply", apply.rect);
+                                if apply.clicked() {
+                                    commit = true;
+                                    close = true;
+                                }
+                                let clear = ui.button("Clear");
+                                theme::note_rect(ui, "Clear", clear.rect);
+                                if clear.clicked() {
+                                    self.filter_edit = "*.*".to_owned();
+                                    commit = true;
+                                    close = true;
+                                }
+                            });
+                        });
+                    });
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                close = true;
+            }
+            if commit {
+                self.filter = self.filter_edit.clone();
+                self.state_dirty = true;
+                rescan = true;
+            }
+            if close {
+                self.filter_open = false;
+            }
+        }
 
         if let Some(path) = navigate {
             if path.is_dir() {
@@ -1574,39 +1664,6 @@ impl App {
         }
         if rescan {
             self.rescan();
-        }
-    }
-
-    fn places_row(&mut self, ui: &mut egui::Ui) {
-        let mut goto: Option<PathBuf> = None;
-        ui.horizontal(|ui| {
-            ui.label("Places:");
-            let mut places: Vec<(String, PathBuf)> = Vec::new();
-            if let Some(home) = dirs::home_dir() {
-                places.push(("Home".to_owned(), home));
-            }
-            for (label, dir) in [
-                ("Desktop", dirs::desktop_dir()),
-                ("Documents", dirs::document_dir()),
-                ("Downloads", dirs::download_dir()),
-                ("Pictures", dirs::picture_dir()),
-                ("Movies", dirs::video_dir()),
-            ] {
-                if let Some(path) = dir.filter(|p| p.is_dir()) {
-                    places.push((label.to_owned(), path));
-                }
-            }
-            places.push(("Macintosh HD".to_owned(), PathBuf::from("/")));
-            for (label, path) in places {
-                let response = ui.selectable_label(self.dir == path, &label);
-                theme::note_rect(ui, &label, response.rect);
-                if response.clicked() {
-                    goto = Some(path);
-                }
-            }
-        });
-        if let Some(path) = goto {
-            self.set_dir(path);
         }
     }
 
@@ -2583,6 +2640,10 @@ impl App {
                 sort_reverse: self.sort_reverse,
                 filter: self.filter.clone(),
                 show_folders: i32::from(self.show_folders),
+                show_sidebar: i32::from(self.show_sidebar),
+                show_inspector: i32::from(self.show_inspector),
+                sidebar_dirs: self.sidebar_dirs.clone(),
+                recent_dirs: self.recent_dirs.clone(),
             };
             let _ = state.save();
         }
@@ -2625,11 +2686,6 @@ impl App {
                     self.tool_row(ui);
                 });
             }
-            if self.show_places {
-                egui::TopBottomPanel::top("places").show(ctx, |ui| {
-                    self.places_row(ui);
-                });
-            }
             egui::TopBottomPanel::top("address").show(ctx, |ui| {
                 self.address_row(ui);
             });
@@ -2640,16 +2696,24 @@ impl App {
                         self.status_bar(ui);
                     });
             }
-            if self.show_sidebar {
-                egui::SidePanel::left("foldertree")
+            // The content pane takes priority in a narrow window: both side
+            // panels step aside (their on/off state is kept, so they come
+            // back when the window widens again). An unknown width counts as
+            // wide, so the panes stay visible by default.
+            let panels_fit = ctx.input(|i| {
+                let width = i.viewport_rect().width();
+                width <= 0.0 || width >= 700.0
+            });
+            if self.show_sidebar && panels_fit {
+                egui::SidePanel::left("sidebar")
                     .resizable(true)
-                    .default_width(240.0)
+                    .default_width(200.0)
                     .min_width(140.0)
                     .show(ctx, |ui| {
-                        crate::browser::tree_pane(self, ui);
+                        crate::browser::sidebar_pane(self, ui);
                     });
             }
-            if self.show_inspector {
+            if self.show_inspector && panels_fit {
                 egui::SidePanel::right("previewpane")
                     .resizable(true)
                     .default_width(280.0)
@@ -2774,6 +2838,14 @@ fn apply_preferences(app: &mut App, saved: &crate::state::State) {
     if saved.show_folders >= 0 {
         app.show_folders = saved.show_folders == 1;
     }
+    if saved.show_sidebar >= 0 {
+        app.show_sidebar = saved.show_sidebar == 1;
+    }
+    if saved.show_inspector >= 0 {
+        app.show_inspector = saved.show_inspector == 1;
+    }
+    app.sidebar_dirs = saved.sidebar_dirs.clone();
+    app.recent_dirs = saved.recent_dirs.clone();
 }
 
 fn shortcut_modifier_count(shortcut: &Shortcut) -> u32 {
@@ -3514,11 +3586,11 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// The folder sidebar is driven the same way: the arrow keys move the
-    /// focused row, and the row opens and closes from the keyboard.
+    /// The sidebar is driven the same way as the grid: the arrow keys move
+    /// the focused row and Enter navigates to it.
     #[test]
-    fn arrow_keys_operate_the_folder_tree() {
-        let dir = fixture_dir("a11ytree");
+    fn arrow_keys_operate_the_sidebar() {
+        let dir = fixture_dir("a11ysidebar");
         let ctx = egui::Context::default();
         let mut app = App::build(&ctx, Some(dir.clone()));
 
@@ -3538,51 +3610,33 @@ mod tests {
             physical_key: None,
         };
 
-        // The sidebar starts with its roots; pick one that really has folders
-        // so there is something to open and close.
-        let rows = app.tree.visible();
-        let root = rows
-            .iter()
-            .find(|(index, _)| {
-                let path = app.tree.node(*index).path.clone();
-                std::fs::read_dir(&path)
-                    .is_ok_and(|entries| entries.flatten().any(|entry| entry.path().is_dir()))
-            })
-            .map(|(index, _)| *index)
-            .expect("a root with folders");
-        let root_pos = rows.iter().position(|(index, _)| *index == root).unwrap();
-        assert!(root_pos + 1 < rows.len());
-
         frame(&mut app, vec![]);
-        ctx.memory_mut(|m| m.request_focus(crate::browser::tree_row_id(root)));
+        ctx.memory_mut(|m| m.request_focus(crate::browser::sidebar_row_id(0)));
         frame(&mut app, vec![]);
-
-        // ArrowRight opens the row, loading its children, and the focus
-        // stays on the row the whole time.
-        frame(&mut app, vec![key(egui::Key::ArrowRight)]);
-        assert!(app.tree.node(root).expanded);
-        assert!(
-            app.tree.visible().len() > rows.len(),
-            "the children should now be visible"
-        );
         assert_eq!(
             ctx.memory(|m| m.focused()),
-            Some(crate::browser::tree_row_id(root))
+            Some(crate::browser::sidebar_row_id(0))
         );
-
-        // ArrowLeft closes the row again.
-        frame(&mut app, vec![key(egui::Key::ArrowLeft)]);
-        assert!(!app.tree.node(root).expanded);
 
         // ArrowDown moves the row and the focus together.
         frame(&mut app, vec![key(egui::Key::ArrowDown)]);
-        let rows = app.tree.visible();
-        let expected = rows[root_pos + 1].0;
-        assert_eq!(app.tree_selected, Some(expected));
+        assert_eq!(app.sidebar_selected, Some(1));
         assert_eq!(
             ctx.memory(|m| m.focused()),
-            Some(crate::browser::tree_row_id(expected))
+            Some(crate::browser::sidebar_row_id(1))
         );
+
+        // ArrowUp walks back.
+        frame(&mut app, vec![key(egui::Key::ArrowUp)]);
+        assert_eq!(app.sidebar_selected, Some(0));
+        assert_eq!(
+            ctx.memory(|m| m.focused()),
+            Some(crate::browser::sidebar_row_id(0))
+        );
+
+        // Enter navigates to the focused row: the first row is Home.
+        frame(&mut app, vec![key(egui::Key::Enter)]);
+        assert_eq!(app.dir, dirs::home_dir().unwrap());
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -3642,62 +3696,54 @@ mod tests {
     }
 
     #[test]
-    fn places_row_navigates_to_the_selected_place() {
+    fn sidebar_navigates_to_the_selected_place() {
         let dir = fixture_dir("places");
         let ctx = egui::Context::default();
         let mut app = App::build(&ctx, Some(dir.clone()));
         let mut time = 1.0;
 
         settle(&ctx, &mut app, &mut time);
-        assert!(click_label(&ctx, &mut app, "Macintosh HD", &mut time));
+        assert!(click_label(
+            &ctx,
+            &mut app,
+            "sidebar:Macintosh HD",
+            &mut time
+        ));
         assert_eq!(app.dir, PathBuf::from("/"));
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn clicking_a_tree_folder_navigates_to_it() {
+    fn clicking_a_sidebar_folder_navigates_to_it() {
         let home = dirs::home_dir().expect("home dir");
+        let dir = fixture_dir("sidebarnav");
         let ctx = egui::Context::default();
         let mut app = App::build(&ctx, Some(home.clone()));
         let mut time = 1.0;
 
-        let home_label = home.file_name().unwrap().to_string_lossy().to_string();
-        settle(&ctx, &mut app, &mut time);
-        assert!(click_label(
-            &ctx,
-            &mut app,
-            &format!("tree:{home_label}"),
-            &mut time
-        ));
-        assert_eq!(app.dir, home);
-        assert!(app.tree_selected.is_some());
+        // Move out of home; the visit lands in the sidebar's Recents.
+        app.set_dir(dir.clone());
+        assert!(app.recent_dirs.contains(&dir), "a visit becomes a recent");
 
         settle(&ctx, &mut app, &mut time);
-        let child_label = {
-            let index = app.tree.find(&home).expect("home node");
-            app.tree
-                .node(index)
-                .children
-                .first()
-                .map(|&c| app.tree.node(c).label.clone())
-                .expect("a child folder")
-        };
-        let child_path = {
-            let index = app.tree.find(&home).expect("home node");
-            app.tree.node(app.tree.node(index).children[0]).path.clone()
-        };
+        assert!(click_label(&ctx, &mut app, "sidebar:Home", &mut time));
+        assert_eq!(app.dir, home);
+        assert!(app.sidebar_selected.is_some());
+
+        settle(&ctx, &mut app, &mut time);
+        let fixture_name = dir.file_name().unwrap().to_string_lossy().to_string();
         assert!(click_label(
             &ctx,
             &mut app,
-            &format!("tree:{child_label}"),
+            &format!("sidebar:{fixture_name}"),
             &mut time
         ));
-        assert_eq!(app.dir, child_path);
+        assert_eq!(app.dir, dir);
     }
 
     #[test]
-    fn files_filter_applies_from_the_address_row() {
+    fn files_filter_applies_from_the_filter_popover() {
         let dir = std::env::temp_dir().join("lumiere_ui_test_filter");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -3709,10 +3755,18 @@ mod tests {
         let mut time = 1.0;
 
         settle(&ctx, &mut app, &mut time);
+        // The wildcard filter no longer stands in the address row; it opens
+        // behind the button.
+        assert!(click_label(&ctx, &mut app, "Filter", &mut time));
+        assert!(app.filter_open);
+
+        // Focus the popover's field, then type the pattern.
+        settle(&ctx, &mut app, &mut time);
         assert!(click_label(&ctx, &mut app, "Files filter", &mut time));
 
         let mut input = raw_input();
-        input.time = Some(time);
+        input.time = Some(time + 0.4);
+        time += 0.4;
         input.events = vec![
             egui::Event::Key {
                 key: egui::Key::A,
@@ -3731,14 +3785,167 @@ mod tests {
             egui::Event::Text("*.jpg".to_owned()),
         ];
         let _ = ctx.run(input, |ctx| app.draw(ctx));
-        time += 0.4;
 
         settle(&ctx, &mut app, &mut time);
         assert!(click_label(&ctx, &mut app, "Apply", &mut time));
 
         assert_eq!(app.filter, "*.jpg");
+        assert!(!app.filter_open, "Apply closes the popover");
         let names: Vec<String> = app.entries.iter().map(|e| e.name.clone()).collect();
         assert_eq!(names, ["two.jpg"]);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// In a narrow window the content pane takes priority: both side panels
+    /// step aside (their on/off state is kept, so they come back when the
+    /// window widens again), and the grid keeps drawing.
+    #[test]
+    fn narrow_window_keeps_the_content_pane_usable() {
+        let dir = fixture_dir("narrow");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let mut time = 1.0;
+
+        let mut frame_at = |app: &mut App, width: f32| {
+            time += 0.4;
+            // Only the controls painted by *this* frame may be looked up.
+            theme::clear_rects(&ctx);
+            let mut input = raw_input();
+            input.screen_rect = Some(egui::Rect::from_min_max(
+                egui::pos2(0.0, 0.0),
+                egui::pos2(width, 620.0),
+            ));
+            input.time = Some(time);
+            ctx.run(input, |ctx| app.draw(ctx))
+        };
+
+        // A wide window shows both side panes...
+        let mut output = frame_at(&mut app, 1280.0);
+        for _ in 0..3 {
+            output = frame_at(&mut app, 1280.0);
+        }
+        assert!(theme::rect_of(&ctx, "sidebar:Home").is_some());
+        assert!(painted_text(&output.shapes).contains("Path"));
+
+        // A narrow window hides both; the grid still draws.
+        let output = frame_at(&mut app, 600.0);
+        assert!(theme::rect_of(&ctx, "sidebar:Home").is_none());
+        assert!(!painted_text(&output.shapes).contains("Path"));
+        assert!(painted_text(&output.shapes).contains("one.png"));
+
+        // The toggle state is untouched, so widening brings the panes back.
+        assert!(app.show_sidebar && app.show_inspector);
+        let output = frame_at(&mut app, 1280.0);
+        assert!(theme::rect_of(&ctx, "sidebar:Home").is_some());
+        assert!(painted_text(&output.shapes).contains("Path"));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A folder's right-click menu pins it into the sidebar's Locations
+    /// section; the pinned row offers the unpin from its own right-click
+    /// menu and navigates like any other.
+    #[test]
+    fn context_menu_pins_a_folder_to_the_sidebar() {
+        let dir = fixture_dir("pin");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let mut time = 1.0;
+        let nested = dir.join("nested");
+
+        // The first cell is the `nested` folder.
+        let Some(pos) = labeled_center(&ctx, &mut app, "cell:0", &mut time) else {
+            panic!("grid cell never laid out");
+        };
+        right_click_at(&ctx, &mut app, pos, &mut time);
+        settle(&ctx, &mut app, &mut time);
+        assert!(click_label(&ctx, &mut app, "Add to Sidebar", &mut time));
+        assert!(app.sidebar_dirs.contains(&nested));
+        assert!(app.state_dirty, "the pin must survive a restart");
+
+        // The pinned row offers the unpin from its own right-click menu.
+        // (This must happen before `nested` is visited: a visit also lands
+        // it in Recents, where the row would share the same label.)
+        let Some(pos) = labeled_center(&ctx, &mut app, "sidebar:nested", &mut time) else {
+            panic!("pinned row never laid out");
+        };
+        right_click_at(&ctx, &mut app, pos, &mut time);
+        settle(&ctx, &mut app, &mut time);
+        assert!(click_label(
+            &ctx,
+            &mut app,
+            "Remove from Sidebar",
+            &mut time
+        ));
+        assert!(app.sidebar_dirs.is_empty());
+
+        // Pin it again and follow the row: it navigates like any other.
+        let Some(pos) = labeled_center(&ctx, &mut app, "cell:0", &mut time) else {
+            panic!("grid cell never laid out");
+        };
+        right_click_at(&ctx, &mut app, pos, &mut time);
+        settle(&ctx, &mut app, &mut time);
+        assert!(click_label(&ctx, &mut app, "Add to Sidebar", &mut time));
+        settle(&ctx, &mut app, &mut time);
+        assert!(click_label(&ctx, &mut app, "sidebar:nested", &mut time));
+        assert_eq!(app.dir, nested);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Visits land in the sidebar's Recents list: newest first, no
+    /// duplicates, capped.
+    #[test]
+    fn recents_track_visits_newest_first() {
+        let base = std::env::temp_dir().join("lumiere_ui_test_recents");
+        let _ = std::fs::remove_dir_all(&base);
+        let a = base.join("a");
+        let b = base.join("b");
+        let c = base.join("c");
+        let d = base.join("d");
+        let e = base.join("e");
+        for p in [&a, &b, &c, &d, &e] {
+            std::fs::create_dir_all(p).unwrap();
+        }
+
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(a.clone()));
+
+        for p in [&b, &c, &a, &d, &e] {
+            app.set_dir(p.clone());
+        }
+        // `a` is visited twice, so it appears once, at its newest spot.
+        assert_eq!(
+            app.recent_dirs,
+            vec![e.clone(), d.clone(), a.clone(), c.clone(), b.clone()]
+        );
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// A restart comes back with the same sidebar / inspector state, the
+    /// same pinned folders and the same recent places.
+    #[test]
+    fn sidebar_and_inspector_state_survive_a_restart() {
+        let dir = fixture_dir("restart");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+
+        let nested = dir.join("nested");
+        let saved = crate::state::State {
+            show_sidebar: 1,
+            show_inspector: 0,
+            sidebar_dirs: vec![nested.clone()],
+            recent_dirs: vec![nested.clone(), dir.clone()],
+            ..Default::default()
+        };
+        apply_preferences(&mut app, &saved);
+
+        assert!(app.show_sidebar);
+        assert!(!app.show_inspector);
+        assert_eq!(app.sidebar_dirs, vec![nested]);
+        assert_eq!(app.recent_dirs, vec![dir.join("nested"), dir.clone()]);
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -4703,7 +4910,7 @@ mod tests {
 
         // The sidebar holds its default width too (its full-width ScrollArea
         // already keeps the content from dictating the pane's width).
-        assert_eq!(width_of("foldertree"), Some(240.0));
+        assert_eq!(width_of("sidebar"), Some(200.0));
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -4772,7 +4979,8 @@ mod tests {
         }
 
         // Browsing controls are present...
-        let present: [&str; 13] = [
+        let present: [&str; 14] = [
+            "Show Sidebar",
             "Up one level",
             "Home folder",
             "Refresh",

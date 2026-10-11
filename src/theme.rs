@@ -282,6 +282,9 @@ pub enum Icon {
     Home,
     Image,
     Browser,
+    /// The sidebar toggle: a window with its left band, drawn like the
+    /// browser glyph.
+    Sidebar,
 }
 
 /// Draws one icon, entirely in a single colour chosen by the caller (usually
@@ -587,7 +590,7 @@ pub fn draw_icon(p: &egui::Painter, center: Pos2, size: f32, glyph: Icon, color:
                 stroke,
             );
         }
-        Icon::Browser => {
+        Icon::Browser | Icon::Sidebar => {
             p.rect_stroke(bounds, 1.5, stroke, StrokeKind::Inside);
             p.line_segment(
                 [

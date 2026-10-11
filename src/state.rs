@@ -19,6 +19,13 @@ pub struct State {
     pub sort_reverse: bool,
     pub filter: String,
     pub show_folders: i32,
+    /// Sidebar / Inspector visibility; -1 means "not stored yet".
+    pub show_sidebar: i32,
+    pub show_inspector: i32,
+    /// Folders the user pinned into the sidebar's Locations section.
+    pub sidebar_dirs: Vec<PathBuf>,
+    /// Recently visited folders, most recent first.
+    pub recent_dirs: Vec<PathBuf>,
 }
 
 impl Default for State {
@@ -34,6 +41,10 @@ impl Default for State {
             sort_reverse: false,
             filter: String::new(),
             show_folders: -1,
+            show_sidebar: -1,
+            show_inspector: -1,
+            sidebar_dirs: Vec::new(),
+            recent_dirs: Vec::new(),
         }
     }
 }
@@ -76,6 +87,22 @@ impl State {
                 "sort_reverse" => state.sort_reverse = value == "1",
                 "filter" => state.filter = value.to_owned(),
                 "show_folders" => state.show_folders = value.parse().unwrap_or(-1),
+                "show_sidebar" => state.show_sidebar = value.parse().unwrap_or(-1),
+                "show_inspector" => state.show_inspector = value.parse().unwrap_or(-1),
+                key if key.starts_with("sidebar_dir_") => {
+                    if let Ok(i) = key["sidebar_dir_".len()..].parse::<usize>() {
+                        if i < 64 {
+                            state.sidebar_dirs.push(PathBuf::from(value));
+                        }
+                    }
+                }
+                key if key.starts_with("recent_dir_") => {
+                    if let Ok(i) = key["recent_dir_".len()..].parse::<usize>() {
+                        if i < 64 {
+                            state.recent_dirs.push(PathBuf::from(value));
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -112,6 +139,18 @@ impl State {
         if self.show_folders >= 0 {
             text.push_str(&format!("show_folders={}\n", self.show_folders));
         }
+        if self.show_sidebar >= 0 {
+            text.push_str(&format!("show_sidebar={}\n", self.show_sidebar));
+        }
+        if self.show_inspector >= 0 {
+            text.push_str(&format!("show_inspector={}\n", self.show_inspector));
+        }
+        for (i, dir) in self.sidebar_dirs.iter().enumerate() {
+            text.push_str(&format!("sidebar_dir_{}={}\n", i, dir.display()));
+        }
+        for (i, dir) in self.recent_dirs.iter().enumerate() {
+            text.push_str(&format!("recent_dir_{}={}\n", i, dir.display()));
+        }
         fs::write(path, text)
     }
 }
@@ -134,6 +173,16 @@ mod tests {
             sort_reverse: true,
             filter: "*.jpg".to_owned(),
             show_folders: 0,
+            show_sidebar: 1,
+            show_inspector: 0,
+            sidebar_dirs: vec![
+                PathBuf::from("/Volumes/Work/exports"),
+                PathBuf::from("/tmp/lumiere_demo"),
+            ],
+            recent_dirs: vec![
+                PathBuf::from("/tmp/lumiere_demo"),
+                PathBuf::from("/tmp/other"),
+            ],
         };
         state.save_to(&path).unwrap();
         assert_eq!(State::load_from(&path), state);

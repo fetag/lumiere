@@ -124,6 +124,20 @@
   - 現況／依據：`src/app.rs:1858-1895` 固定組合 menu、toolbar、places、status、folder tree、preview pane；`src/app.rs:1285-1369` 另有可編輯 path 和 wildcard filter；`src/browser.rs:15-104` 使用自繪 Windows 式展開符號與樹狀目錄。
   - 實作方向：左側用可收合的 sidebar（Favorites/Locations/最近位置），中間為內容網格，右側採可收合 Inspector；以標題列／路徑 control 呈現目前位置。將技術性的 wildcard filter 移入明確的搜尋或 Filter popover，不要常駐為類 DOS 檔案篩選欄。
   - 驗收：使用者第一次打開就能從側邊欄找到 Pictures、Home 與已加入的資料夾；sidebar/Inspector 可用工具列或 View 選單切換且狀態會保存；窄視窗時內容區仍優先可用。
+  - 進度（2026-10-11）：完成。Windows 式 folder tree（`TreeModel`，`fsmodel.rs` 整段移除）與「Places」條皆移除，改為 flat 三段式 sidebar（`browser.rs::sidebar_pane`）：
+    1. **Favorites**：Home/Desktop/Documents/Downloads/Pictures/Movies（僅列出存在的目錄）。
+    2. **Locations**：Macintosh HD（`/`）＋使用者 pin 的資料夾（`sidebar_dirs`）。
+    3. **Recents**：`recent_dirs`，`set_dir` 自動記錄、newest first、上限 5、不重複、渲染時過濾已不存在者。
+    - 目前所在的列以 `visuals.selection.bg_fill` 高亮（整列 hit target，同 grid cell 的 `allocate_exact_size`＋`ui.interact` 模式）。
+    - **工具列**：最前新增 `Show Sidebar` toggle（`theme::tool_button_toggle`，`Icon::Sidebar`）；View 選單原 Show Sidebar/Show Inspector 不變。
+    - **Filter popover**：address 列常駐 wildcard 欄改為 `Filter…` 按鈕（顯示目前 pattern）＋`egui::Area`（id `lumiere filter popover`，`Order::Foreground`）；欄位 lost_focus／Apply／Clear 皆 commit pattern，Esc／Apply／Clear 關閉。
+    - **Add/Remove from Sidebar**：grid 資料夾 cell 右鍵選單（Reveal in Finder 之後）；pinned 的 Locations 列自身右鍵選單可移除。
+    - **窄視窗**：viewport 寬 < 700 px 時兩側面板都不繪製（內容優先，`ctx.input(|i| i.viewport_rect().width())`），on/off 狀態保留、變寬自動回來；未知寬度視為寬。
+    - **狀態保存**：`state.ini` 新增 `show_sidebar`/`show_inspector`（-1=未存）、`sidebar_dir_N`/`recent_dir_N`（上限 64）；toggle 與 pin/unpin 皆標 `state_dirty`。
+  - 測試：`arrow_keys_operate_the_sidebar`（平鋪列鍵盤導覽）、`sidebar_navigates_to_the_selected_place`、`clicking_a_sidebar_folder_navigates_to_it`（含 Recents 列導覽）、`files_filter_applies_from_the_filter_popover`、`narrow_window_keeps_the_content_pane_usable`（600 px 兩面板消失、toggle 狀態保留、變寬回來）、`context_menu_pins_a_folder_to_the_sidebar`（grid pin → sidebar 列右鍵 unpin → 再 pin 後列可導覽）、`recents_track_visits_newest_first`、`sidebar_and_inspector_state_survive_a_restart`；`browser_toolbar_keeps_only_browser_controls` 改為 14 鈕；`preview_pane_holds_the_width_the_user_set` 改測 `sidebar` 面板（預設 200 px）。
+  - 實機驗證（AX＋合成事件）：sidebar 三段渲染、左鍵列導覽、工具列 toggle、Filter popover（欄位＋Apply/Clear）、grid 右鍵 Add to Sidebar、pinned 列右鍵 Remove from Sidebar、pin/recents/可見性跨重啟恢復、600 px 窄窗兩面板自動讓位且放大回來。
+  - 踩坑記錄：egui 0.33.3 的 `Frame::show` 包層會讓行內 `ui.interact` 在**實體視窗**收不到 pointer 事件（headless 卻正常，故以 grid cell 的 flat 模式取代 Frame 底紋）；popup 內容的 `ui.close()` 若無條件呼叫會在第一幀關掉剛打開的選單。
+  - 剩餘（P2）：面板寬度跨重啟保存（目前只存 on/off）。
 
 - [ ] **改進看圖手勢、縮放與全螢幕行為以適配觸控板。**
   - 現況／依據：`src/viewer.rs:61-87` 把任何 raw scroll 當縮放；拖曳才平移；`src/app.rs:732-751` 開始 slideshow 時強制進全螢幕，且全螢幕可由 F11/`⌘F` 觸發。
