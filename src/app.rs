@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use egui::{Context, TextureHandle, TextureOptions, Vec2};
@@ -433,13 +434,84 @@ pub struct App {
     pub last_pos: egui::Pos2,
     pub restore_pos: Option<egui::Pos2>,
     pub restore_frames: u32,
-    pub toast: Option<(String, Instant)>,
+    /// The floating feedback card, when one is on screen.
+    pub notice: Option<Notice>,
+    /// The batch file operation on its worker thread, when one is running.
+    job: Option<RunningJob>,
 
     pub path_edit: String,
     pub filter_edit: String,
-    pub status_override: Option<String>,
     last_title: String,
     pub scroll_to_selected: bool,
+}
+
+/// A short, non-modal report about something the app just did. It is shown
+/// as a floating card until it expires on its own or the user dismisses it,
+/// which is the whole of the app's standing feedback: there is no permanent
+/// status bar any more.
+#[derive(Clone)]
+pub struct Notice {
+    /// The one-line headline ("Moved 3 items", "Couldn't move 2 items").
+    pub title: String,
+    /// What exactly failed and why, when anything did.
+    pub detail: Option<String>,
+    /// Next steps worth offering ("Show in Finder", "Retry").
+    pub actions: Vec<NoticeAction>,
+    born: Instant,
+}
+
+/// A suggested next step a notice can offer.
+#[derive(Clone)]
+pub enum NoticeAction {
+    /// Reveal the file in Finder so the user can inspect it (macOS).
+    Reveal(PathBuf),
+    /// Run the failed operation again, on the failed items only.
+    Retry(FileOp),
+}
+
+/// A batch file operation, kept whole so a failed run can be retried on
+/// just the items that failed.
+#[derive(Clone)]
+pub enum FileOp {
+    Transfer {
+        paths: Vec<PathBuf>,
+        dest: PathBuf,
+        copy: bool,
+    },
+    Trash {
+        paths: Vec<PathBuf>,
+    },
+}
+
+/// What a batch file operation did: how many items moved, and — with the
+/// reason for each — which did not.
+pub struct OpOutcome {
+    pub moved: usize,
+    pub failures: Vec<(PathBuf, String)>,
+}
+
+/// A batch file operation running on its own thread, so a long copy never
+/// freezes the window. The worker reports progress ticks and one final
+/// outcome over the channel; `pump_job` drains it every frame.
+struct RunningJob {
+    /// "Moving" or "Copying".
+    prefix: &'static str,
+    /// " to the Trash" for trash runs, "" otherwise.
+    tail: &'static str,
+    /// The operation itself, kept so its failures can be retried.
+    op: FileOp,
+    total: usize,
+    done: usize,
+    last_name: String,
+    rx: mpsc::Receiver<JobMessage>,
+}
+
+/// One report from the file-operation worker.
+enum JobMessage {
+    /// One more item finished: the running count and the item's name.
+    Progress(usize, String),
+    /// The whole operation finished.
+    Done(OpOutcome),
 }
 
 impl Item {
@@ -517,7 +589,9 @@ impl App {
             show_inspector: true,
             show_toolbar: true,
             show_places: true,
-            show_status: true,
+            // Off by default: feedback rides the floating notice card, and
+            // the legacy three-cell bar is an opt-in from the View menu.
+            show_status: false,
             zoom: 1.0,
             fit: true,
             pan: Vec2::ZERO,
@@ -544,10 +618,10 @@ impl App {
             last_pos: egui::Pos2::default(),
             restore_pos,
             restore_frames: 0,
-            toast: None,
+            notice: None,
+            job: None,
             path_edit: dir.display().to_string(),
             filter_edit: "*.*".to_owned(),
-            status_override: None,
             last_title: String::new(),
             scroll_to_selected: false,
         };
@@ -698,8 +772,9 @@ impl App {
         self.pan = Vec2::ZERO;
     }
 
+    /// Report an event briefly and non-modally as the floating card.
     pub fn notify(&mut self, message: impl Into<String>) {
-        self.toast = Some((message.into(), Instant::now()));
+        self.set_notice(message.into(), None, Vec::new());
     }
 
     // -- command dispatch --------------------------------------------------
@@ -1526,14 +1601,10 @@ impl App {
             format!("{} x {}", self.thumb_size, self.thumb_size)
         };
 
-        let status = self
-            .status_override
-            .take()
-            .or_else(|| self.toast.as_ref().map(|(m, _)| m.clone()))
-            .unwrap_or(left);
-
+        // The bar is opt-in now that feedback rides the floating notice
+        // card, so when it is on it shows plain folder facts, nothing else.
         ui.horizontal(|ui| {
-            theme::status_field(ui, &status, 320.0);
+            theme::status_field(ui, &left, 320.0);
             theme::status_field(ui, &middle, (ui.available_width() - 120.0).max(80.0));
             theme::status_field(ui, &right, 90.0);
         });
@@ -1762,7 +1833,9 @@ impl App {
             ("Move to Folder", "Move")
         };
         match crate::panels::choose_directory(title, prompt, Some(&self.dir)) {
-            crate::panels::PanelResult::Chose(dest) => self.apply_transfer(&paths, &dest, copy),
+            crate::panels::PanelResult::Chose(dest) => {
+                self.start_job(FileOp::Transfer { paths, dest, copy })
+            }
             crate::panels::PanelResult::Cancelled => {}
             crate::panels::PanelResult::Unavailable => self.start_transfer(copy),
         }
@@ -1782,37 +1855,14 @@ impl App {
         });
     }
 
-    /// Move or copy `paths` into `dest`, skipping no-ops and reporting failures.
+    /// Move or copy `paths` into `dest` right here, on the UI thread, and
+    /// report the result — the direct form the tests use; the interactive
+    /// paths go through `start_job`, which runs the same core on a worker
+    /// thread so a long copy never freezes the window.
+    #[cfg(test)]
     pub fn apply_transfer(&mut self, paths: &[PathBuf], dest: &Path, copy: bool) {
-        if !dest.is_dir() {
-            self.notify(format!("Not a folder: {}", dest.display()));
-            return;
-        }
-        let mut done = 0;
-        for path in paths {
-            let Some(name) = path.file_name() else {
-                continue;
-            };
-            let target = dest.join(name);
-            if target == *path {
-                continue;
-            }
-            let result = if copy {
-                copy_path(path, &target)
-            } else {
-                std::fs::rename(path, &target)
-            };
-            match result {
-                Ok(()) => done += 1,
-                Err(error) => self.notify(format!("Transfer failed: {error}")),
-            }
-        }
-        if done > 0 {
-            let verb = if copy { "Copied" } else { "Moved" };
-            self.notify(format!("{verb} {done} item(s)"));
-            self.multi.clear();
-            self.rescan();
-        }
+        let outcome = run_transfer(paths, dest, copy, None);
+        self.report_transfer(dest.to_path_buf(), copy, outcome);
     }
 
     /// The "move to Trash" flow for `paths`: confirm first, then apply. On
@@ -1823,7 +1873,7 @@ impl App {
             return;
         }
         match crate::alerts::confirm_trash(&paths) {
-            crate::alerts::Confirmation::Confirmed => self.apply_trash(&paths),
+            crate::alerts::Confirmation::Confirmed => self.start_job(FileOp::Trash { paths }),
             crate::alerts::Confirmation::Cancelled => {}
             crate::alerts::Confirmation::Unavailable => {
                 self.confirm_trash = Some(paths);
@@ -1831,46 +1881,270 @@ impl App {
         }
     }
 
-    /// Move `paths` to the Trash with the `trash` crate — the items stay in
-    /// the Finder's Trash, so the operation is recoverable — and report what
-    /// happened for a multi-selection.
+    /// Move `paths` to the Trash right here (see `apply_transfer`) and
+    /// report what happened, item by item.
+    #[cfg(test)]
     pub fn apply_trash(&mut self, paths: &[PathBuf]) {
-        let names = crate::alerts::trash_names(paths);
-        let mut moved = 0usize;
-        let mut failures: Vec<(String, String)> = Vec::new();
-        for (path, name) in paths.iter().zip(&names) {
-            match trash::delete(path) {
-                Ok(()) => moved += 1,
-                Err(error) => failures.push((name.clone(), error.to_string())),
+        let outcome = run_trash(paths, None);
+        self.report_trash(paths, outcome);
+    }
+
+    /// Run `op` on its own worker thread: the window keeps responding while
+    /// the files move, the floating card reports the progress ("Moving 2 of
+    /// 4 — sunset.jpg"), and the finished outcome becomes the result card.
+    pub fn start_job(&mut self, op: FileOp) {
+        let (prefix, tail) = match &op {
+            FileOp::Transfer { copy, .. } => (if *copy { "Copying" } else { "Moving" }, ""),
+            FileOp::Trash { .. } => ("Moving", " to the Trash"),
+        };
+        let total = match &op {
+            FileOp::Transfer { paths, .. } | FileOp::Trash { paths } => paths.len(),
+        };
+        let (tx, rx) = mpsc::channel();
+        let worker = op.clone();
+        std::thread::spawn(move || {
+            let outcome = match &worker {
+                FileOp::Transfer { paths, dest, copy } => {
+                    run_transfer(paths, dest, *copy, Some(&tx))
+                }
+                FileOp::Trash { paths } => run_trash(paths, Some(&tx)),
+            };
+            let _ = tx.send(JobMessage::Done(outcome));
+        });
+        self.job = Some(RunningJob {
+            prefix,
+            tail,
+            op,
+            total,
+            done: 0,
+            last_name: String::new(),
+            rx,
+        });
+        self.notice = None;
+    }
+
+    /// Pick up whatever the file-operation worker reported since the last
+    /// frame: a progress tick repaints, a finished outcome becomes the
+    /// result card.
+    fn pump_job(&mut self, ctx: &Context) {
+        let drained: Vec<JobMessage> = match self.job.as_ref() {
+            Some(job) => {
+                let mut out = Vec::new();
+                while let Ok(msg) = job.rx.try_recv() {
+                    out.push(msg);
+                }
+                out
+            }
+            None => return,
+        };
+        let mut outcome = None;
+        let mut progressed = false;
+        for msg in drained {
+            match msg {
+                JobMessage::Progress(done, name) => {
+                    progressed = true;
+                    if let Some(job) = self.job.as_mut() {
+                        job.done = done;
+                        job.last_name = name;
+                    }
+                }
+                JobMessage::Done(done) => outcome = Some(done),
             }
         }
-        if moved > 0 {
+        if progressed {
+            ctx.request_repaint();
+        }
+        if let Some(outcome) = outcome {
+            let Some(job) = self.job.take() else {
+                return;
+            };
+            ctx.request_repaint();
+            self.finish_op(job.op, outcome);
+        }
+    }
+
+    fn finish_op(&mut self, op: FileOp, outcome: OpOutcome) {
+        match op {
+            FileOp::Transfer { dest, copy, .. } => self.report_transfer(dest, copy, outcome),
+            FileOp::Trash { paths } => self.report_trash(&paths, outcome),
+        }
+    }
+
+    /// The floating-card report of a finished transfer: a headline, what
+    /// failed (if anything), and the next steps worth offering.
+    fn report_transfer(&mut self, dest: PathBuf, copy: bool, outcome: OpOutcome) {
+        if outcome.moved > 0 {
             self.multi.clear();
             self.rescan();
         }
-        let message = match (paths.len(), moved, failures.is_empty()) {
-            (1, 1, _) => format!("Moved {} to the Trash", names[0]),
-            (1, 0, _) => {
-                format!("Couldn't move {} to the Trash: {}", names[0], failures[0].1)
-            }
-            (_, _, true) => format!("Moved {moved} items to the Trash"),
-            (_, 0, _) => {
-                format!(
-                    "Couldn't move {} items to the Trash: {}",
-                    paths.len(),
-                    failures[0].0
-                )
-            }
-            (_, _, _) => {
-                format!(
-                    "Moved {moved} of {} items to the Trash: {} — {}",
-                    paths.len(),
-                    failures[0].0,
-                    failures[0].1
-                )
-            }
+        let total = outcome.moved + outcome.failures.len();
+        if total == 0 {
+            // Every item already lived in that folder: there was nothing to do.
+            return;
+        }
+        let verb = if copy { "Copied" } else { "Moved" };
+        if outcome.failures.is_empty() {
+            self.set_notice(format!("{verb} {total} item(s)"), None, Vec::new());
+            return;
+        }
+        let title = if outcome.moved == 0 {
+            format!(
+                "Couldn't {} {total} item(s)",
+                if copy { "copy" } else { "move" }
+            )
+        } else {
+            format!("{verb} {} of {total} items", outcome.moved)
         };
-        self.notify(message);
+        let retry = FileOp::Transfer {
+            paths: outcome
+                .failures
+                .iter()
+                .map(|(path, _)| path.clone())
+                .collect(),
+            dest,
+            copy,
+        };
+        self.set_notice(
+            title,
+            Some(failure_detail(&outcome.failures)),
+            op_actions(&outcome.failures, retry),
+        );
+    }
+
+    /// The floating-card report of a finished trash run, keeping the
+    /// friendly single-file wording.
+    fn report_trash(&mut self, paths: &[PathBuf], outcome: OpOutcome) {
+        if outcome.moved > 0 {
+            self.multi.clear();
+            self.rescan();
+        }
+        let total = outcome.moved + outcome.failures.len();
+        if total == 0 {
+            return;
+        }
+        if outcome.failures.is_empty() {
+            let title = if total == 1 {
+                format!("Moved {} to the Trash", file_name_of(paths.first()))
+            } else {
+                format!("Moved {total} item(s) to the Trash")
+            };
+            self.set_notice(title, None, Vec::new());
+            return;
+        }
+        let title = if outcome.moved == 0 {
+            if total == 1 {
+                format!("Couldn't move {} to the Trash", file_name_of(paths.first()))
+            } else {
+                format!("Couldn't move {total} items to the Trash")
+            }
+        } else {
+            format!("Moved {} of {total} items to the Trash", outcome.moved)
+        };
+        let retry = FileOp::Trash {
+            paths: outcome
+                .failures
+                .iter()
+                .map(|(path, _)| path.clone())
+                .collect(),
+        };
+        self.set_notice(
+            title,
+            Some(failure_detail(&outcome.failures)),
+            op_actions(&outcome.failures, retry),
+        );
+    }
+
+    /// Show `title` (and `detail`, when there is one) as the floating card,
+    /// offering `actions` as next steps.
+    fn set_notice(&mut self, title: String, detail: Option<String>, actions: Vec<NoticeAction>) {
+        self.notice = Some(Notice {
+            title,
+            detail,
+            actions,
+            born: Instant::now(),
+        });
+    }
+
+    /// The floating card the app uses for feedback: a job in flight, or a
+    /// short report of what just happened. It is never modal — the content
+    /// stays usable underneath — and it goes away on its own.
+    fn notice_card(&mut self, ctx: &Context) {
+        let (title, detail, actions) = if let Some(job) = self.job.as_ref() {
+            let text = if job.done == 0 {
+                format!("{} {} item(s){}", job.prefix, job.total, job.tail)
+            } else {
+                format!(
+                    "{} {} of {}{} — {}",
+                    job.prefix, job.done, job.total, job.tail, job.last_name
+                )
+            };
+            (text, None, Vec::new())
+        } else {
+            let Some(notice) = self.notice.as_ref() else {
+                return;
+            };
+            (
+                notice.title.clone(),
+                notice.detail.clone(),
+                notice.actions.clone(),
+            )
+        };
+
+        egui::Area::new(egui::Id::new("notice_card"))
+            .anchor(egui::Align2::CENTER_BOTTOM, [0.0, -14.0])
+            .order(egui::Order::Middle)
+            .show(ctx, |ui| {
+                let visuals = &ctx.style().visuals;
+                let frame = egui::Frame::new()
+                    .fill(visuals.window_fill)
+                    .stroke(visuals.widgets.noninteractive.bg_stroke)
+                    .corner_radius(10.0)
+                    .inner_margin(egui::Margin::symmetric(14, 10));
+                frame.show(ui, |ui| {
+                    ui.set_max_width(460.0);
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(&title).strong());
+                        // A result with no actions can be waved away; a job
+                        // in flight always finishes on its own.
+                        if actions.is_empty() {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let resp = ui.small_button("Dismiss");
+                                    theme::note_rect(ui, "Dismiss", resp.rect);
+                                    if resp.clicked() {
+                                        self.notice = None;
+                                    }
+                                },
+                            );
+                        }
+                    });
+                    if let Some(detail) = &detail {
+                        ui.label(egui::RichText::new(detail).weak());
+                    }
+                    if !actions.is_empty() {
+                        ui.horizontal(|ui| {
+                            for action in actions {
+                                let label = match &action {
+                                    NoticeAction::Reveal(_) => "Show in Finder",
+                                    NoticeAction::Retry(_) => "Retry",
+                                };
+                                let resp = ui.button(label);
+                                theme::note_rect(ui, label, resp.rect);
+                                if resp.clicked() {
+                                    match action {
+                                        NoticeAction::Reveal(path) => {
+                                            crate::panels::reveal_in_finder(&path);
+                                        }
+                                        NoticeAction::Retry(op) => self.start_job(op),
+                                    }
+                                    self.notice = None;
+                                }
+                            }
+                        });
+                    }
+                });
+            });
     }
 
     fn transfer_window(&mut self, ctx: &Context) {
@@ -1923,7 +2197,11 @@ impl App {
                 .unwrap_or_default();
             self.transfer = None;
             let dest = PathBuf::from(dest.trim());
-            self.apply_transfer(&pending.paths, &dest, pending.copy);
+            self.start_job(FileOp::Transfer {
+                paths: pending.paths,
+                dest,
+                copy: pending.copy,
+            });
         }
     }
 
@@ -1971,7 +2249,7 @@ impl App {
                 ui.horizontal(|ui| {
                     if ui.button("Move to Trash").clicked() {
                         self.confirm_trash = None;
-                        self.apply_trash(&paths);
+                        self.start_job(FileOp::Trash { paths });
                     }
                     if ui.button("Cancel").clicked() {
                         self.confirm_trash = None;
@@ -1997,6 +2275,10 @@ impl App {
         // The text fields are re-collected as the panels are laid out; a
         // focused button or grid cell must not count as "typing".
         self.text_field_ids.clear();
+
+        // Whatever the file-operation worker finished this frame becomes
+        // the result card before anything is painted.
+        self.pump_job(ctx);
 
         let title = self.title();
         if title != self.last_title {
@@ -2073,9 +2355,18 @@ impl App {
             }
         }
 
-        if let Some((_, at)) = self.toast {
-            if at.elapsed().as_secs_f32() > 3.0 {
-                self.toast = None;
+        // The card goes away on its own: quick reports fade fast, failures
+        // that offer next steps stay a little longer. Nothing else repaints
+        // an idle window, so while a card is up the app keeps a slow
+        // repaint going — that is what makes the expiry (and a job's
+        // progress ticks) actually take effect on screen.
+        if self.notice.is_some() || self.job.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(150));
+        }
+        if let Some(notice) = &self.notice {
+            let ttl = if notice.actions.is_empty() { 4.0 } else { 10.0 };
+            if notice.born.elapsed().as_secs_f32() > ttl {
+                self.notice = None;
             }
         }
 
@@ -2147,6 +2438,9 @@ impl App {
                 Mode::Browser => crate::browser::grid(self, ui),
                 Mode::Viewer => crate::viewer::view(self, ui),
             });
+
+        // The feedback card floats above the content, under the dialogs.
+        self.notice_card(ctx);
 
         self.options_window(ctx);
         self.about_window(ctx);
@@ -2362,6 +2656,110 @@ fn menu_items(ui: &mut egui::Ui, items: &[Item], actions: &mut Vec<Action>) {
                 }
             }
         }
+    }
+}
+
+/// Move or copy `paths` into `dest`, skipping items that already live
+/// there. Pure filesystem work, so it is safe on the worker thread;
+/// `progress` gets the running count and each item's name as the work
+/// moves along.
+fn run_transfer(
+    paths: &[PathBuf],
+    dest: &Path,
+    copy: bool,
+    progress: Option<&mpsc::Sender<JobMessage>>,
+) -> OpOutcome {
+    if !dest.is_dir() {
+        return OpOutcome {
+            moved: 0,
+            failures: paths
+                .iter()
+                .map(|path| (path.clone(), format!("Not a folder: {}", dest.display())))
+                .collect(),
+        };
+    }
+    let mut moved = 0;
+    let mut failures = Vec::new();
+    for (index, path) in paths.iter().enumerate() {
+        let Some(name) = path.file_name() else {
+            continue;
+        };
+        let target = dest.join(name);
+        if target == *path {
+            continue;
+        }
+        let result = if copy {
+            copy_path(path, &target)
+        } else {
+            std::fs::rename(path, &target)
+        };
+        match result {
+            Ok(()) => moved += 1,
+            Err(error) => failures.push((path.clone(), error.to_string())),
+        }
+        if let Some(tx) = progress {
+            let _ = tx.send(JobMessage::Progress(
+                index + 1,
+                name.to_string_lossy().into_owned(),
+            ));
+        }
+    }
+    OpOutcome { moved, failures }
+}
+
+/// Move `paths` to the Trash with the `trash` crate — the items stay in the
+/// Finder's Trash, so the operation is recoverable. Pure filesystem work,
+/// so it is safe on the worker thread.
+fn run_trash(paths: &[PathBuf], progress: Option<&mpsc::Sender<JobMessage>>) -> OpOutcome {
+    let names = crate::alerts::trash_names(paths);
+    let mut moved = 0;
+    let mut failures = Vec::new();
+    for (index, (path, name)) in paths.iter().zip(&names).enumerate() {
+        match trash::delete(path) {
+            Ok(()) => moved += 1,
+            Err(error) => failures.push((path.clone(), error.to_string())),
+        }
+        if let Some(tx) = progress {
+            let _ = tx.send(JobMessage::Progress(index + 1, name.clone()));
+        }
+    }
+    OpOutcome { moved, failures }
+}
+
+/// The failed items, as a line the user can act on: "name: error", a few at
+/// most, then how many more.
+fn failure_detail(failures: &[(PathBuf, String)]) -> String {
+    let mut parts: Vec<String> = failures
+        .iter()
+        .take(3)
+        .map(|(path, error)| format!("{}: {}", file_name_of(Some(path)), error))
+        .collect();
+    let extra = failures.len().saturating_sub(3);
+    if extra > 0 {
+        parts.push(format!("and {extra} more"));
+    }
+    parts.join(", ")
+}
+
+/// The buttons a failed operation earns: look at the file in Finder, and
+/// try the operation again on the items that failed.
+fn op_actions(failures: &[(PathBuf, String)], retry: FileOp) -> Vec<NoticeAction> {
+    let mut actions = Vec::new();
+    if let Some((path, _)) = failures.first() {
+        actions.push(NoticeAction::Reveal(path.clone()));
+    }
+    actions.push(NoticeAction::Retry(retry));
+    actions
+}
+
+/// The file's name for a message, or its full path when it has none.
+fn file_name_of(path: Option<&PathBuf>) -> String {
+    match path {
+        Some(path) => path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string()),
+        None => String::new(),
     }
 }
 
@@ -2927,11 +3325,16 @@ mod tests {
         for path in [
             &["View", "Show Inspector"][..],
             &["View", "Show Toolbar"][..],
-            &["View", "Show Status Bar"][..],
         ] {
             app.act(menu_action(&app, path), &ctx);
         }
-        assert!(!app.show_inspector && !app.show_toolbar && !app.show_status);
+        assert!(!app.show_inspector && !app.show_toolbar);
+
+        // The status bar is off by default (feedback rides the floating
+        // notice), so the menu item turns it on.
+        assert!(!app.show_status);
+        app.act(menu_action(&app, &["View", "Show Status Bar"]), &ctx);
+        assert!(app.show_status);
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -3448,7 +3851,8 @@ mod tests {
 
         app.apply_trash(std::slice::from_ref(&path));
         assert!(!path.exists(), "the file must be gone");
-        let (message, _) = app.toast.clone().unwrap();
+        let notice = app.notice.clone().unwrap();
+        let message = &notice.title;
         assert!(message.contains("to the Trash"), "{message}");
         assert!(
             message.contains(&crate::alerts::trash_names(std::slice::from_ref(&path))[0]),
@@ -3456,11 +3860,19 @@ mod tests {
         );
         assert!(app.multi.is_empty());
 
-        // A file that is already gone cannot be moved: that is reported, not
-        // silently swallowed.
+        // A file that is already gone cannot be moved: that is reported —
+        // with the reason and a retry — not silently swallowed.
         app.apply_trash(std::slice::from_ref(&path));
-        let (message, _) = app.toast.clone().unwrap();
-        assert!(message.contains("Couldn't move"), "{message}");
+        let notice = app.notice.clone().unwrap();
+        assert!(notice.title.contains("Couldn't move"), "{}", notice.title);
+        assert!(notice.detail.as_deref().is_some_and(|d| !d.is_empty()));
+        assert!(
+            notice
+                .actions
+                .iter()
+                .any(|a| matches!(a, NoticeAction::Retry(_))),
+            "a failed trash run must offer a retry"
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -3536,6 +3948,147 @@ mod tests {
         app.apply_transfer(&[dir.join("two.png")], &other, false);
         assert!(!dir.join("two.png").exists());
         assert!(other.join("two.png").exists());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A transfer that fails names the failures, offers Show in Finder and
+    /// Retry, and clicking Retry really runs the operation again — on the
+    /// failed items only — and ends in the success card.
+    #[test]
+    fn failed_transfer_offers_retry_and_reveal() {
+        let dir = fixture_dir("transferfail");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let mut time = 1.0;
+
+        // The destination does not exist yet: every item fails.
+        let dest = dir.join("missing");
+        app.apply_transfer(&[dir.join("one.png"), dir.join("two.png")], &dest, false);
+        let notice = app.notice.clone().unwrap();
+        assert!(notice.title.contains("Couldn't move"), "{}", notice.title);
+        assert!(
+            notice
+                .detail
+                .as_deref()
+                .is_some_and(|d| d.contains("Not a folder")),
+            "{:?}",
+            notice.detail
+        );
+        assert_eq!(notice.actions.len(), 2);
+        assert!(notice
+            .actions
+            .iter()
+            .any(|a| matches!(a, NoticeAction::Reveal(_))));
+        assert!(notice
+            .actions
+            .iter()
+            .any(|a| matches!(a, NoticeAction::Retry(_))));
+
+        // Create the folder the transfer keeps failing on and click Retry:
+        // the worker must move the files and end in the success card.
+        std::fs::create_dir(&dest).unwrap();
+        // The card's first frame is egui's sizing pass (no shapes, wrong
+        // spot); from the second frame it is painted where it stays, so the
+        // click needs that second frame's rect.
+        settle(&ctx, &mut app, &mut time);
+        settle(&ctx, &mut app, &mut time);
+        assert!(
+            theme::rect_of(&ctx, "Retry").is_some(),
+            "the failure card must be on screen with a Retry button"
+        );
+        assert!(click_label(&ctx, &mut app, "Retry", &mut time));
+        // Wait for the worker to finish and its outcome to be pumped; the
+        // files can already be on disk before the final message arrives.
+        for _ in 0..50 {
+            settle(&ctx, &mut app, &mut time);
+            if app.job.is_none() {
+                break;
+            }
+        }
+        assert!(
+            dest.join("one.png").exists(),
+            "retry must have moved one.png"
+        );
+        assert!(
+            dest.join("two.png").exists(),
+            "retry must have moved two.png"
+        );
+        assert!(app.job.is_none(), "the retried job must be finished");
+        let notice = app.notice.clone().unwrap();
+        assert!(notice.title.contains("Moved 2"), "{}", notice.title);
+        assert!(notice.actions.is_empty());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A batch that half succeeds says so: the moved count, the failed item
+    /// named with its reason, and a retry limited to the failed item.
+    #[test]
+    fn batch_transfer_reports_each_failure() {
+        let dir = fixture_dir("transfermix");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let other = dir.join("nested");
+
+        // A folder named like the file blocks the move of that one item;
+        // the other moves just fine.
+        std::fs::create_dir(other.join("one.png")).unwrap();
+        app.apply_transfer(&[dir.join("one.png"), dir.join("two.png")], &other, false);
+
+        let notice = app.notice.clone().unwrap();
+        assert!(notice.title.contains("Moved 1 of 2"), "{}", notice.title);
+        let detail = notice.detail.unwrap();
+        assert!(detail.contains("one.png"), "{detail}");
+        assert!(!detail.contains("two.png"), "{detail}");
+        let retry = notice
+            .actions
+            .iter()
+            .find(|a| matches!(a, NoticeAction::Retry(_)))
+            .expect("a failed batch must offer a retry");
+        let NoticeAction::Retry(FileOp::Transfer { paths, .. }) = retry else {
+            panic!("the retry must be a transfer");
+        };
+        assert_eq!(
+            paths,
+            &[dir.join("one.png")],
+            "retry carries the failure only"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Feedback rides a floating card: it is painted while it is young and
+    /// goes away when the user dismisses it.
+    #[test]
+    fn notice_card_is_painted_and_dismissible() {
+        let dir = fixture_dir("notice");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let mut time = 1.0;
+
+        app.notify("Cleared 3 cached thumbnail(s)");
+        // The card's first frame is egui's sizing pass; it is painted from
+        // the second frame on.
+        settle(&ctx, &mut app, &mut time);
+        time += 0.4;
+        let mut input = raw_input();
+        input.time = Some(time);
+        let output = ctx.run(input, |ctx| app.draw(ctx));
+        assert!(painted_text(&output.shapes).contains("Cleared 3 cached thumbnail(s)"));
+        assert!(theme::rect_of(&ctx, "Dismiss").is_some());
+
+        // Dismiss it: the card is gone on the next frame.
+        assert!(click_label(&ctx, &mut app, "Dismiss", &mut time));
+        time += 0.4;
+        let mut input = raw_input();
+        input.time = Some(time);
+        let output = ctx.run(input, |ctx| app.draw(ctx));
+        assert!(
+            !painted_text(&output.shapes).contains("Cleared 3 cached thumbnail(s)"),
+            "the dismissed card must be gone"
+        );
+        assert!(app.notice.is_none());
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

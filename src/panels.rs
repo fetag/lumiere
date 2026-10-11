@@ -92,3 +92,37 @@ fn native_choose_directory(title: &str, prompt: &str, start: Option<&Path>) -> P
         _ => PanelResult::Cancelled,
     }
 }
+
+/// Reveal `path` in a Finder window with the item selected — the "Show in
+/// Finder" step a failed operation offers. Returns true when a native
+/// Finder window was asked to; everywhere else, and in a test build where
+/// there is no `NSApplication` to host it, the call is a no-op.
+#[cfg(target_os = "macos")]
+pub fn reveal_in_finder(path: &Path) -> bool {
+    use objc2::rc::Retained;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSWorkspace;
+    use objc2_foundation::{NSArray, NSString, NSURL};
+
+    if cfg!(test) {
+        return false;
+    }
+    // AppKit only works on the main thread.
+    let Some(_mtm) = MainThreadMarker::new() else {
+        return false;
+    };
+    let name = path.to_string_lossy();
+    let url = NSURL::fileURLWithPath(&NSString::from_str(name.as_ref()));
+    let urls: Vec<Retained<NSURL>> = vec![url];
+    let urls = NSArray::from_retained_slice(&urls);
+    let workspace = NSWorkspace::sharedWorkspace();
+    workspace.activateFileViewerSelectingURLs(&urls);
+    true
+}
+
+/// There is no Finder on other platforms for the file to be shown in.
+#[cfg(not(target_os = "macos"))]
+pub fn reveal_in_finder(path: &Path) -> bool {
+    let _ = path;
+    false
+}

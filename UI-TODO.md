@@ -146,6 +146,7 @@
   - 現況／依據：`src/app.rs:1372-1412` 使用三格 Win95 status field；`src/app.rs:1710-1732`、`src/app.rs:1750-1755` 只產生短暫 toast／字串錯誤；`src/viewer.rs:39-47` 僅畫出 `Loading…`。
   - 實作方向：將常駐 status bar 改為需要時才出現的 inline progress／non-modal notification；批次操作提供可理解的進度、失敗檔案與「Show in Finder」/「Retry」等下一步。避免以固定 12 px 三格資訊承載核心狀態。
   - 驗收：載入大型圖片、移動／複製多檔與解碼失敗時，使用者能知道正在處理什麼、是否完成、哪些檔案失敗並能採取下一步；一般瀏覽時畫面沒有過時的常駐三格狀態列。
+  - 進度（2026-10-11）：常駐三格狀態列改為**預設關閉**（View ▸ Show Status Bar 仍可開啟，開啟時只顯示資料夾事實）；所有 `notify` 訊息改為**浮動 notice card**（`app.rs::notice_card`，底部置中、non-modal、普通訊息 4 秒自動消失、可 Dismiss）。move/copy/trash 批次操作改在 **worker thread** 執行（`start_job`/`pump_job`，沿用 loader 的 channel 模式）：執行中卡片顯示「Moving 2 of 4 — sunset.jpg」進度，完成後顯示結果。失敗**逐檔列名與原因**（`failure_detail`，超過 3 項顯示 and N more），並提供「**Show in Finder**」（`panels::reveal_in_finder`，macOS `NSWorkspace.activateFileViewerSelectingURLs`）與「**Retry**」（只重跑失敗項，`NoticeAction::Retry(FileOp)`）兩個下一步。viewer 的 `Loading…`／解碼失敗改為含檔名（`Loading one.png…`）。headless 測試：`failed_transfer_offers_retry_and_reveal`（失敗→點 Retry→worker 完成→成功卡）、`batch_transfer_reports_each_failure`（半成功逐檔報備、retry 只帶失敗項）、`notice_card_is_painted_and_dismissible`（卡片繪出＋Dismiss）；`apply_transfer`/`apply_trash` 保留為 `#[cfg(test)]` 同步執行器供測試直調。剩餘（未做）：長操作的 cancel、notice 的選單/鍵盤可達性、跨重啟保留。
 
 ## P2 — 一致性、偏好與品質收尾
 

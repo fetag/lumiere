@@ -44,23 +44,21 @@ pub fn view(app: &mut App, ui: &mut Ui) {
         .to_owned();
 
     let Some((texture, width, height)) = cached else {
-        status_label(
-            ui,
-            canvas,
-            if app.caches.full_failed(&path) {
-                "Failed to load image"
-            } else {
-                "Loading..."
-            },
-            app,
-        );
+        // Name the picture: "what is being processed" is only useful when
+        // it says which one.
+        let status = if app.caches.full_failed(&path) {
+            format!("Failed to load {file_name}")
+        } else {
+            format!("Loading {file_name}…")
+        };
+        status_label(ui, canvas, &status, app);
         ui.ctx().accesskit_node_builder(response.id, |node| {
             node.set_role(egui::accesskit::Role::Image);
             node.set_label(file_name.as_str());
             if app.caches.full_failed(&path) {
-                node.set_value("failed to load");
+                node.set_value(format!("failed to load {file_name}"));
             } else {
-                node.set_value("loading");
+                node.set_value(format!("loading {file_name}"));
             }
         });
         draw_toolbar(app, ui, canvas);
@@ -155,8 +153,8 @@ pub fn view(app: &mut App, ui: &mut Ui) {
 }
 
 /// A status line as a real, accessible `Label` centred on the canvas, so a
-/// screen reader hears "Loading..." or "Failed to load image" instead of a
-/// painted patch of pixels.
+/// screen reader hears "Loading one.png" or "Failed to load one.png"
+/// instead of a painted patch of pixels.
 fn status_label(ui: &mut Ui, rect: Rect, text: &str, app: &App) {
     let mut child = ui.new_child(
         egui::UiBuilder::new()

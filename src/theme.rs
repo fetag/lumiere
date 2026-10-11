@@ -271,15 +271,12 @@ pub enum Icon {
     Actual,
     RotateLeft,
     RotateRight,
-    FlipH,
-    FlipV,
     First,
     Prev,
     Next,
     Last,
     Slideshow,
     Stop,
-    Fullscreen,
     Delete,
     Info,
     Home,
@@ -502,7 +499,6 @@ pub fn draw_icon(p: &egui::Painter, center: Pos2, size: f32, glyph: Icon, color:
                 StrokeKind::Inside,
             );
         }
-        Icon::Fullscreen => corners(0.08),
         Icon::First | Icon::Prev | Icon::Next | Icon::Last => {
             let dir = if glyph == Icon::First || glyph == Icon::Prev {
                 -1
@@ -600,56 +596,6 @@ pub fn draw_icon(p: &egui::Painter, center: Pos2, size: f32, glyph: Icon, color:
                 ],
                 stroke,
             );
-        }
-        Icon::FlipH | Icon::FlipV => {
-            let horizontal = glyph == Icon::FlipH;
-            let (a, b) = if horizontal {
-                (
-                    [
-                        pos2(bounds.left() + s * 0.24, bounds.top() + s * 0.16),
-                        pos2(bounds.left() + s * 0.24, bounds.bottom() - s * 0.16),
-                        pos2(center.x - s * 0.06, center.y),
-                    ],
-                    [
-                        pos2(bounds.right() - s * 0.24, bounds.top() + s * 0.16),
-                        pos2(bounds.right() - s * 0.24, bounds.bottom() - s * 0.16),
-                        pos2(center.x + s * 0.06, center.y),
-                    ],
-                )
-            } else {
-                (
-                    [
-                        pos2(bounds.left() + s * 0.16, bounds.top() + s * 0.24),
-                        pos2(bounds.right() - s * 0.16, bounds.top() + s * 0.24),
-                        pos2(center.x, center.y - s * 0.06),
-                    ],
-                    [
-                        pos2(bounds.left() + s * 0.16, bounds.bottom() - s * 0.24),
-                        pos2(bounds.right() - s * 0.16, bounds.bottom() - s * 0.24),
-                        pos2(center.x, center.y + s * 0.06),
-                    ],
-                )
-            };
-            triangle(a);
-            triangle(b);
-            // The axis the image flips around.
-            if horizontal {
-                p.line_segment(
-                    [
-                        pos2(center.x, bounds.top() - 1.0),
-                        pos2(center.x, bounds.bottom() + 1.0),
-                    ],
-                    Stroke::new(w * 0.8, color),
-                );
-            } else {
-                p.line_segment(
-                    [
-                        pos2(bounds.left() - 1.0, center.y),
-                        pos2(bounds.right() + 1.0, center.y),
-                    ],
-                    Stroke::new(w * 0.8, color),
-                );
-            }
         }
     }
 }
