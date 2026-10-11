@@ -24,8 +24,11 @@ pub const ZOOM_MAX: f32 = 64.0;
 /// the other way starts a fresh one.
 const SWIPE_PX: f32 = 120.0;
 /// A pause longer than this starts a fresh swipe instead of extending the
-/// last one.
-const SWIPE_GAP: Duration = Duration::from_millis(400);
+/// last one. Trackpad events arrive every 8–16 ms, so the pause must be far
+/// larger than the event cadence (one gesture, however long its momentum,
+/// can never break); but it must stay short enough that two quick swipes —
+/// typically 100–300 ms apart once the momentum dies — still count as two.
+const SWIPE_GAP: Duration = Duration::from_millis(150);
 
 pub fn view(app: &mut App, ui: &mut Ui) {
     let Some(path) = app.current_image_path() else {

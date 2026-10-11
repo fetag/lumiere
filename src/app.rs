@@ -4651,10 +4651,10 @@ mod tests {
         );
         assert_eq!(app.swipe_x, -120.0, "the lock flips with the page");
 
-        // And a fresh gesture that is huge from the start pages exactly
-        // once.
-        app.swipe_x = 0.0;
-        app.swipe_against = 0.0;
+        // A fresh swipe after the input went quiet pages again: the gap
+        // (150 ms) elapses, the lock drops, and a huge swipe still pages
+        // exactly once.
+        std::thread::sleep(std::time::Duration::from_millis(250));
         scroll_frame(&ctx, &mut app, &mut time, egui::vec2(500.0, 0.0));
         assert_eq!(app.selected, next);
         assert_eq!(app.swipe_x, 120.0);
