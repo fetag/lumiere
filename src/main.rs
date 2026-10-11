@@ -32,9 +32,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         740.0
     };
+    // eframe otherwise installs its bundled black "e" icon at runtime on
+    // macOS, replacing the icon that AppKit loaded from the .app bundle.
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/AppIcon.png"))?;
 
     let viewport = egui::ViewportBuilder::default()
         .with_title(app::APP_TITLE)
+        .with_icon(icon)
         .with_inner_size([width, height])
         .with_min_inner_size([640.0, 420.0]);
 
