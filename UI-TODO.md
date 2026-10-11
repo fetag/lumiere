@@ -118,6 +118,7 @@
   - 現況／依據：`src/app.rs:1193-1280` 同時放置資料夾、縮圖尺寸、導覽、播放、縮放、旋轉、刪除等大量操作；`src/classic.rs:66-93` 將其固定成 30×28 px 手繪按鈕；`src/viewer.rs:188-233` 再覆蓋一條 12 個按鈕的浮動工具列。
   - 實作方向：採原生 toolbar 置於標題列／標準位置，使用 SF Symbols、可存取 label 與 tooltip。只保留常用的 Back/Forward、Share、Info、Sidebar、縮放或播放；將旋轉／翻轉／排序等次要操作放入選單或 overflow。支援使用者自訂與工具列顯示偏好（若框架限制，至少做精簡、分組和標準間距）。
   - 驗收：視窗寬度 800 px 時工具列不會擠壓、截斷或覆蓋照片；每個圖示都具可辨識 tooltip／accessibility label；主瀏覽器與 viewer 不會各自顯示一整排重複導航按鈕。
+  - 進度（2026-10-11，經使用者指示採「精簡 in-window」方向，未做真 native NSToolbar）：browser 工具列（`tool_row`）精簡為 11 個瀏覽按鈕，依功能分組（導覽 Up/Home/Refresh｜縮圖尺寸｜圖片導覽 First/Prev/Next/Last｜Slideshow｜Move to Trash＋Get Info）；移除 9 個 viewer 專用鈕（zoom in/out、fit、actual size、rotate 左右、flip H/V、Stop slideshow、Full screen）——全部仍經 Edit/View/Go 選單與快捷鍵可達，viewer 浮動 HUD 保留完整看圖鈕（兩者不會同框顯示，重複導航問題解決）。`Slideshow`（需有圖片）與 `Move to Trash`（需有選取）的 enabled 狀態改與選單項一致。headless 測試 `browser_toolbar_keeps_only_browser_controls` 驗證 11 鈕存在、9 鈕消失、整列 800 px 窗口容得下、選單路徑仍在。剩餘（未做）：真 native NSToolbar／SF Symbols、工具列使用者自訂與顯示偏好。
 
 - [ ] **以 sidebar + content + inspector 的 macOS 資訊架構取代固定三窗格與「Places」條。**
   - 現況／依據：`src/app.rs:1858-1895` 固定組合 menu、toolbar、places、status、folder tree、preview pane；`src/app.rs:1285-1369` 另有可編輯 path 和 wildcard filter；`src/browser.rs:15-104` 使用自繪 Windows 式展開符號與樹狀目錄。

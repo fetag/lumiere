@@ -1343,7 +1343,14 @@ impl App {
             });
     }
 
+    /// The browser-mode toolbar. It carries browsing controls only: the
+    /// zoom / rotate / flip / full-screen controls belong to the viewer
+    /// (its floating toolbar owns them there), and every control removed
+    /// from this row still lives in the Edit/View/Go menus with its
+    /// shortcut, so nothing is lost — the row just stops crowding 800 px
+    /// windows with buttons that do nothing until an image is opened.
     fn tool_row(&mut self, ui: &mut egui::Ui) {
+        let has_image = self.entries.iter().any(|e| e.is_image);
         let mut pending: Vec<Action> = Vec::new();
         ui.horizontal(|ui| {
             if theme::tool_button(ui, Icon::FolderUp, "Up one level", true).clicked() {
@@ -1379,49 +1386,14 @@ impl App {
                 pending.push(Action::LastImage);
             }
             theme::vtool_separator(ui);
-            if theme::tool_button(ui, Icon::Slideshow, "Slideshow", true).clicked() {
+            // Enabled exactly like the Go ▸ Play Slideshow menu item.
+            if theme::tool_button(ui, Icon::Slideshow, "Slideshow", has_image).clicked() {
                 pending.push(Action::Slideshow);
             }
-            if theme::tool_button(ui, Icon::Stop, "Stop slideshow", self.slideshow).clicked() {
-                pending.push(Action::StopSlideshow);
-            }
             theme::vtool_separator(ui);
-            if theme::tool_button(ui, Icon::ZoomOut, "Zoom out", true).clicked() {
-                pending.push(Action::ZoomOut);
-            }
-            if theme::tool_button(ui, Icon::ZoomIn, "Zoom in", true).clicked() {
-                pending.push(Action::ZoomIn);
-            }
-            if theme::tool_button(ui, Icon::Fit, "Fit to window", true).clicked() {
-                pending.push(Action::FitWindow);
-            }
-            if theme::tool_button(ui, Icon::Actual, "Actual size", true).clicked() {
-                pending.push(Action::ActualSize);
-            }
-            theme::vtool_separator(ui);
-            if theme::tool_button(ui, Icon::RotateLeft, "Rotate left", true).clicked() {
-                pending.push(Action::RotateCCW);
-            }
-            if theme::tool_button(ui, Icon::RotateRight, "Rotate right", true).clicked() {
-                pending.push(Action::RotateCW);
-            }
-            if theme::tool_button(ui, Icon::FlipH, "Flip horizontal", true).clicked() {
-                pending.push(Action::FlipH);
-            }
-            if theme::tool_button(ui, Icon::FlipV, "Flip vertical", true).clicked() {
-                pending.push(Action::FlipV);
-            }
-            theme::vtool_separator(ui);
-            if theme::tool_button(ui, Icon::Fullscreen, "Full screen", true).clicked() {
-                pending.push(Action::ToggleFullscreen);
-            }
-            if theme::tool_button(
-                ui,
-                Icon::Delete,
-                "Move to Trash",
-                self.current_image_path().is_some(),
-            )
-            .clicked()
+            // Enabled exactly like the File ▸ Move to Trash menu item.
+            if theme::tool_button(ui, Icon::Delete, "Move to Trash", self.current().is_some())
+                .clicked()
             {
                 pending.push(Action::MoveToTrash);
             }
@@ -3916,6 +3888,117 @@ mod tests {
         input.time = Some(time);
         let output = ctx.run(input, |ctx| app.draw(ctx));
         assert!(painted_text(&output.shapes).contains("Dimensions"));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The browser toolbar carries browsing controls only: the zoom / rotate
+    /// / flip / full-screen buttons belong to the viewer's floating toolbar,
+    /// the slimmed row fits an 800 px window, and every removed control is
+    /// still reachable through the menus (that is where it lives now).
+    #[test]
+    fn browser_toolbar_keeps_only_browser_controls() {
+        let dir = fixture_dir("toolbar");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+
+        // Paint a few frames at an 800 px wide window, as the spec's
+        // acceptance width.
+        let mut time = 1.0;
+        for _ in 0..4 {
+            time += 0.4;
+            let mut input = raw_input();
+            input.screen_rect = Some(egui::Rect::from_min_max(
+                egui::pos2(0.0, 0.0),
+                egui::pos2(800.0, 600.0),
+            ));
+            input.time = Some(time);
+            let _ = ctx.run(input, |ctx| app.draw(ctx));
+        }
+
+        // Browsing controls are present...
+        let present: [&str; 13] = [
+            "Up one level",
+            "Home folder",
+            "Refresh",
+            "Small thumbnails",
+            "Medium thumbnails",
+            "Large thumbnails",
+            "First image",
+            "Previous image",
+            "Next image",
+            "Last image",
+            "Slideshow",
+            "Move to Trash",
+            "Get Info",
+        ];
+        for label in present {
+            assert!(theme::rect_of(&ctx, label).is_some(), "{label} is missing");
+        }
+
+        // ...and the viewer-only controls are gone from the row.
+        for label in [
+            "Zoom in",
+            "Zoom out",
+            "Fit to window",
+            "Actual size",
+            "Rotate left",
+            "Rotate right",
+            "Flip horizontal",
+            "Flip vertical",
+            "Stop slideshow",
+            "Full screen",
+        ] {
+            assert!(
+                theme::rect_of(&ctx, label).is_none(),
+                "{label} still in the row"
+            );
+        }
+
+        // The whole row fits inside the 800 px window.
+        let rects: Vec<_> = present
+            .iter()
+            .filter_map(|label| theme::rect_of(&ctx, label))
+            .collect();
+        let left = rects.iter().map(|r| r.min.x).fold(f32::INFINITY, f32::min);
+        let right = rects
+            .iter()
+            .map(|r| r.max.x)
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!(right - left < 800.0, "the row overflows an 800 px window");
+
+        // The removed controls are still reachable through the menus.
+        assert_eq!(menu_action(&app, &["View", "Zoom In"]), Action::ZoomIn);
+        assert_eq!(menu_action(&app, &["View", "Zoom Out"]), Action::ZoomOut);
+        assert_eq!(
+            menu_action(&app, &["View", "Fit to Window"]),
+            Action::FitWindow
+        );
+        assert_eq!(
+            menu_action(&app, &["View", "Actual Size"]),
+            Action::ActualSize
+        );
+        assert_eq!(
+            menu_action(&app, &["View", "Enter Full Screen"]),
+            Action::ToggleFullscreen
+        );
+        assert_eq!(
+            menu_action(&app, &["Edit", "Rotate Left"]),
+            Action::RotateCCW
+        );
+        assert_eq!(
+            menu_action(&app, &["Edit", "Rotate Right"]),
+            Action::RotateCW
+        );
+        assert_eq!(
+            menu_action(&app, &["Edit", "Flip Horizontal"]),
+            Action::FlipH
+        );
+        assert_eq!(menu_action(&app, &["Edit", "Flip Vertical"]), Action::FlipV);
+        assert_eq!(
+            menu_action(&app, &["Go", "Play Slideshow"]),
+            Action::Slideshow
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
