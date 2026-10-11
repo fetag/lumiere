@@ -25,7 +25,7 @@
     - `Action` 已改名為 macOS 語彙：`OpenFolder`、`GetInfo`、`Settings`、`MoveToTrash`、`Reload`、`ToggleSidebar`、`ToggleInspector`，新增 `ToggleReverse`，移除 `NextFolder`／`PrevFolder`（`fsmodel::sibling_folder` 一併刪除）。`Tools` 選單、`Exit`、`F5`、`F11`、裸 `Del`、`Tab`/`⇧Tab` 換資料夾都已移除。
     - 快捷鍵只有一個來源：`menu_spec()` 裡的 `Shortcut` 同時產生原生 key equivalent、選單顯示文字與 egui 鍵盤對應（`App::shortcuts()` 走訪選單描述）。測試 `menu_shortcuts_are_the_keyboard_map` 會驗證「選單顯示的按法」與「實際觸發的按法」相同。
     - 對照表：`⌘O` Open…、`⌘I` Get Info、`⌥⌘R` Rename…、`⌘⌫` Move to Trash、`⌘R` Reload、`⌘0` Actual Size、`⌘+`/`⌘-` Zoom、`⇧⌘F` Fit to Window、`⌃⌘S` Show Sidebar、`⌥⌘T` Show Toolbar、`⌥⌘I` Show Inspector、`⇧⌘U` Up One Level、`⇧⌘H` Home、`⇧⌘P` Pictures、`⇧⌘Y` Slideshow、`⌃⌘F` Full Screen、`⌘A`/`⇧⌘A`/`⌥⌘A` 選取、`⇧⌘L`/`⇧⌘R` 旋轉。
-  - **待確認的偏離**：規格寫「重新命名改為 `Return`」，但 `Return` 目前保留給 `View Image`（與 Finder 的 Return＝開啟一致），重新命名用 `⌥⌘R`，且 `F2` 仍然可用。`⌘R` 已讓給 `Reload`，所以旋轉改用 `⇧⌘L`/`⇧⌘R`。若要照規格把 `Return` 給 Rename，只要改 `menu_spec()` 裡 `View Image`／`Rename…` 兩項的 `Shortcut`。
+  - **決定（已與使用者確認）**：`Return` 保留給 `View Image`（與 Finder 的 Return＝開啟一致），重新命名用 `⌥⌘R`，`F2` 亦可用。這與規格「重新命名改為 `Return`」不同，但使用者確認保留目前行為，故不再視為偏離。`⌘R` 已讓給 `Reload`，所以旋轉用 `⇧⌘L`/`⇧⌘R`。
   - 另一個實作細節：AppKit 會先把 key equivalent 交給選單列，因此文字輸入框開啟時（重新命名等）會把 `⌘A`、`⌘⌫`、`Return` 從文字框搶走。`App::key_item()` 在有文字焦點時會暫時不掛這些 key equivalent（選單仍在，只是不顯示快捷鍵）。
 
 - [x] **停止以手繪 Win95 theme 作為預設介面，改採 macOS 系統色彩、字型與動態外觀。**
