@@ -486,6 +486,10 @@ pub struct App {
     /// or toolbar button does not withdraw the menu's key equivalents.
     pub text_field_ids: Vec<egui::Id>,
     pub about_open: bool,
+    /// The about panel's icon texture, built once from the shipped
+    /// `AppIcon.png` so the fallback panel shows the real bundle artwork
+    /// instead of a drawn glyph.
+    app_icon: Option<TextureHandle>,
     pub explore_open: bool,
     pub explore_path: PathBuf,
     /// Paths pending the built-in "move to Trash" confirmation; on macOS the
@@ -711,6 +715,7 @@ impl App {
             text_focused: false,
             text_field_ids: Vec::new(),
             about_open: false,
+            app_icon: None,
             explore_open: false,
             explore_path: dir.clone(),
             confirm_trash: None,
@@ -1873,6 +1878,7 @@ impl App {
 
     fn about_window(&mut self, ctx: &Context) {
         let mut open = self.about_open;
+        let icon = self.about_icon(ctx);
         egui::Window::new("About Lumiere")
             .open(&mut open)
             .resizable(false)
@@ -1881,13 +1887,27 @@ impl App {
                 ui.horizontal(|ui| {
                     let (rect, _) =
                         ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
-                    theme::draw_icon(
-                        ui.painter(),
-                        rect.center(),
-                        36.0,
-                        Icon::Image,
-                        ui.visuals().text_color(),
-                    );
+                    match icon.as_ref() {
+                        Some(icon) => {
+                            ui.painter().image(
+                                icon.id(),
+                                rect,
+                                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                egui::Color32::WHITE,
+                            );
+                        }
+                        // The png is only there with the bundle or in the source
+                        // tree; a drawn glyph keeps the panel intact elsewhere.
+                        None => {
+                            theme::draw_icon(
+                                ui.painter(),
+                                rect.center(),
+                                36.0,
+                                Icon::Image,
+                                ui.visuals().text_color(),
+                            );
+                        }
+                    }
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new("Lumiere").strong());
                         ui.label("An image browser and viewer for macOS, written in Rust");
@@ -1897,19 +1917,42 @@ impl App {
                         );
                     });
                 });
-                ui.separator();
-                ui.label(
-                    "Keys: Space/Right next, Backspace/Left previous, Enter open, Esc close, \
-                     +/- zoom, F fit, 1 actual size, \u{2303}\u{2318}F full screen, \
-                     \u{2325}\u{2318}Y slideshow.",
-                );
-                ui.label(
-                    "Gestures: pinch to zoom about the pointer, two-finger scroll pans a \
-                     zoomed image, swipe left/right to browse, double click toggles \
-                     fit/100%, Space + drag pans.",
-                );
             });
         self.about_open = open;
+    }
+
+    /// The about panel's icon: the app's own artwork, loaded once from the
+    /// shipped png so the fallback panel matches what Finder shows.
+    fn about_icon(&mut self, ctx: &Context) -> Option<TextureHandle> {
+        if self.app_icon.is_none() {
+            if let Some(path) = Self::about_icon_path() {
+                if let Ok(decoded) = image::open(&path).map(|img| img.to_rgba8()) {
+                    let (width, height) = decoded.dimensions();
+                    let img = egui::ColorImage::from_rgba_unmultiplied(
+                        [width as usize, height as usize],
+                        decoded.as_ref(),
+                    );
+                    self.app_icon =
+                        Some(ctx.load_texture("app-icon", img, Default::default()));
+                }
+            }
+        }
+        self.app_icon.clone()
+    }
+
+    /// Where the icon png lives: `Contents/Resources` when running from the
+    /// bundled app, `assets/` when run straight from the source tree.
+    fn about_icon_path() -> Option<PathBuf> {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(contents) = exe.parent().and_then(Path::parent) {
+                let bundled = contents.join("Resources/AppIcon.png");
+                if bundled.is_file() {
+                    return Some(bundled);
+                }
+            }
+        }
+        let dev = PathBuf::from("assets/AppIcon.png");
+        dev.is_file().then(|| dev)
     }
 
     fn explore_window(&mut self, ctx: &Context) {
@@ -4245,7 +4288,7 @@ mod tests {
         app.act(Action::About, &ctx);
         let text = painted_once(&ctx, &mut app, "Version");
         assert!(text.contains("Lumiere"));
-        assert!(text.contains("Keys:"));
+        assert!(text.contains("written in Rust"));
 
         app.about_open = false;
         app.act(Action::OpenFolder, &ctx);

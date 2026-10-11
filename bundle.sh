@@ -10,11 +10,22 @@ mkdir -p "$OUT"
 cargo build --release
 
 APP="$OUT/Lumiere.app"
+
+# Bump the build number: each rebuild is unambiguously newer, which is what
+# LaunchServices uses to decide which copy wins an overwrite install.
+BUILD=1
+if OLD_BUILD=$(plutil -extract CFBundleVersion raw "$APP/Contents/Info.plist" 2>/dev/null); then
+    case $OLD_BUILD in
+        *[!0-9]* | '') BUILD=1 ;;
+        *) BUILD=$((OLD_BUILD + 1)) ;;
+    esac
+fi
+
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp target/release/lumiere "$APP/Contents/MacOS/Lumiere"
 
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -25,10 +36,11 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleIdentifier</key>      <string>net.fetag.lumiere</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleShortVersionString</key> <string>0.1.0</string>
-    <key>CFBundleVersion</key>         <string>1</string>
+    <key>CFBundleVersion</key>         <string>$BUILD</string>
     <key>LSMinimumSystemVersion</key>  <string>11.0</string>
     <key>NSHighResolutionCapable</key> <true/>
     <key>CFBundleIconFile</key>       <string>AppIcon</string>
+    <key>NSHumanReadableCopyright</key> <string>(c) 2026 FETAG.NET</string>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
@@ -47,6 +59,9 @@ PLIST
 
 # Install the app icon: the committed .icns (see assets/).
 cp assets/Lumiere.icns "$APP/Contents/Resources/AppIcon.icns"
+
+# The same artwork for the fallback (non-mac) about panel.
+cp assets/AppIcon.png "$APP/Contents/Resources/AppIcon.png"
 
 # Ad-hoc signature so Gatekeeper lets a locally built app run.
 # For distribution replace "-" with a Developer ID identity and notarize:
