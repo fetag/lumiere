@@ -11,6 +11,7 @@ use crate::classic::{self, Icon};
 use crate::fsmodel::{self, Entry, SortKey, TreeModel};
 use crate::imaging::{self, Info};
 use crate::loader::{Kind, Loader, Request};
+use crate::menu::{Item, Key, Shortcut};
 
 pub const APP_TITLE: &str = "Lumiere";
 
@@ -309,16 +310,16 @@ impl Caches {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Action {
-    Open,
-    ExploreFolder,
-    NextFolder,
-    PrevFolder,
+    /// Native folder chooser (macOS) / built-in browser elsewhere.
+    OpenFolder,
+    /// Hand the current file to the system's default application.
+    OpenWithDefault,
     UpFolder,
     GoHome,
     GoPictures,
-    Refresh,
-    Delete,
-    Properties,
+    Reload,
+    MoveToTrash,
+    GetInfo,
     Rename,
     MoveToFolder,
     CopyToFolder,
@@ -355,13 +356,14 @@ pub enum Action {
     SortByDate,
     SortBySize,
     SortByType,
+    ToggleReverse,
     ToggleFolders,
-    ToggleTree,
-    TogglePreview,
+    ToggleSidebar,
+    ToggleInspector,
     ToggleToolbar,
     ToggleStatus,
 
-    Options,
+    Settings,
     About,
 }
 
@@ -385,12 +387,12 @@ pub struct App {
     pub show_folders: bool,
     pub thumb_size: u32,
 
-    pub show_tree: bool,
-    pub show_preview: bool,
+    pub show_sidebar: bool,
+    pub show_inspector: bool,
     pub show_toolbar: bool,
     pub show_places: bool,
     pub show_status: bool,
-    pub preview_tab: usize,
+    pub inspector_tab: usize,
 
     pub zoom: f32,
     pub fit: bool,
@@ -406,7 +408,9 @@ pub struct App {
 
     pub fullscreen: bool,
 
-    pub options_open: bool,
+    pub settings_open: bool,
+    /// Whether an egui text edit owns the keyboard right now.
+    pub text_focused: bool,
     pub about_open: bool,
     pub explore_open: bool,
     pub explore_path: PathBuf,
@@ -428,6 +432,17 @@ pub struct App {
     pub scroll_to_selected: bool,
 }
 
+impl Item {
+    /// Applies an enabled state to an already-built item.
+    fn with_enabled(self, enabled: bool) -> Self {
+        let mut item = self;
+        if let Item::Command { enabled: slot, .. } = &mut item {
+            *slot = enabled;
+        }
+        item
+    }
+}
+
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, start: Option<PathBuf>) -> Self {
         Self::build(&cc.egui_ctx, start)
@@ -436,6 +451,7 @@ impl App {
     /// Build the application state; split out from [`Self::new`] so the whole
     /// UI can be exercised head-lessly from tests.
     pub fn build(ctx: &Context, start: Option<PathBuf>) -> Self {
+        crate::menu::attach(ctx);
         classic::apply_theme(ctx);
         classic::install_cjk_font(ctx);
 
@@ -450,8 +466,12 @@ impl App {
         };
         let restore_pos = if saved.x == 0.0 && saved.y == 0.0 {
             None
-        } else {
+        } else if crate::window::position_is_on_screen(saved.x, saved.y, saved.width, saved.height)
+        {
             Some(egui::pos2(saved.x, saved.y))
+        } else {
+            // Left behind by a display that is no longer there.
+            None
         };
         let dir = start
             .filter(|p| p.is_dir())
@@ -481,12 +501,12 @@ impl App {
             filter: "*.*".to_owned(),
             show_folders: true,
             thumb_size: 120,
-            show_tree: true,
-            show_preview: true,
+            show_sidebar: true,
+            show_inspector: true,
             show_toolbar: true,
             show_places: true,
             show_status: true,
-            preview_tab: 0,
+            inspector_tab: 0,
             zoom: 1.0,
             fit: true,
             pan: Vec2::ZERO,
@@ -498,7 +518,8 @@ impl App {
             slideshow_delay: 3.0,
             slideshow_at: Instant::now(),
             fullscreen: false,
-            options_open: false,
+            settings_open: false,
+            text_focused: false,
             about_open: false,
             explore_open: false,
             explore_path: dir.clone(),
@@ -673,23 +694,13 @@ impl App {
 
     pub fn act(&mut self, action: Action, ctx: &Context) {
         match action {
-            Action::Open => {
-                if let Some(path) = self.current_image_path() {
-                    let _ = std::process::Command::new("open").arg(&path).spawn();
-                }
-            }
-            Action::ExploreFolder => {
+            Action::OpenFolder => {
                 self.explore_open = true;
                 self.explore_path = self.dir.clone();
             }
-            Action::NextFolder => {
-                if let Some(next) = fsmodel::sibling_folder(&self.dir.clone(), true) {
-                    self.set_dir(next);
-                }
-            }
-            Action::PrevFolder => {
-                if let Some(prev) = fsmodel::sibling_folder(&self.dir.clone(), false) {
-                    self.set_dir(prev);
+            Action::OpenWithDefault => {
+                if let Some(path) = self.current_image_path() {
+                    let _ = std::process::Command::new("open").arg(&path).spawn();
                 }
             }
             Action::UpFolder => {
@@ -707,11 +718,11 @@ impl App {
                     self.set_dir(pics);
                 }
             }
-            Action::Refresh => {
+            Action::Reload => {
                 self.rescan();
                 self.caches.clear_failures();
             }
-            Action::Delete => {
+            Action::MoveToTrash => {
                 if let Some(entry) = self.current() {
                     self.confirm_delete = Some(entry.path.clone());
                 }
@@ -724,9 +735,9 @@ impl App {
             }
             Action::MoveToFolder => self.start_transfer(false),
             Action::CopyToFolder => self.start_transfer(true),
-            Action::Properties => {
-                self.preview_tab = 1;
-                self.show_preview = true;
+            Action::GetInfo => {
+                self.inspector_tab = 1;
+                self.show_inspector = true;
             }
             Action::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             Action::SelectAll => {
@@ -829,12 +840,13 @@ impl App {
             Action::SortByDate => self.sort = SortKey::Date,
             Action::SortBySize => self.sort = SortKey::Size,
             Action::SortByType => self.sort = SortKey::Type,
+            Action::ToggleReverse => self.sort_reverse = !self.sort_reverse,
             Action::ToggleFolders => self.show_folders = !self.show_folders,
-            Action::ToggleTree => self.show_tree = !self.show_tree,
-            Action::TogglePreview => self.show_preview = !self.show_preview,
+            Action::ToggleSidebar => self.show_sidebar = !self.show_sidebar,
+            Action::ToggleInspector => self.show_inspector = !self.show_inspector,
             Action::ToggleToolbar => self.show_toolbar = !self.show_toolbar,
             Action::ToggleStatus => self.show_status = !self.show_status,
-            Action::Options => self.options_open = true,
+            Action::Settings => self.settings_open = true,
             Action::About => self.about_open = true,
         }
         if matches!(
@@ -843,6 +855,7 @@ impl App {
                 | Action::SortByDate
                 | Action::SortBySize
                 | Action::SortByType
+                | Action::ToggleReverse
                 | Action::ToggleFolders
         ) {
             self.rescan();
@@ -856,6 +869,7 @@ impl App {
                 | Action::SortByDate
                 | Action::SortBySize
                 | Action::SortByType
+                | Action::ToggleReverse
                 | Action::ToggleFolders
         ) {
             self.state_dirty = true;
@@ -864,10 +878,18 @@ impl App {
 
     // -- keyboard ----------------------------------------------------------
 
+    /// Keyboard map.
+    ///
+    /// On macOS the native menu bar owns the `⌘` shortcuts and AppKit consumes
+    /// the key event before egui ever sees it; the `⌘` handling here is what the
+    /// in-window fallback menu and the headless tests drive. Both paths read the
+    /// same [`Shortcut`] values out of [`Self::menu_spec`], so the menu label and
+    /// the working shortcut cannot disagree.
     fn handle_keys(&mut self, ctx: &Context) {
         if ctx.memory(|m| m.focused().is_some()) {
             return;
         }
+        let shortcuts = self.shortcuts();
         let mut actions: Vec<Action> = Vec::new();
         let viewer_mode = self.mode == Mode::Viewer;
         ctx.input_mut(|i| {
@@ -891,9 +913,6 @@ impl App {
                     }
                 }
             } else {
-                if i.consume_key(egui::Modifiers::NONE, egui::Key::Space) {
-                    actions.push(Action::OpenViewer);
-                }
                 if i.consume_key(egui::Modifiers::NONE, egui::Key::PageDown) {
                     actions.push(Action::NextImage);
                 }
@@ -901,21 +920,24 @@ impl App {
                     actions.push(Action::PrevImage);
                 }
             }
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
-                actions.push(Action::OpenViewer);
+            if i.consume_key(egui::Modifiers::NONE, egui::Key::Home) {
+                actions.push(Action::FirstImage);
+            }
+            if i.consume_key(egui::Modifiers::NONE, egui::Key::End) {
+                actions.push(Action::LastImage);
             }
             if i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
                 if self.confirm_delete.is_some()
                     || self.rename_target.is_some()
                     || self.transfer.is_some()
-                    || self.options_open
+                    || self.settings_open
                     || self.about_open
                     || self.explore_open
                 {
                     self.confirm_delete = None;
                     self.rename_target = None;
                     self.transfer = None;
-                    self.options_open = false;
+                    self.settings_open = false;
                     self.about_open = false;
                     self.explore_open = false;
                 } else if self.slideshow {
@@ -926,27 +948,31 @@ impl App {
                     actions.push(Action::CloseViewer);
                 }
             }
+
+            // Menu-declared shortcuts, most specific modifier set first.
+            for (shortcut, action) in shortcuts {
+                let modifiers = egui_modifiers(shortcut);
+                let mut hit = false;
+                for key in egui_keys(shortcut.key) {
+                    hit |= i.consume_key(modifiers, key);
+                }
+                // `⌘+` is `⇧⌘=` on the keyboards that have no dedicated `+`.
+                if shortcut.key == Key::Char('+') {
+                    hit |= i.consume_key(modifiers | egui::Modifiers::SHIFT, egui::Key::Equals);
+                }
+                if hit {
+                    actions.push(action);
+                }
+            }
+
+            // F2 renames as well; the menu advertises the `⌥⌘R` spelling because
+            // function keys are not how a macOS user is meant to find this.
             if i.consume_key(egui::Modifiers::NONE, egui::Key::F2) {
                 actions.push(Action::Rename);
             }
-            if i.consume_key(egui::Modifiers::COMMAND, egui::Key::Comma) {
-                actions.push(Action::Options);
-            }
-            if i.consume_key(egui::Modifiers::COMMAND, egui::Key::I) {
-                actions.push(Action::Properties);
-            }
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::F11) {
-                actions.push(Action::ToggleFullscreen);
-            }
-            if i.consume_key(egui::Modifiers::COMMAND, egui::Key::F) {
-                actions.push(Action::ToggleFullscreen);
-            }
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::Home) {
-                actions.push(Action::FirstImage);
-            }
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::End) {
-                actions.push(Action::LastImage);
-            }
+
+            // Viewer-only single keys, kept because they are handy and clash
+            // with nothing.
             if i.consume_key(egui::Modifiers::NONE, egui::Key::Plus)
                 || i.consume_key(egui::Modifiers::SHIFT, egui::Key::Equals)
             {
@@ -960,46 +986,6 @@ impl App {
             }
             if i.consume_key(egui::Modifiers::NONE, egui::Key::Num1) {
                 actions.push(Action::ActualSize);
-            }
-            if i.consume_key(
-                egui::Modifiers::SHIFT | egui::Modifiers::COMMAND,
-                egui::Key::R,
-            ) {
-                actions.push(Action::RotateCCW);
-            }
-            if i.consume_key(egui::Modifiers::COMMAND, egui::Key::R) {
-                actions.push(Action::RotateCW);
-            }
-            if i.consume_key(
-                egui::Modifiers::SHIFT | egui::Modifiers::COMMAND,
-                egui::Key::A,
-            ) {
-                actions.push(Action::SelectNone);
-            }
-            if i.consume_key(egui::Modifiers::COMMAND, egui::Key::A) {
-                actions.push(Action::SelectAll);
-            }
-            if i.consume_key(egui::Modifiers::COMMAND, egui::Key::Delete) {
-                actions.push(Action::Delete);
-            }
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::Delete) {
-                actions.push(Action::Delete);
-            }
-            if i.consume_key(
-                egui::Modifiers::SHIFT | egui::Modifiers::COMMAND,
-                egui::Key::Y,
-            ) {
-                actions.push(if self.slideshow {
-                    Action::StopSlideshow
-                } else {
-                    Action::Slideshow
-                });
-            }
-            if i.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab) {
-                actions.push(Action::PrevFolder);
-            }
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::Tab) {
-                actions.push(Action::NextFolder);
             }
         });
         for action in actions {
@@ -1054,219 +1040,293 @@ impl App {
         }
     }
 
-    fn menu_bar(&mut self, ui: &mut egui::Ui) {
-        let mut actions: Vec<Action> = Vec::new();
+    /// The menu bar, described once and rendered by the platform back end.
+    ///
+    /// This is also the source of truth for the keyboard map: [`Self::shortcuts`]
+    /// walks it, so a menu entry and the shortcut that triggers it cannot drift
+    /// apart.
+    pub fn menu_spec(&self) -> crate::menu::MenuBar {
+        let has_entry = self.current().is_some();
+        let has_image = self.current_image_path().is_some();
         let sort = self.sort;
-        let (toolbar, tree, preview, status, folders, _reverse, slideshow) = (
-            self.show_toolbar,
-            self.show_tree,
-            self.show_preview,
-            self.show_status,
-            self.show_folders,
-            self.sort_reverse,
-            self.slideshow,
-        );
+
+        let app = vec![
+            Item::command("About Lumiere", Action::About),
+            Item::Separator,
+            Item::key(
+                "Settings\u{2026}",
+                Action::Settings,
+                Shortcut::cmd(Key::Char(',')),
+            ),
+        ];
+
+        let file = vec![
+            Item::key(
+                "Open\u{2026}",
+                Action::OpenFolder,
+                Shortcut::cmd(Key::Char('o')),
+            ),
+            Item::Separator,
+            Item::key("Get Info", Action::GetInfo, Shortcut::cmd(Key::Char('i'))),
+            Item::Command {
+                label: "Rename\u{2026}".into(),
+                shortcut: Some(Shortcut::cmd(Key::Char('r')).option()),
+                action: Action::Rename,
+                enabled: has_entry,
+                marked: false,
+            },
+            self.key_item(
+                "Move to Trash",
+                Action::MoveToTrash,
+                Shortcut::cmd(Key::Delete),
+            )
+            .with_enabled(has_entry),
+            Item::Separator,
+            Item::command("Move to Folder\u{2026}", Action::MoveToFolder),
+            Item::command("Copy to Folder\u{2026}", Action::CopyToFolder),
+        ];
+
+        let edit = vec![
+            self.key_item(
+                "Select All",
+                Action::SelectAll,
+                Shortcut::cmd(Key::Char('a')),
+            ),
+            self.key_item(
+                "Select None",
+                Action::SelectNone,
+                Shortcut::cmd(Key::Char('a')).shift(),
+            ),
+            self.key_item(
+                "Invert Selection",
+                Action::InvertSelection,
+                Shortcut::cmd(Key::Char('a')).option(),
+            ),
+            Item::Separator,
+            Item::key(
+                "Rotate Left",
+                Action::RotateCCW,
+                Shortcut::cmd(Key::Char('l')).shift(),
+            ),
+            Item::key(
+                "Rotate Right",
+                Action::RotateCW,
+                Shortcut::cmd(Key::Char('r')).shift(),
+            ),
+            Item::toggle("Flip Horizontal", Action::FlipH, self.flip_h),
+            Item::toggle("Flip Vertical", Action::FlipV, self.flip_v),
+        ];
+
+        let view = vec![
+            Item::key("Reload", Action::Reload, Shortcut::cmd(Key::Char('r'))),
+            Item::Separator,
+            Item::key(
+                "Actual Size",
+                Action::ActualSize,
+                Shortcut::cmd(Key::Char('0')),
+            ),
+            Item::key("Zoom In", Action::ZoomIn, Shortcut::cmd(Key::Char('+'))),
+            Item::key("Zoom Out", Action::ZoomOut, Shortcut::cmd(Key::Char('-'))),
+            Item::key(
+                "Fit to Window",
+                Action::FitWindow,
+                Shortcut::cmd(Key::Char('f')).shift(),
+            ),
+            Item::Separator,
+            Item::toggle_key(
+                "Show Sidebar",
+                Action::ToggleSidebar,
+                Shortcut::cmd(Key::Char('s')).control(),
+                self.show_sidebar,
+            ),
+            Item::toggle_key(
+                "Show Toolbar",
+                Action::ToggleToolbar,
+                Shortcut::cmd(Key::Char('t')).option(),
+                self.show_toolbar,
+            ),
+            Item::toggle_key(
+                "Show Inspector",
+                Action::ToggleInspector,
+                Shortcut::cmd(Key::Char('i')).option(),
+                self.show_inspector,
+            ),
+            Item::toggle("Show Status Bar", Action::ToggleStatus, self.show_status),
+            Item::Separator,
+            Item::toggle(
+                "Small Thumbnails",
+                Action::ThumbSmall,
+                self.thumb_size <= 80,
+            ),
+            Item::toggle(
+                "Medium Thumbnails",
+                Action::ThumbMedium,
+                self.thumb_size > 80 && self.thumb_size < 160,
+            ),
+            Item::toggle(
+                "Large Thumbnails",
+                Action::ThumbLarge,
+                self.thumb_size >= 160,
+            ),
+            Item::submenu(
+                "Sort",
+                vec![
+                    Item::toggle("by Name", Action::SortByName, sort == SortKey::Name),
+                    Item::toggle("by Date", Action::SortByDate, sort == SortKey::Date),
+                    Item::toggle("by Size", Action::SortBySize, sort == SortKey::Size),
+                    Item::toggle("by Type", Action::SortByType, sort == SortKey::Type),
+                    Item::Separator,
+                    Item::toggle("Reverse order", Action::ToggleReverse, self.sort_reverse),
+                ],
+            ),
+            Item::toggle("Show Folders", Action::ToggleFolders, self.show_folders),
+            Item::Separator,
+            Item::key(
+                if self.fullscreen {
+                    "Exit Full Screen"
+                } else {
+                    "Enter Full Screen"
+                },
+                Action::ToggleFullscreen,
+                Shortcut::cmd(Key::Char('f')).control(),
+            ),
+        ];
+
+        let go = vec![
+            Item::key(
+                "Up One Level",
+                Action::UpFolder,
+                Shortcut::cmd(Key::Char('u')).shift(),
+            ),
+            Item::key(
+                "Home",
+                Action::GoHome,
+                Shortcut::cmd(Key::Char('h')).shift(),
+            ),
+            Item::key(
+                "Pictures",
+                Action::GoPictures,
+                Shortcut::cmd(Key::Char('p')).shift(),
+            ),
+            Item::Separator,
+            Item::command("First Image", Action::FirstImage),
+            Item::command("Previous Image", Action::PrevImage),
+            Item::command("Next Image", Action::NextImage),
+            Item::command("Last Image", Action::LastImage),
+            Item::Separator,
+            self.key_item(
+                "View Image",
+                Action::OpenViewer,
+                Shortcut::plain(Key::Return),
+            )
+            .with_enabled(has_image),
+            Item::Command {
+                label: "Back to Browser".into(),
+                shortcut: None,
+                action: Action::CloseViewer,
+                enabled: self.mode == Mode::Viewer,
+                marked: false,
+            },
+            Item::Separator,
+            if self.slideshow {
+                Item::key(
+                    "Stop Slideshow",
+                    Action::StopSlideshow,
+                    Shortcut::cmd(Key::Char('y')).shift(),
+                )
+            } else {
+                Item::Command {
+                    label: "Play Slideshow".into(),
+                    shortcut: Some(Shortcut::cmd(Key::Char('y')).shift()),
+                    action: Action::Slideshow,
+                    enabled: self.entries.iter().any(|e| e.is_image),
+                    marked: false,
+                }
+            },
+        ];
+
+        crate::menu::MenuBar {
+            app,
+            menus: vec![
+                ("File".into(), file),
+                ("Edit".into(), edit),
+                ("View".into(), view),
+                ("Go".into(), go),
+            ],
+        }
+    }
+
+    /// A menu item whose key equivalent is withdrawn while a text field owns the
+    /// keyboard: `⌘A` has to select the text, `⌘\u{232B}` delete to the start of the
+    /// line, and Return has to confirm the edit.
+    fn key_item(&self, label: &str, action: Action, shortcut: Shortcut) -> Item {
+        if self.text_focused {
+            Item::command(label, action)
+        } else {
+            Item::key(label, action, shortcut)
+        }
+    }
+
+    /// Every shortcut the menus declare, most specific modifier set first:
+    /// `consume_key` ignores extra Shift/Alt unless the pattern asks for them,
+    /// so `⇧⌘R` has to be matched before `⌘R`.
+    fn shortcuts(&self) -> Vec<(Shortcut, Action)> {
+        fn walk(items: &[Item], out: &mut Vec<(Shortcut, Action)>) {
+            for item in items {
+                match item {
+                    Item::Command {
+                        shortcut: Some(shortcut),
+                        action,
+                        ..
+                    } => out.push((*shortcut, *action)),
+                    Item::Submenu { items, .. } => walk(items, out),
+                    Item::Command { .. } | Item::Separator => {}
+                }
+            }
+        }
+        let spec = self.menu_spec();
+        let mut out = Vec::new();
+        walk(&spec.app, &mut out);
+        for (_, items) in &spec.menus {
+            walk(items, &mut out);
+        }
+        out.sort_by_key(|(shortcut, _)| std::cmp::Reverse(shortcut_modifier_count(shortcut)));
+        out
+    }
+
+    /// The in-window menu bar. Only platforms without a native menu bar draw it.
+    #[cfg(not(target_os = "macos"))]
+    fn menu_bar(&mut self, ui: &mut egui::Ui) {
+        let spec = self.menu_spec();
+        let mut actions: Vec<Action> = Vec::new();
         egui::MenuBar::new().ui(ui, |ui| {
-            top_menu(ui, "File", |ui| {
-                menu(ui, &mut actions, Action::Open, "Open", "Enter");
-                menu(
-                    ui,
-                    &mut actions,
-                    Action::ExploreFolder,
-                    "Explore Folder...",
-                    "",
-                );
+            top_menu(ui, APP_TITLE, |ui| {
+                menu_items(ui, &spec.app, &mut actions);
                 ui.separator();
-                menu(ui, &mut actions, Action::NextFolder, "Next Folder", "Tab");
-                menu(
-                    ui,
-                    &mut actions,
-                    Action::PrevFolder,
-                    "Previous Folder",
-                    "Shift+Tab",
-                );
-                menu(ui, &mut actions, Action::UpFolder, "Up One Level", "");
-                ui.separator();
-                menu(ui, &mut actions, Action::Delete, "Delete", "Del");
-                menu(
-                    ui,
-                    &mut actions,
-                    Action::Properties,
-                    "Properties...",
-                    "Cmd+I",
-                );
-                menu(ui, &mut actions, Action::Rename, "Rename...", "F2");
-                menu(
-                    ui,
-                    &mut actions,
-                    Action::MoveToFolder,
-                    "Move to Folder...",
-                    "",
-                );
-                menu(
-                    ui,
-                    &mut actions,
-                    Action::CopyToFolder,
-                    "Copy to Folder...",
-                    "",
-                );
-                ui.separator();
-                menu(ui, &mut actions, Action::Quit, "Exit", "Cmd+Q");
+                menu(ui, &mut actions, Action::Quit, "Quit Lumiere", "\u{2318}Q");
             });
-            top_menu(ui, "Edit", |ui| {
-                menu(ui, &mut actions, Action::SelectAll, "Select All", "Cmd+A");
-                menu(
-                    ui,
-                    &mut actions,
-                    Action::SelectNone,
-                    "Select None",
-                    "Cmd+Shift+A",
-                );
-                menu(
-                    ui,
-                    &mut actions,
-                    Action::InvertSelection,
-                    "Invert Selection",
-                    "",
-                );
-                ui.separator();
-                menu(ui, &mut actions, Action::RotateCW, "Rotate Right", "Cmd+R");
-                menu(
-                    ui,
-                    &mut actions,
-                    Action::RotateCCW,
-                    "Rotate Left",
-                    "Cmd+Shift+R",
-                );
-                menu(ui, &mut actions, Action::FlipH, "Flip Horizontal", "");
-                menu(ui, &mut actions, Action::FlipV, "Flip Vertical", "");
-            });
-            top_menu(ui, "View", |ui| {
-                check(ui, &mut actions, Action::ToggleToolbar, "Toolbar", toolbar);
-                check(ui, &mut actions, Action::ToggleTree, "Folder Tree", tree);
-                check(
-                    ui,
-                    &mut actions,
-                    Action::TogglePreview,
-                    "Preview Pane",
-                    preview,
-                );
-                check(ui, &mut actions, Action::ToggleStatus, "Status Bar", status);
-                ui.separator();
-                menu(ui, &mut actions, Action::ThumbSmall, "Small Thumbnails", "");
-                menu(
-                    ui,
-                    &mut actions,
-                    Action::ThumbMedium,
-                    "Medium Thumbnails",
-                    "",
-                );
-                menu(ui, &mut actions, Action::ThumbLarge, "Large Thumbnails", "");
-                ui.separator();
-                top_menu(ui, "Sort", |ui| {
-                    check(
-                        ui,
-                        &mut actions,
-                        Action::SortByName,
-                        "by Name",
-                        sort == SortKey::Name,
-                    );
-                    check(
-                        ui,
-                        &mut actions,
-                        Action::SortByDate,
-                        "by Date",
-                        sort == SortKey::Date,
-                    );
-                    check(
-                        ui,
-                        &mut actions,
-                        Action::SortBySize,
-                        "by Size",
-                        sort == SortKey::Size,
-                    );
-                    check(
-                        ui,
-                        &mut actions,
-                        Action::SortByType,
-                        "by Type",
-                        sort == SortKey::Type,
-                    );
-                    let reverse = ui.checkbox(&mut self.sort_reverse, "Reverse order");
-                    classic::note_rect(ui, "Reverse order", reverse.rect);
-                    if reverse.changed() {
-                        actions.push(Action::Refresh);
-                    }
-                });
-                check(
-                    ui,
-                    &mut actions,
-                    Action::ToggleFolders,
-                    "Show Folders",
-                    folders,
-                );
-                ui.separator();
-                menu(ui, &mut actions, Action::ZoomIn, "Zoom In", "+");
-                menu(ui, &mut actions, Action::ZoomOut, "Zoom Out", "-");
-                menu(ui, &mut actions, Action::FitWindow, "Fit to Window", "F");
-                menu(ui, &mut actions, Action::ActualSize, "Actual Size", "1");
-                ui.separator();
-                menu(
-                    ui,
-                    &mut actions,
-                    Action::ToggleFullscreen,
-                    "Full Screen",
-                    "F11 / Cmd+F",
-                );
-                menu(ui, &mut actions, Action::Refresh, "Refresh", "F5");
-            });
-            top_menu(ui, "Go", |ui| {
-                menu(ui, &mut actions, Action::GoHome, "Home Folder", "");
-                menu(ui, &mut actions, Action::GoPictures, "Pictures", "");
-                ui.separator();
-                menu(ui, &mut actions, Action::FirstImage, "First Image", "Home");
-                menu(
-                    ui,
-                    &mut actions,
-                    Action::PrevImage,
-                    "Previous Image",
-                    "Backspace",
-                );
-                menu(ui, &mut actions, Action::NextImage, "Next Image", "Space");
-                menu(ui, &mut actions, Action::LastImage, "Last Image", "End");
-                ui.separator();
-                menu(ui, &mut actions, Action::OpenViewer, "View Image", "Enter");
-                menu(
-                    ui,
-                    &mut actions,
-                    Action::CloseViewer,
-                    "Back to Browser",
-                    "Esc",
-                );
-                ui.separator();
-                menu(
-                    ui,
-                    &mut actions,
-                    if slideshow {
-                        Action::StopSlideshow
-                    } else {
-                        Action::Slideshow
-                    },
-                    "Slideshow...",
-                    "Cmd+Shift+Y",
-                );
-            });
-            top_menu(ui, "Tools", |ui| {
-                menu(ui, &mut actions, Action::Options, "Options...", "Cmd+,");
-            });
-            top_menu(ui, "Help", |ui| {
-                menu(ui, &mut actions, Action::About, "About Lumiere", "");
-            });
+            for (title, items) in &spec.menus {
+                top_menu(ui, title, |ui| menu_items(ui, items, &mut actions));
+            }
         });
         let ctx = ui.ctx().clone();
         for action in actions {
             self.act(action, &ctx);
         }
+    }
+
+    /// Draws the in-window menu bar. macOS has a real one at the top of the
+    /// screen, so there the whole thing is a no-op.
+    #[cfg(target_os = "macos")]
+    fn menu_bar_panel(&mut self, _ctx: &Context) {}
+
+    #[cfg(not(target_os = "macos"))]
+    fn menu_bar_panel(&mut self, ctx: &Context) {
+        egui::TopBottomPanel::top("menubar")
+            .exact_height(22.0)
+            .show(ctx, |ui| {
+                self.menu_bar(ui);
+            });
     }
 
     fn tool_row(&mut self, ui: &mut egui::Ui) {
@@ -1280,7 +1340,7 @@ impl App {
                 pending.push(Action::GoHome);
             }
             if classic::tool_button(ui, Icon::Refresh, "Refresh", true).clicked() {
-                pending.push(Action::Refresh);
+                pending.push(Action::Reload);
             }
             classic::vtool_separator(ui);
             if classic::tool_button(ui, Icon::ThumbSmall, "Small thumbnails", true).clicked() {
@@ -1350,11 +1410,11 @@ impl App {
             )
             .clicked()
             {
-                pending.push(Action::Delete);
+                pending.push(Action::MoveToTrash);
             }
             if classic::tool_button(ui, Icon::Info, "Properties", true).clicked() {
                 open_dialog = true;
-                pending.push(Action::Properties);
+                pending.push(Action::GetInfo);
             }
             let _ = open_dialog;
         });
@@ -1494,7 +1554,7 @@ impl App {
     fn options_window(&mut self, ctx: &Context) {
         let mut clear_cache = false;
         let mut rescan = false;
-        let mut open = self.options_open;
+        let mut open = self.settings_open;
         egui::Window::new("Options")
             .open(&mut open)
             .resizable(false)
@@ -1538,7 +1598,7 @@ impl App {
                 }
                 ui.label(format!("Cache folder: {}", imaging::cache_root().display()));
             });
-        self.options_open = open;
+        self.settings_open = open;
 
         if clear_cache {
             let removed = imaging::clear_thumbnail_cache().unwrap_or(0);
@@ -1917,8 +1977,21 @@ impl App {
             };
             let _ = state.save();
         }
+        // AppKit offers key equivalents to the menu bar before the window ever
+        // sees the key, so a menu that claims `⌘A` or Return would take them away
+        // from an egui text field that is open. Track who owns the keyboard.
+        self.text_focused = ctx.memory(|m| m.focused().is_some());
         self.handle_keys(ctx);
         self.tick_slideshow(ctx);
+
+        // The native menu bar is the app's only menu on macOS: push the current
+        // description to it and pick up whatever the user clicked.
+        if crate::menu::NATIVE {
+            crate::menu::sync(&self.menu_spec());
+            for action in crate::menu::take_events() {
+                self.act(action, ctx);
+            }
+        }
 
         if let Some((_, at)) = self.toast {
             if at.elapsed().as_secs_f32() > 3.0 {
@@ -1929,11 +2002,7 @@ impl App {
         let chrome = !self.fullscreen && self.mode == Mode::Browser;
 
         if chrome {
-            egui::TopBottomPanel::top("menubar")
-                .exact_height(22.0)
-                .show(ctx, |ui| {
-                    self.menu_bar(ui);
-                });
+            self.menu_bar_panel(ctx);
             if self.show_toolbar {
                 egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
                     self.tool_row(ui);
@@ -1954,7 +2023,7 @@ impl App {
                         self.status_bar(ui);
                     });
             }
-            if self.show_tree {
+            if self.show_sidebar {
                 egui::SidePanel::left("foldertree")
                     .resizable(true)
                     .default_width(240.0)
@@ -1963,7 +2032,7 @@ impl App {
                         crate::browser::tree_pane(self, ui);
                     });
             }
-            if self.show_preview {
+            if self.show_inspector {
                 egui::SidePanel::right("previewpane")
                     .resizable(true)
                     .default_width(280.0)
@@ -1973,11 +2042,7 @@ impl App {
                     });
             }
         } else if !self.fullscreen {
-            egui::TopBottomPanel::top("menubar")
-                .exact_height(22.0)
-                .show(ctx, |ui| {
-                    self.menu_bar(ui);
-                });
+            self.menu_bar_panel(ctx);
             if self.show_status {
                 egui::TopBottomPanel::bottom("statusbar")
                     .exact_height(24.0)
@@ -2012,7 +2077,12 @@ impl App {
     }
 }
 
-fn menu_row(label: &str, shortcut: &str, checked: Option<bool>) -> egui::text::LayoutJob {
+#[cfg(not(target_os = "macos"))]
+fn menu_row(
+    label: &str,
+    shortcut: Option<&Shortcut>,
+    checked: Option<bool>,
+) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
     let mark = egui::TextFormat {
         font_id: egui::FontId::proportional(13.0),
@@ -2025,13 +2095,13 @@ fn menu_row(label: &str, shortcut: &str, checked: Option<bool>) -> egui::text::L
         None => "",
     };
     job.append(&format!("{prefix}{label}"), 0.0, mark.clone());
-    if !shortcut.is_empty() {
+    if let Some(shortcut) = shortcut {
         let weak = egui::TextFormat {
             font_id: egui::FontId::proportional(11.0),
             color: classic::SHADOW,
             ..Default::default()
         };
-        job.append(&format!("    {shortcut}"), 24.0, weak);
+        job.append(&format!("    {}", shortcut.display()), 24.0, weak);
     }
     job
 }
@@ -2074,29 +2144,133 @@ fn apply_preferences(app: &mut App, saved: &crate::state::State) {
     }
 }
 
+fn shortcut_modifier_count(shortcut: &Shortcut) -> u32 {
+    u32::from(shortcut.command)
+        + u32::from(shortcut.control)
+        + u32::from(shortcut.option)
+        + u32::from(shortcut.shift)
+}
+
+fn egui_modifiers(shortcut: Shortcut) -> egui::Modifiers {
+    let mut modifiers = egui::Modifiers::NONE;
+    if shortcut.command {
+        modifiers |= egui::Modifiers::COMMAND;
+    }
+    if shortcut.control {
+        modifiers |= egui::Modifiers::CTRL;
+    }
+    if shortcut.option {
+        modifiers |= egui::Modifiers::ALT;
+    }
+    if shortcut.shift {
+        modifiers |= egui::Modifiers::SHIFT;
+    }
+    modifiers
+}
+
+/// The egui key a menu shortcut character arrives as.
+fn egui_key_for_char(c: char) -> Option<egui::Key> {
+    match c {
+        'a' => Some(egui::Key::A),
+        'b' => Some(egui::Key::B),
+        'c' => Some(egui::Key::C),
+        'd' => Some(egui::Key::D),
+        'e' => Some(egui::Key::E),
+        'f' => Some(egui::Key::F),
+        'g' => Some(egui::Key::G),
+        'h' => Some(egui::Key::H),
+        'i' => Some(egui::Key::I),
+        'j' => Some(egui::Key::J),
+        'k' => Some(egui::Key::K),
+        'l' => Some(egui::Key::L),
+        'm' => Some(egui::Key::M),
+        'n' => Some(egui::Key::N),
+        'o' => Some(egui::Key::O),
+        'p' => Some(egui::Key::P),
+        'q' => Some(egui::Key::Q),
+        'r' => Some(egui::Key::R),
+        's' => Some(egui::Key::S),
+        't' => Some(egui::Key::T),
+        'u' => Some(egui::Key::U),
+        'v' => Some(egui::Key::V),
+        'w' => Some(egui::Key::W),
+        'x' => Some(egui::Key::X),
+        'y' => Some(egui::Key::Y),
+        'z' => Some(egui::Key::Z),
+        '0' => Some(egui::Key::Num0),
+        '1' => Some(egui::Key::Num1),
+        '2' => Some(egui::Key::Num2),
+        '3' => Some(egui::Key::Num3),
+        '4' => Some(egui::Key::Num4),
+        '5' => Some(egui::Key::Num5),
+        '6' => Some(egui::Key::Num6),
+        '7' => Some(egui::Key::Num7),
+        '8' => Some(egui::Key::Num8),
+        '9' => Some(egui::Key::Num9),
+        ',' => Some(egui::Key::Comma),
+        '.' => Some(egui::Key::Period),
+        '/' => Some(egui::Key::Slash),
+        '-' => Some(egui::Key::Minus),
+        '+' | '=' => Some(egui::Key::Plus),
+        _ => None,
+    }
+}
+
+/// The egui keys a menu shortcut can arrive as. macOS draws backspace as
+/// `\u{232B}`, which winit reports as `Key::Backspace`; `Key::Delete` is the
+/// forward delete an external keyboard sends.
+fn egui_keys(key: Key) -> Vec<egui::Key> {
+    match key {
+        Key::Char(c) => egui_key_for_char(c).into_iter().collect(),
+        Key::Return => vec![egui::Key::Enter],
+        Key::Delete => vec![egui::Key::Backspace, egui::Key::Delete],
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
 fn top_menu(ui: &mut egui::Ui, label: &str, contents: impl FnOnce(&mut egui::Ui)) {
     let response = ui.menu_button(label, contents);
     classic::note_rect(ui, label, response.response.rect);
 }
 
-fn menu(ui: &mut egui::Ui, actions: &mut Vec<Action>, action: Action, label: &str, shortcut: &str) {
-    let response =
-        ui.add(egui::Button::new(menu_row(label, shortcut, None)).min_size(egui::vec2(240.0, 0.0)));
-    classic::note_rect(ui, label, response.rect);
-    if response.clicked() {
-        actions.push(action);
-        ui.close();
-    }
-}
-
-fn check(ui: &mut egui::Ui, actions: &mut Vec<Action>, action: Action, label: &str, checked: bool) {
-    let response = ui.add(
-        egui::Button::new(menu_row(label, "", Some(checked))).min_size(egui::vec2(240.0, 0.0)),
-    );
-    classic::note_rect(ui, label, response.rect);
-    if response.clicked() {
-        actions.push(action);
-        ui.close();
+/// Renders one level of the menu description with egui widgets. Only used where
+/// the platform has no native menu bar.
+#[cfg(not(target_os = "macos"))]
+fn menu_items(ui: &mut egui::Ui, items: &[Item], actions: &mut Vec<Action>) {
+    for item in items {
+        match item {
+            Item::Separator => ui.separator(),
+            Item::Submenu { label, items } => {
+                top_menu(ui, label, |ui| menu_items(ui, items, actions));
+            }
+            Item::Command {
+                label,
+                shortcut,
+                action,
+                enabled,
+                marked,
+            } => {
+                let response = ui.add_enabled(
+                    *enabled,
+                    egui::Button::new(menu_row(label, shortcut.as_ref(), Some(*marked)))
+                        .min_size(egui::vec2(240.0, 0.0)),
+                );
+                // The row a human reads is a tick gutter, the command name and
+                // the shortcut glyphs, which is noise for VoiceOver. Say just
+                // the command, and offer the shortcut as its own property.
+                ui.ctx().accesskit_node_builder(response.id, |node| {
+                    node.set_label(label);
+                    if let Some(shortcut) = shortcut {
+                        node.set_keyboard_shortcut(shortcut.display());
+                    }
+                });
+                classic::note_rect(ui, label, response.rect);
+                if response.clicked() {
+                    actions.push(*action);
+                    ui.close();
+                }
+            }
+        }
     }
 }
 
@@ -2199,32 +2373,247 @@ mod tests {
         *time += 0.4;
     }
 
-    fn hover(ctx: &Context, app: &mut App, pos: egui::Pos2, time: &mut f64) {
-        let mut input = raw_input();
-        input.time = Some(*time);
-        input.events = vec![egui::Event::PointerMoved(pos)];
-        let _ = ctx.run(input, |ctx| app.draw(ctx));
-        *time += 0.4;
+    /// Looks a command up in the menu description exactly as a menu back end
+    /// does, and returns what clicking it would do.
+    fn menu_action(app: &App, path: &[&str]) -> Action {
+        let spec = app.menu_spec();
+        let mut items: &[Item] = match path[0] {
+            "App" => &spec.app,
+            title => {
+                &spec
+                    .menus
+                    .iter()
+                    .find(|(name, _)| name == title)
+                    .unwrap_or_else(|| panic!("no {title} menu"))
+                    .1
+            }
+        };
+        for title in &path[1..path.len() - 1] {
+            items = match items
+                .iter()
+                .find(|item| matches!(item, Item::Submenu { label, .. } if label == title))
+            {
+                Some(Item::Submenu {
+                    items: children, ..
+                }) => children,
+                Some(_) => panic!("{title} is a command, not a submenu"),
+                None => panic!("no {title} submenu"),
+            };
+        }
+        let title = path.last().unwrap();
+        match items.iter().find(|item| match item {
+            Item::Command { label, .. } | Item::Submenu { label, .. } => label == title,
+            Item::Separator => false,
+        }) {
+            Some(Item::Command {
+                action, enabled, ..
+            }) => {
+                assert!(*enabled, "{title} is disabled");
+                *action
+            }
+            Some(_) => panic!("{title} is a submenu, not a command"),
+            None => panic!("no {title} menu item"),
+        }
     }
 
-    /// Walks a menu path such as ["View", "Sort"] and leaves the deepest submenu
-    /// open. Only the first level needs a click; egui opens nested submenus as
-    /// soon as the pointer hovers the parent entry.
-    fn open_menu(ctx: &Context, app: &mut App, path: &[&str], time: &mut f64) -> bool {
-        click_at(ctx, app, egui::pos2(600.0, 700.0), time);
-        for (depth, label) in path.iter().enumerate() {
-            settle(ctx, app, time);
-            let Some(rect) = classic::rect_of(ctx, label) else {
-                return false;
+    /// The menu bar has to read like every other macOS app: the verbs and the
+    /// `\u{2318}` spellings a user already knows, and none of the Windows-era
+    /// habits this app shipped with.
+    #[test]
+    fn menu_uses_macos_names_and_shortcuts() {
+        let ctx = egui::Context::default();
+        let app = App::build(&ctx, Some(fixture_dir("menuspec")));
+
+        let spec = app.menu_spec();
+        let titles: Vec<&str> = spec.menus.iter().map(|(title, _)| title.as_str()).collect();
+        assert_eq!(titles, ["File", "Edit", "View", "Go"]);
+
+        let app_menu: Vec<&str> = spec
+            .app
+            .iter()
+            .map(|item| match item {
+                Item::Command { label, .. } | Item::Submenu { label, .. } => label.as_str(),
+                Item::Separator => "",
+            })
+            .collect();
+        assert_eq!(app_menu, ["About Lumiere", "", "Settings\u{2026}"]);
+
+        let named = |path: &[&str]| -> String {
+            let items = match path[0] {
+                "App" => &spec.app,
+                title => &spec.menus.iter().find(|(name, _)| name == title).unwrap().1,
             };
-            if depth == 0 {
-                click_at(ctx, app, rect.center(), time);
-            } else {
-                hover(ctx, app, rect.center(), time);
+            for item in items {
+                if let Item::Command {
+                    label, shortcut, ..
+                } = item
+                {
+                    if label == path[1] {
+                        return shortcut
+                            .map(|shortcut| shortcut.display())
+                            .unwrap_or_default();
+                    }
+                }
+            }
+            panic!("no {} menu item", path[1]);
+        };
+        assert_eq!(named(&["App", "Settings\u{2026}"]), "\u{2318},");
+        assert_eq!(named(&["File", "Open\u{2026}"]), "\u{2318}O");
+        assert_eq!(named(&["File", "Get Info"]), "\u{2318}I");
+        assert_eq!(named(&["File", "Move to Trash"]), "\u{2318}\u{232B}");
+        assert_eq!(named(&["View", "Reload"]), "\u{2318}R");
+        assert_eq!(named(&["View", "Enter Full Screen"]), "\u{2303}\u{2318}F");
+        assert_eq!(named(&["Go", "Up One Level"]), "\u{21E7}\u{2318}U");
+
+        // The Windows-era vocabulary must be gone from every level.
+        let banned = [
+            "Exit",
+            "Options",
+            "Properties",
+            "Delete",
+            "Refresh",
+            "Explore Folder",
+            "Tools",
+            "Folder Tree",
+            "Preview Pane",
+        ];
+        fn labels(items: &[Item], out: &mut Vec<String>) {
+            for item in items {
+                match item {
+                    Item::Command { label, .. } | Item::Submenu { label, .. } => {
+                        out.push(label.clone())
+                    }
+                    Item::Separator => {}
+                }
             }
         }
-        settle(ctx, app, time);
-        true
+        let mut seen = Vec::new();
+        labels(&spec.app, &mut seen);
+        for (_, items) in &spec.menus {
+            labels(items, &mut seen);
+        }
+        for word in banned {
+            assert!(
+                !seen.iter().any(|label| label == word),
+                "{word} is still in the menu bar: {seen:?}"
+            );
+        }
+    }
+
+    /// A menu entry and the key that triggers it come from the same
+    /// [`Shortcut`], so the two cannot drift apart.
+    #[test]
+    fn menu_shortcuts_are_the_keyboard_map() {
+        let dir = fixture_dir("shortcutmap");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let _ = ctx.run(raw_input(), |ctx| app.draw(ctx));
+
+        let cases: &[(&[&str], egui::Key, egui::Modifiers)] = &[
+            (
+                &["Edit", "Rotate Left"],
+                egui::Key::L,
+                egui::Modifiers::SHIFT | egui::Modifiers::COMMAND,
+            ),
+            (
+                &["Edit", "Rotate Right"],
+                egui::Key::R,
+                egui::Modifiers::SHIFT | egui::Modifiers::COMMAND,
+            ),
+            (
+                &["File", "Move to Trash"],
+                egui::Key::Backspace,
+                egui::Modifiers::COMMAND,
+            ),
+            (
+                &["View", "Show Sidebar"],
+                egui::Key::S,
+                egui::Modifiers::COMMAND | egui::Modifiers::CTRL,
+            ),
+            (
+                &["Go", "Pictures"],
+                egui::Key::P,
+                egui::Modifiers::SHIFT | egui::Modifiers::COMMAND,
+            ),
+        ];
+        for (path, key, modifiers) in cases {
+            let before = (
+                app.rotation,
+                app.confirm_delete.clone(),
+                app.show_sidebar,
+                app.dir.clone(),
+            );
+            let mut input = raw_input();
+            input.events.push(egui::Event::Key {
+                key: *key,
+                pressed: true,
+                modifiers: *modifiers,
+                physical_key: None,
+                repeat: false,
+            });
+            let _ = ctx.run(input, |ctx| app.draw(ctx));
+            let after = (
+                app.rotation,
+                app.confirm_delete.clone(),
+                app.show_sidebar,
+                app.dir.clone(),
+            );
+            assert_ne!(before, after, "{path:?} did nothing");
+
+            // And the menu advertises the very same combination.
+            let action = menu_action(&app, path);
+            let declared = app
+                .shortcuts()
+                .into_iter()
+                .find(|(_, declared)| *declared == action)
+                .map(|(shortcut, _)| (shortcut.key, shortcut))
+                .expect("the shortcut is not declared in the menu bar");
+            assert_eq!(
+                egui_modifiers(declared.1),
+                *modifiers,
+                "{path:?} is advertised with different modifiers"
+            );
+            assert!(
+                egui_keys(declared.0).contains(key),
+                "{path:?} is advertised on a different key"
+            );
+        }
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The grid is painted, not built from widgets, so without an explicit
+    /// accessible name a screen reader hears nothing at all.
+    #[test]
+    fn thumbnails_are_readable_by_accessibility() {
+        let dir = fixture_dir("a11ygrid");
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let frame = ctx.run(raw_input(), |ctx| app.draw(ctx));
+
+        // The tree is handed to the platform in the frame's output, so this is
+        // what a screen reader would have been told.
+        let names: Vec<String> = frame
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .map(|update| {
+                update
+                    .nodes
+                    .iter()
+                    .filter_map(|(_, node)| node.label().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for name in ["one.png", "two.png", "three.png"] {
+            assert!(
+                names.iter().any(|read| read.starts_with(name)),
+                "{name} is not announced; the tree says {names:?}"
+            );
+        }
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -2238,16 +2627,13 @@ mod tests {
 
         let ctx = egui::Context::default();
         let mut app = App::build(&ctx, Some(dir.clone()));
-        let mut time = 1.0;
-        assert!(open_menu(&ctx, &mut app, &["View", "Sort"], &mut time));
-        assert!(click_label(&ctx, &mut app, "by Size", &mut time));
 
+        app.act(menu_action(&app, &["View", "Sort", "by Size"]), &ctx);
         assert_eq!(app.sort, SortKey::Size);
         let names: Vec<String> = app.entries.iter().map(|e| e.name.clone()).collect();
         assert_eq!(names, ["a.png", "c.png", "b.png"]);
 
-        assert!(open_menu(&ctx, &mut app, &["View", "Sort"], &mut time));
-        assert!(click_label(&ctx, &mut app, "Reverse order", &mut time));
+        app.act(menu_action(&app, &["View", "Sort", "Reverse order"]), &ctx);
         let names: Vec<String> = app.entries.iter().map(|e| e.name.clone()).collect();
         assert_eq!(names, ["b.png", "c.png", "a.png"]);
 
@@ -2259,22 +2645,22 @@ mod tests {
         let dir = fixture_dir("viewmenu");
         let ctx = egui::Context::default();
         let mut app = App::build(&ctx, Some(dir.clone()));
-        let mut time = 1.0;
 
-        assert!(app.show_tree && app.thumb_size == 120);
-        assert!(open_menu(&ctx, &mut app, &["View"], &mut time));
-        assert!(click_label(&ctx, &mut app, "Folder Tree", &mut time));
-        assert!(!app.show_tree);
+        assert!(app.show_sidebar && app.thumb_size == 120);
+        app.act(menu_action(&app, &["View", "Show Sidebar"]), &ctx);
+        assert!(!app.show_sidebar);
 
-        assert!(open_menu(&ctx, &mut app, &["View"], &mut time));
-        assert!(click_label(&ctx, &mut app, "Small Thumbnails", &mut time));
+        app.act(menu_action(&app, &["View", "Small Thumbnails"]), &ctx);
         assert_eq!(app.thumb_size, 64);
 
-        for label in ["Preview Pane", "Toolbar", "Status Bar"] {
-            assert!(open_menu(&ctx, &mut app, &["View"], &mut time));
-            assert!(click_label(&ctx, &mut app, label, &mut time));
+        for path in [
+            &["View", "Show Inspector"][..],
+            &["View", "Show Toolbar"][..],
+            &["View", "Show Status Bar"][..],
+        ] {
+            app.act(menu_action(&app, path), &ctx);
         }
-        assert!(!app.show_preview && !app.show_toolbar && !app.show_status);
+        assert!(!app.show_inspector && !app.show_toolbar && !app.show_status);
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -2302,7 +2688,12 @@ mod tests {
 
         let home_label = home.file_name().unwrap().to_string_lossy().to_string();
         settle(&ctx, &mut app, &mut time);
-        assert!(click_label(&ctx, &mut app, &format!("tree:{home_label}"), &mut time));
+        assert!(click_label(
+            &ctx,
+            &mut app,
+            &format!("tree:{home_label}"),
+            &mut time
+        ));
         assert_eq!(app.dir, home);
         assert!(app.tree_selected.is_some());
 
@@ -2320,7 +2711,12 @@ mod tests {
             let index = app.tree.find(&home).expect("home node");
             app.tree.node(app.tree.node(index).children[0]).path.clone()
         };
-        assert!(click_label(&ctx, &mut app, &format!("tree:{child_label}"), &mut time));
+        assert!(click_label(
+            &ctx,
+            &mut app,
+            &format!("tree:{child_label}"),
+            &mut time
+        ));
         assert_eq!(app.dir, child_path);
     }
 
@@ -2383,7 +2779,7 @@ mod tests {
         assert!(text.contains("Keys:"));
 
         app.about_open = false;
-        app.act(Action::ExploreFolder, &ctx);
+        app.act(Action::OpenFolder, &ctx);
         let text = painted_once(&ctx, &mut app, "Explore");
         eprintln!("DBG explore<<{text}>>END");
         assert!(text.contains("Explore"));
@@ -2484,7 +2880,11 @@ mod tests {
         }
         let ctx = egui::Context::default();
         let mut app = App::build(&ctx, Some(dir.clone()));
-        let idx = app.entries.iter().position(|e| e.name == "1.jpg").expect("1.jpg listed");
+        let idx = app
+            .entries
+            .iter()
+            .position(|e| e.name == "1.jpg")
+            .expect("1.jpg listed");
         app.selected = idx;
         app.act(Action::OpenViewer, &ctx);
         let current = dir.join("1.jpg");
@@ -2604,9 +3004,9 @@ mod tests {
 
         // Options / about / explore / delete confirmation windows.
         let plain = ctx.run(raw_input(), |ctx| app.draw(ctx)).shapes.len();
-        app.act(Action::Options, &ctx);
+        app.act(Action::Settings, &ctx);
         app.act(Action::About, &ctx);
-        app.act(Action::ExploreFolder, &ctx);
+        app.act(Action::OpenFolder, &ctx);
         app.act(Action::MoveToFolder, &ctx);
         assert!(app.transfer.is_some());
         app.confirm_delete = Some(dir.join("one.png"));
@@ -2641,9 +3041,9 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = App::build(&ctx, Some(dir.clone()));
         app.confirm_delete = Some(dir.join("one.png"));
-        app.act(Action::Options, &ctx);
+        app.act(Action::Settings, &ctx);
         let _ = ctx.run(raw_input(), |ctx| app.draw(ctx));
-        assert!(app.confirm_delete.is_some() && app.options_open);
+        assert!(app.confirm_delete.is_some() && app.settings_open);
 
         let mut input = raw_input();
         input.events.push(egui::Event::Key {
@@ -2654,7 +3054,7 @@ mod tests {
             repeat: false,
         });
         let _ = ctx.run(input, |ctx| app.draw(ctx));
-        assert!(app.confirm_delete.is_none() && !app.options_open);
+        assert!(app.confirm_delete.is_none() && !app.settings_open);
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -2668,7 +3068,7 @@ mod tests {
         input.events.push(egui::Event::Key {
             key: egui::Key::F,
             pressed: true,
-            modifiers: egui::Modifiers::COMMAND,
+            modifiers: egui::Modifiers::COMMAND | egui::Modifiers::CTRL,
             physical_key: None,
             repeat: false,
         });
@@ -2722,7 +3122,7 @@ mod tests {
             .position(|e| e.is_dir)
             .expect("fixture has a folder");
         app.selected = folder;
-        app.act(Action::Delete, &ctx);
+        app.act(Action::MoveToTrash, &ctx);
         assert_eq!(
             app.confirm_delete.as_deref(),
             Some(dir.join("nested").as_path())
@@ -2748,8 +3148,8 @@ mod tests {
             });
         }
         let _ = ctx.run(input, |ctx| app.draw(ctx));
-        assert!(app.options_open);
-        assert_eq!(app.preview_tab, 1);
+        assert!(app.settings_open);
+        assert_eq!(app.inspector_tab, 1);
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -2983,7 +3383,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = App::build(&ctx, Some(dir.clone()));
         app.selected = app.image_indices()[0];
-        app.preview_tab = 1;
+        app.inspector_tab = 1;
 
         // Only the first rows fit in the panel without scrolling.
         let text = painted_once(&ctx, &mut app, "Make");
@@ -3010,7 +3410,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = App::build(&ctx, Some(dir.clone()));
         app.selected = app.image_indices()[0];
-        app.preview_tab = 1;
+        app.inspector_tab = 1;
 
         let mut text = String::new();
         for _ in 0..40 {
@@ -3031,4 +3431,3 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
-

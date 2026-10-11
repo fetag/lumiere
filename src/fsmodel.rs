@@ -327,24 +327,6 @@ impl TreeModel {
     }
 }
 
-/// Sibling folder navigation (Go ▸ Next Folder / Previous Folder).
-pub fn sibling_folder(current: &Path, forward: bool) -> Option<PathBuf> {
-    let parent = current.parent()?;
-    let mut dirs: Vec<PathBuf> = fs::read_dir(parent)
-        .ok()?
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.is_dir())
-        .collect();
-    dirs.sort();
-    let position = dirs.iter().position(|p| p == current)?;
-    if forward {
-        dirs.get(position + 1).cloned()
-    } else {
-        position.checked_sub(1).map(|i| dirs[i].clone())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,21 +382,6 @@ mod tests {
         let entries = read_directory(&base, true, "*.*");
         assert_eq!(entries.len(), 1);
         assert!(entries[0].is_image);
-        std::fs::remove_dir_all(&base).unwrap();
-    }
-
-    #[test]
-    fn sibling_folder_navigation() {
-        let base = temp_dir("siblings");
-        std::fs::create_dir_all(base.join("one/two/three")).unwrap();
-        std::fs::create_dir_all(base.join("one/four")).unwrap();
-        let current = base.join("one/four");
-        assert_eq!(sibling_folder(&current, true), Some(base.join("one/two")));
-        assert_eq!(
-            sibling_folder(&base.join("one/two"), false),
-            Some(current.clone())
-        );
-        assert_eq!(sibling_folder(&current, false), None);
         std::fs::remove_dir_all(&base).unwrap();
     }
 }

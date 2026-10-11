@@ -74,8 +74,14 @@ pub fn tree_pane(app: &mut App, ui: &mut Ui) {
                             .selectable(false)
                             .truncate(),
                     );
-                    let text_response =
-                        ui.interact(text_response.rect, ui.id().with(("tree", index)), Sense::click());
+                    let text_response = ui.interact(
+                        text_response.rect,
+                        ui.id().with(("tree", index)),
+                        Sense::click(),
+                    );
+                    ui.ctx().accesskit_node_builder(text_response.id, |node| {
+                        node.set_label(label.as_str());
+                    });
                     classic::note_rect(ui, &format!("tree:{label}"), text_response.rect);
                     if text_response.clicked() {
                         app.tree_selected = Some(index);
@@ -294,6 +300,15 @@ fn thumbnail(
     }
 
     let selected = app.multi.contains(&index) || app.selected == index;
+    // The grid is painted rather than built from widgets, so without this the
+    // whole browser area is silent to VoiceOver.
+    ui.ctx().accesskit_node_builder(response.id, |node| {
+        node.set_label(format!(
+            "{}, {}",
+            entry.name,
+            if selected { "selected" } else { "item" }
+        ));
+    });
     let painter = ui.painter();
 
     if selected {
@@ -383,7 +398,7 @@ fn thumbnail(
             }
             if ui.button("Open with default app").clicked() {
                 app.selected = index;
-                app.act(Action::Open, ui.ctx());
+                app.act(Action::OpenWithDefault, ui.ctx());
                 ui.close();
             }
         } else if ui.button("Explore").clicked() {
@@ -392,8 +407,8 @@ fn thumbnail(
         }
         if ui.button("Properties").clicked() {
             app.selected = index;
-            app.preview_tab = 1;
-            app.show_preview = true;
+            app.inspector_tab = 1;
+            app.show_inspector = true;
             ui.close();
         }
         if ui.button("Delete").clicked() {
@@ -423,7 +438,7 @@ fn thumbnail(
 // ---------------------------------------------------------------------------
 
 pub fn preview_pane(app: &mut App, ui: &mut Ui) {
-    let mut tab = app.preview_tab;
+    let mut tab = app.inspector_tab;
     ui.horizontal(|ui| {
         if ui.selectable_label(tab == 0, "Preview").clicked() {
             tab = 0;
@@ -433,7 +448,7 @@ pub fn preview_pane(app: &mut App, ui: &mut Ui) {
         }
     });
     ui.separator();
-    app.preview_tab = tab;
+    app.inspector_tab = tab;
 
     let Some(entry) = app.current().cloned() else {
         ui.label("No selection");

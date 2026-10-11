@@ -51,26 +51,38 @@ Session state (last folder, window size and position) is stored in
 | `src/imaging/macos.rs` | ImageIO bridge for HEIC/HEIF/AVIF |
 | `src/fsmodel.rs` | directory scan, sorting, wildcard filter, tree model |
 | `src/classic.rs` | Win95 era theme: bevels, hand-drawn icons |
+| `src/menu.rs` | the menu bar as one platform-neutral description |
+| `src/menu/macos.rs` | that description as `NSMenu`s in the real macOS menu bar |
+| `src/window.rs` | whether a restored window position is still on a display |
 
 ## Keyboard shortcuts
+
+The menu bar is the source of truth: `App::menu_spec()` declares each command
+with its `Shortcut`, and the same value becomes the macOS key equivalent, the
+text drawn next to the menu item, and the egui key binding. On macOS the menu
+bar owns the `⌘` chords and AppKit consumes them before the window sees them.
 
 | Key | Action |
 | --- | --- |
 | Arrows | Move selection in the grid |
 | Home / End | First / last image |
 | PageUp / PageDown | Previous / next image |
-| Space, Enter | Open viewer |
-| Tab / Shift+Tab | Next / previous folder |
+| Space, Return | Open viewer |
 | Esc | Close dialog → stop slideshow → leave full screen → close viewer |
-| F11 or Cmd+F | Toggle full screen |
-| Cmd+Shift+Y | Start / stop slideshow |
-| Del | Move selected item to the Trash (asks first) |
-| F2 | Rename |
-| Cmd+I | Properties (information tab) |
-| Cmd+, | Options |
-| Cmd+A / Cmd+Shift+A | Select all / select none |
-| Cmd+R / Cmd+Shift+R | Rotate right / left |
-| `+` / `-` / `1` / `F` | Zoom in / out / actual size / fit to window |
+| `⌃⌘F` | Toggle full screen |
+| `⇧⌘Y` | Start / stop slideshow |
+| `⌘⌫` | Move to Trash (asks first) |
+| `⌥⌘R`, F2 | Rename |
+| `⌘I` | Get Info |
+| `⌘,` | Settings… |
+| `⌘O` | Open… (choose a folder) |
+| `⌘R` | Reload |
+| `⌘A` / `⇧⌘A` / `⌥⌘A` | Select all / none / invert |
+| `⇧⌘L` / `⇧⌘R` | Rotate left / right |
+| `⌃⌘S` / `⌥⌘T` / `⌥⌘I` | Show sidebar / toolbar / inspector |
+| `⇧⌘U` / `⇧⌘H` / `⇧⌘P` | Up one level / Home / Pictures |
+| `⌘+` / `⌘-` / `⌘0` / `⇧⌘F` | Zoom in / out / actual size / fit to window |
+| `+` / `-` / `1` / `F` | Same, without modifiers, in the viewer |
 
 Note: shortcuts match on the key event's own modifiers, not on
 `InputState::modifiers` — winit/eframe does not always update the latter in the
@@ -81,19 +93,22 @@ same frame as the key event.
 Unit and UI tests live next to the code (`#[cfg(test)] mod tests`). The UI tests
 drive `egui::Context::run` headlessly against a temp folder fixture
 (`fixture_dir`), covering browser → viewer → slideshow, dialogs, keyboard
-navigation, the information tab, and command-modifier shortcuts.
+navigation, the information tab, and command-modifier shortcuts. They also
+assert the menu description itself: its titles and `⌘` spellings, and that the
+shortcut a menu advertises is the same one the keyboard map handles.
 
-Visual verification is done by launching the release build and taking region
-screenshots:
+The native menu bar cannot be exercised headlessly. Check it against the real
+thing:
 
 ```sh
-./target/release/lumiere /tmp/lumiere_demo &
-osascript -e 'tell application "System Events" to tell process "lumiere" to set position of window 1 to {60, 60}'
-screencapture -x -R 60,60,1120,772 /tmp/shot.png
+./target/debug/lumiere &
+osascript -e 'tell application "System Events" to tell process "lumiere" to get name of every menu bar item of menu bar 1'
+osascript -e 'tell application "System Events" to tell process "lumiere" to perform action "AXPress" of menu item "Show Sidebar" of menu 1 of menu bar item "View" of menu bar 1'
 ```
 
-`osascript ... click at {x, y}` does not work on egui windows (no native
-accessibility elements), so interactive checks are driven by key codes.
+`osascript ... click at {x, y}` does not work on egui windows, so interactive
+checks of the canvas go through key codes; the menu bar, by contrast, is real
+AppKit and fully scriptable.
 Full screen uses a native macOS Space, which `screencapture` may not capture.
 
 ## Status

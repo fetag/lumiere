@@ -6,8 +6,10 @@ mod classic;
 mod fsmodel;
 mod imaging;
 mod loader;
+mod menu;
 mod state;
 mod viewer;
+mod window;
 
 use eframe::egui;
 use std::path::PathBuf;
