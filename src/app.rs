@@ -96,6 +96,16 @@ impl Caches {
     }
 
     pub fn request(&mut self, loader: &Loader, kind: Kind, path: &Path, size: u32) {
+        self.queue_work(loader, kind, path, size, false);
+    }
+
+    /// Same de-duplication as [`Self::request`], but the work goes to the back
+    /// of the queue: used for images that are not on screen yet.
+    pub fn prefetch(&mut self, loader: &Loader, kind: Kind, path: &Path, size: u32) {
+        self.queue_work(loader, kind, path, size, true);
+    }
+
+    fn queue_work(&mut self, loader: &Loader, kind: Kind, path: &Path, size: u32, back: bool) {
         let key = (kind, path.to_path_buf(), size);
         if self.pending.contains(&key) {
             return;
@@ -103,7 +113,11 @@ impl Caches {
         if self.pending.len() > 512 {
             return;
         }
-        loader.submit(kind, path.to_path_buf(), size);
+        if back {
+            loader.submit_prefetch(kind, path.to_path_buf(), size);
+        } else {
+            loader.submit(kind, path.to_path_buf(), size);
+        }
         self.pending.insert(key);
     }
 
@@ -438,6 +452,7 @@ impl App {
             scroll_to_selected: false,
         };
         app.tree.reveal(&app.dir.clone());
+        apply_preferences(&mut app, &saved);
         app.rescan();
         if let Some(file) = start_file {
             if let Some(index) = app.entries.iter().position(|e| e.path == file) {
@@ -498,6 +513,33 @@ impl App {
     }
 
     /// Move the selection to the next/previous image entry, wrapping.
+    /// Decode the images on either side of the one being viewed, so stepping
+    /// through a folder does not stall waiting for the next full decode.
+    pub fn prefetch_neighbours(&mut self) {
+        if self.mode != Mode::Viewer {
+            return;
+        }
+        let indices = self.image_indices();
+        if indices.len() < 2 {
+            return;
+        }
+        let position = indices
+            .iter()
+            .position(|&i| i == self.selected)
+            .unwrap_or(0);
+        let count = indices.len();
+        let mut neighbours = Vec::with_capacity(2);
+        for delta in [1isize, -1] {
+            let next = (position as isize + delta + count as isize) as usize % count;
+            neighbours.push(self.entries[indices[next]].path.clone());
+        }
+        for path in neighbours {
+            if self.caches.full(&path).is_none() {
+                self.caches.prefetch(&self.loader, Kind::Full, &path, 0);
+            }
+        }
+    }
+
     pub fn step_image(&mut self, delta: isize) -> Option<PathBuf> {
         let indices = self.image_indices();
         if indices.is_empty() {
@@ -730,6 +772,19 @@ impl App {
                 | Action::ToggleFolders
         ) {
             self.rescan();
+        }
+        if matches!(
+            action,
+            Action::ThumbSmall
+                | Action::ThumbMedium
+                | Action::ThumbLarge
+                | Action::SortByName
+                | Action::SortByDate
+                | Action::SortBySize
+                | Action::SortByType
+                | Action::ToggleFolders
+        ) {
+            self.state_dirty = true;
         }
     }
 
@@ -1257,12 +1312,14 @@ impl App {
             let filter_lost_focus = filter_response.lost_focus();
             if filter_lost_focus && self.filter_edit != self.filter {
                 self.filter = self.filter_edit.clone();
+                self.state_dirty = true;
                 rescan = true;
             }
             let apply = ui.button("Apply");
             classic::note_rect(ui, "Apply", apply.rect);
             if apply.clicked() {
                 self.filter = self.filter_edit.clone();
+                self.state_dirty = true;
                 rescan = true;
             }
         });
@@ -1773,6 +1830,11 @@ impl App {
                 height: viewport_size.y,
                 x: viewport_pos.x,
                 y: viewport_pos.y,
+                thumb_size: self.thumb_size,
+                sort: sort_key_name(self.sort).to_owned(),
+                sort_reverse: self.sort_reverse,
+                filter: self.filter.clone(),
+                show_folders: i32::from(self.show_folders),
             };
             let _ = state.save();
         }
@@ -1893,6 +1955,44 @@ fn menu_row(label: &str, shortcut: &str, checked: Option<bool>) -> egui::text::L
         job.append(&format!("    {shortcut}"), 24.0, weak);
     }
     job
+}
+
+pub fn sort_key_name(key: SortKey) -> &'static str {
+    match key {
+        SortKey::Name => "name",
+        SortKey::Date => "date",
+        SortKey::Size => "size",
+        SortKey::Type => "type",
+    }
+}
+
+fn sort_key_from(name: &str) -> Option<SortKey> {
+    match name {
+        "name" => Some(SortKey::Name),
+        "date" => Some(SortKey::Date),
+        "size" => Some(SortKey::Size),
+        "type" => Some(SortKey::Type),
+        _ => None,
+    }
+}
+
+/// Restores the browsing preferences stored by the previous session, so a
+/// restart comes back to the same thumbnail size, sort order and filter.
+fn apply_preferences(app: &mut App, saved: &crate::state::State) {
+    if saved.thumb_size > 0 {
+        app.thumb_size = saved.thumb_size;
+    }
+    if let Some(key) = sort_key_from(saved.sort.as_str()) {
+        app.sort = key;
+    }
+    app.sort_reverse = saved.sort_reverse;
+    if !saved.filter.is_empty() {
+        app.filter = saved.filter.clone();
+        app.filter_edit = saved.filter.clone();
+    }
+    if saved.show_folders >= 0 {
+        app.show_folders = saved.show_folders == 1;
+    }
 }
 
 fn top_menu(ui: &mut egui::Ui, label: &str, contents: impl FnOnce(&mut egui::Ui)) {
@@ -2431,6 +2531,86 @@ mod tests {
         assert!(!dir.join("two.png").exists());
         assert!(other.join("two.png").exists());
 
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn viewer_prefetches_the_neighbouring_images() {
+        let dir = fixture_dir("prefetch");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        app.mode = Mode::Viewer;
+        app.selected = app.image_indices()[0];
+        app.prefetch_neighbours();
+
+        let queued: Vec<PathBuf> = app
+            .caches
+            .pending
+            .iter()
+            .filter(|(kind, _, _)| *kind == Kind::Full)
+            .map(|(_, path, _)| path.clone())
+            .collect();
+        assert_eq!(queued.len(), 2);
+        assert!(queued.contains(&dir.join("two.png")));
+        assert!(queued.contains(&dir.join("three.png")));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn grid_queues_thumbnails_wider_than_the_viewport() {
+        let dir = std::env::temp_dir().join("lumiere_ui_test_prefetch_grid");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = image::RgbaImage::from_pixel(64, 48, image::Rgba([9, 99, 199, 255]));
+        for index in 0..200 {
+            img.save(dir.join(format!("img{index:03}.png"))).unwrap();
+        }
+
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let _ = ctx.run(raw_input(), |ctx| app.draw(ctx));
+
+        let thumbs = app
+            .caches
+            .pending
+            .iter()
+            .filter(|(kind, _, _)| *kind == Kind::Thumb)
+            .count();
+        assert!(thumbs > 8, "only {thumbs} thumbnails queued");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn saved_preferences_are_restored() {
+        let dir = fixture_dir("prefs");
+        let path = std::env::temp_dir().join("lumiere_prefs_test.ini");
+        crate::state::State {
+            last_dir: Some(dir.clone()),
+            thumb_size: 200,
+            sort: "size".to_owned(),
+            sort_reverse: true,
+            filter: "*.jpg".to_owned(),
+            show_folders: 0,
+            ..crate::state::State::default()
+        }
+        .save_to(&path)
+        .unwrap();
+
+        let saved = crate::state::State::load_from(&path);
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        apply_preferences(&mut app, &saved);
+
+        assert_eq!(app.thumb_size, 200);
+        assert_eq!(app.sort, SortKey::Size);
+        assert!(app.sort_reverse);
+        assert_eq!(app.filter, "*.jpg");
+        assert_eq!(app.filter_edit, "*.jpg");
+        assert!(!app.show_folders);
+
+        std::fs::remove_file(&path).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

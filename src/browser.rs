@@ -169,6 +169,7 @@ pub fn grid(app: &mut App, ui: &mut Ui) {
     let entries = std::mem::take(&mut app.entries);
     let rows = entries.len().div_ceil(cols);
     let mut click: Option<Click> = None;
+    let mut visible_rows = 0..0;
     if app.scroll_to_selected {
         app.scroll_to_selected = false;
         ui.ctx()
@@ -181,6 +182,7 @@ pub fn grid(app: &mut App, ui: &mut Ui) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show_rows(ui, cell_h, rows, |ui, range| {
+            visible_rows = range.clone();
             if let Some(index) = scroll_to {
                 let row = index / cols;
                 let row_h = cell_h + ui.spacing().item_spacing.y;
@@ -201,6 +203,18 @@ pub fn grid(app: &mut App, ui: &mut Ui) {
                 });
             }
         });
+
+    // Ask for the thumbnails of the rows just outside the viewport, so
+    // scrolling does not show a wall of empty cells.
+    let warm = prefetch_range(visible_rows, cols, entries.len());
+    if !warm.is_empty() {
+        for entry in entries[warm].iter().filter(|e| e.is_image) {
+            if app.caches.thumb(&entry.path, cell.thumb).is_none() {
+                app.caches
+                    .request(&app.loader, Kind::Thumb, &entry.path, cell.thumb);
+            }
+        }
+    }
 
     app.entries = entries;
 
@@ -245,6 +259,20 @@ pub fn grid(app: &mut App, ui: &mut Ui) {
             }
         }
     }
+}
+
+/// One row before and one row after the visible rows, as entry indices.
+fn prefetch_range(
+    visible: std::ops::Range<usize>,
+    cols: usize,
+    total: usize,
+) -> std::ops::Range<usize> {
+    if visible.end <= visible.start {
+        return 0..0;
+    }
+    let from = visible.start.saturating_sub(1) * cols;
+    let to = (visible.end + 1) * cols;
+    from..to.min(total)
 }
 
 fn thumbnail(
@@ -550,6 +578,14 @@ mod tests {
                 modifiers,
             },
         ]
+    }
+
+    #[test]
+    fn prefetch_range_warms_one_row_on_each_side() {
+        assert_eq!(prefetch_range(2..4, 8, 200), 8..40);
+        assert_eq!(prefetch_range(0..1, 8, 200), 0..16);
+        assert_eq!(prefetch_range(24..25, 8, 200), 184..200);
+        assert_eq!(prefetch_range(0..0, 8, 200), 0..0);
     }
 
     #[test]

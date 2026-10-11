@@ -29,6 +29,7 @@ pub fn view(app: &mut App, ui: &mut Ui) {
     if cached.is_none() {
         app.caches.request(&app.loader, Kind::Full, &path, 0);
     }
+    app.prefetch_neighbours();
 
     let canvas = ui.available_rect_before_wrap();
     let response = ui.allocate_rect(canvas, Sense::click_and_drag());

@@ -2,6 +2,7 @@
 
 規則：每完成一項就把 `[ ]` 改成 `[x]`，並在該項後面標註驗證方式（test / screenshot / manual）。
 新發現的工作請加到對應區塊，不要只記在對話裡。
+初版範圍：以「快速瀏覽圖片」為主。圖片編輯、回收桶還原、drag out、LaunchServices openFile、選單 mnemonic 均列為不做。
 
 環境提醒：
 - `export PATH="$HOME/.cargo/bin:$PATH"`（cargo 不在預設 PATH）
@@ -65,6 +66,10 @@
 - [x] 磁碟縮圖快取上限：`imaging::prune_cache()` 依 mtime 刪最舊直到 <512MB，啟動時呼叫 — test `prune_cache_removes_oldest_first`
 
 ## 5. 已完成（本輪）
+- [x] Viewer 預抓相鄰兩張全圖（`App::prefetch_neighbours()` + `Loader::submit_prefetch()` 排隊尾，不會插隊到目前那張）— test `viewer_prefetches_the_neighbouring_images`
+- [x] Grid 預抓可見列上下各一列的縮圖（`browser::prefetch_range()`）— test `prefetch_range_warms_one_row_on_each_side` + `grid_queues_thumbnails_wider_than_the_viewport`
+- [x] Session 記住瀏覽偏好：thumb size / sort / sort_reverse / filter / show folders 寫進 state.ini 並在啟動時還原 — test `saved_preferences_are_restored` + 實測 state.ini 出現 `thumb_size=120 sort=name filter=*.*`、重啟後標題回到 `/tmp/lumiere_demo`
+- [x] 認得 RAW/DNG 副檔名（dng/cr2/cr3/nef/nrw/arw/srf/sr2/orf/rw2/raf/pef/raw），實際解碼走 `imaging::decode()` 既有的 ImageIO fallback — test `supported_extensions_cover_classic_formats`（尚無真實 RAW 檔可驗證解碼，待有 sample 再補）
 - [x] 鍵盤選取後捲動到選取項（End/Home/方向鍵）— 截圖 shot15/shot17
 - [x] Cmd 快捷鍵失效修正（改用事件自帶 modifiers，Shift 變體優先匹配）— test `command_shortcuts_read_event_modifiers` + 實測 Cmd+F `AXFullScreen=true`
 - [x] 新增 Cmd+F 全螢幕快捷鍵 — 截圖 shot29

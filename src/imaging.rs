@@ -64,6 +64,9 @@ pub const SUPPORTED_EXTS: &[&str] = &[
     "jpg", "jpeg", "jpe", "jfif", "png", "bmp", "rle", "gif", "webp", "tif", "tiff", "tga", "vda",
     "icb", "vst", "ico", "cur", "pcx", "qoi", "pnm", "pbm", "pgm", "ppm", "heic", "heif", "hif",
     "avif",
+    // Camera RAW: the `image` crate cannot decode these, but macOS ImageIO can
+    // (decode() already falls back to it).
+    "dng", "cr2", "cr3", "nef", "nrw", "arw", "srf", "sr2", "orf", "rw2", "raf", "pef", "raw",
 ];
 
 pub fn extension(path: &Path) -> String {
@@ -610,6 +613,8 @@ mod tests {
         assert!(is_image(Path::new("/tmp/a.HEIC")));
         assert!(is_image(Path::new("/tmp/a.pcx")));
         assert!(is_image(Path::new("/tmp/a.tga")));
+        assert!(is_image(Path::new("/tmp/a.dng")));
+        assert!(is_image(Path::new("/tmp/a.NEF")));
         assert!(!is_image(Path::new("/tmp/a.txt")));
     }
 

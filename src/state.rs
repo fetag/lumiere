@@ -5,13 +5,37 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct State {
     pub last_dir: Option<PathBuf>,
     pub width: f32,
     pub height: f32,
     pub x: f32,
     pub y: f32,
+    /// Browsing preferences. Zero / empty means "not stored yet", and
+    /// `show_folders` uses -1 for "not stored yet" because `false` is a value.
+    pub thumb_size: u32,
+    pub sort: String,
+    pub sort_reverse: bool,
+    pub filter: String,
+    pub show_folders: i32,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            last_dir: None,
+            width: 0.0,
+            height: 0.0,
+            x: 0.0,
+            y: 0.0,
+            thumb_size: 0,
+            sort: String::new(),
+            sort_reverse: false,
+            filter: String::new(),
+            show_folders: -1,
+        }
+    }
 }
 
 impl State {
@@ -47,6 +71,11 @@ impl State {
                 "height" => state.height = value.parse().unwrap_or(0.0),
                 "x" => state.x = value.parse().unwrap_or(0.0),
                 "y" => state.y = value.parse().unwrap_or(0.0),
+                "thumb_size" => state.thumb_size = value.parse().unwrap_or(0),
+                "sort" => state.sort = value.to_owned(),
+                "sort_reverse" => state.sort_reverse = value == "1",
+                "filter" => state.filter = value.to_owned(),
+                "show_folders" => state.show_folders = value.parse().unwrap_or(-1),
                 _ => {}
             }
         }
@@ -70,6 +99,19 @@ impl State {
         if self.x != 0.0 || self.y != 0.0 {
             text.push_str(&format!("x={}\ny={}\n", self.x, self.y));
         }
+        if self.thumb_size > 0 {
+            text.push_str(&format!("thumb_size={}\n", self.thumb_size));
+        }
+        if !self.sort.is_empty() {
+            text.push_str(&format!("sort={}\n", self.sort));
+        }
+        text.push_str(&format!("sort_reverse={}\n", self.sort_reverse as i32));
+        if !self.filter.is_empty() {
+            text.push_str(&format!("filter={}\n", self.filter));
+        }
+        if self.show_folders >= 0 {
+            text.push_str(&format!("show_folders={}\n", self.show_folders));
+        }
         fs::write(path, text)
     }
 }
@@ -87,6 +129,11 @@ mod tests {
             height: 740.0,
             x: 60.0,
             y: 80.0,
+            thumb_size: 200,
+            sort: "date".to_owned(),
+            sort_reverse: true,
+            filter: "*.jpg".to_owned(),
+            show_folders: 0,
         };
         state.save_to(&path).unwrap();
         assert_eq!(State::load_from(&path), state);

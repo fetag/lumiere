@@ -138,6 +138,17 @@ impl Loader {
     }
 
     pub fn submit(&self, kind: Kind, path: PathBuf, size: u32) {
+        let front = matches!(kind, Kind::Full | Kind::Preview);
+        self.enqueue(kind, path, size, front);
+    }
+
+    /// Queue work at the back even when it would normally cut the line, so
+    /// prefetching never puts an image behind the one actually on screen.
+    pub fn submit_prefetch(&self, kind: Kind, path: PathBuf, size: u32) {
+        self.enqueue(kind, path, size, false);
+    }
+
+    fn enqueue(&self, kind: Kind, path: PathBuf, size: u32, front: bool) {
         let request = Request {
             kind,
             path,
@@ -146,7 +157,7 @@ impl Loader {
         };
         let (lock, cvar) = &*self.queue;
         let mut pending = lock.lock().unwrap();
-        if matches!(kind, Kind::Full | Kind::Preview) {
+        if front {
             pending.push_front(request);
         } else {
             pending.push_back(request);
