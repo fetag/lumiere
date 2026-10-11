@@ -1,4 +1,7 @@
-//! The single image viewer: zoom, pan, rotate, flip, full screen and slideshow.
+//! The single image viewer: trackpad gestures (pinch zoom, two-finger pan,
+//! swipe to browse, double-click fit/100%), rotate, flip and slideshow.
+
+use std::time::{Duration, Instant};
 
 use egui::epaint::Vertex;
 use egui::{
@@ -8,6 +11,21 @@ use egui::{
 use crate::app::{Action, App};
 use crate::loader::Kind;
 use crate::theme::{self, Icon};
+
+/// The zoom the viewer allows, shared by the HUD buttons, the keyboard and
+/// the pinch gesture so they cannot disagree.
+pub const ZOOM_MIN: f32 = 0.02;
+pub const ZOOM_MAX: f32 = 64.0;
+
+/// How far the trackpad must travel horizontally before a swipe pages to the
+/// neighbouring image.
+const SWIPE_PX: f32 = 120.0;
+/// After a swipe switched the image, further horizontal input is swallowed
+/// for this long, so a flick's momentum cannot page through several images.
+const SWIPE_COOLDOWN: Duration = Duration::from_millis(350);
+/// A pause longer than this starts a fresh swipe instead of extending the
+/// last one.
+const SWIPE_GAP: Duration = Duration::from_millis(400);
 
 pub fn view(app: &mut App, ui: &mut Ui) {
     let Some(path) = app.current_image_path() else {
@@ -76,21 +94,26 @@ pub fn view(app: &mut App, ui: &mut Ui) {
     let fit_zoom = (canvas.width() / base_w)
         .min(canvas.height() / base_h)
         .max(0.001);
+    let effective_zoom = if app.fit { fit_zoom } else { app.zoom };
+    let drawn = vec2(base_w * effective_zoom, base_h * effective_zoom);
+    // When the picture overflows the canvas there is room to pan, so a
+    // two-finger scroll pans it. While it fits, a horizontal swipe browses
+    // to the neighbouring image instead.
+    let overflows = drawn.x > canvas.width() || drawn.y > canvas.height();
 
-    if response.dragged() {
-        app.pan += response.drag_delta();
-        app.fit = false;
-    }
-    if response.double_clicked() {
-        app.fit = !app.fit;
-        app.pan = Vec2::ZERO;
-    }
-
-    let scroll: f32 = ui.input(|i| i.raw_scroll_delta.y);
-    if scroll.abs() > 0.0 {
-        let old_zoom = if app.fit { fit_zoom } else { app.zoom };
-        let factor = (1.0f32 + scroll.abs() * 0.0015).powf(if scroll > 0.0 { 1.0 } else { -1.0 });
-        let new_zoom = (old_zoom * factor).clamp(0.01, 64.0);
+    // A pinch magnifies about the gesture centre (the pointer position): the
+    // point under the two fingers stays put while the picture grows or
+    // shrinks. A plain two-finger scroll must never zoom — that is the
+    // trackpad's pan / browse gesture.
+    let pinch: f32 = ui.ctx().input(|i| {
+        i.events.iter().fold(1.0, |factor, event| match event {
+            egui::Event::Zoom(scale) => factor * scale,
+            _ => factor,
+        })
+    });
+    if (pinch - 1.0).abs() > 0.001 {
+        let old_zoom = effective_zoom;
+        let new_zoom = (old_zoom * pinch).clamp(ZOOM_MIN, ZOOM_MAX);
         if let Some(pointer) = ui.input(|i| i.pointer.hover_pos()) {
             let center = canvas.center() + app.pan;
             let k = new_zoom / old_zoom;
@@ -99,6 +122,67 @@ pub fn view(app: &mut App, ui: &mut Ui) {
         }
         app.zoom = new_zoom;
         app.fit = false;
+    }
+
+    let scroll = ui.input(|i| i.raw_scroll_delta);
+    if scroll.x != 0.0 || scroll.y != 0.0 {
+        if overflows {
+            // One-to-one with the trackpad: the picture follows the content
+            // direction of the scroll.
+            app.pan -= scroll;
+        } else if scroll.x.abs() > scroll.y.abs() {
+            let now = Instant::now();
+            if now < app.swipe_cooldown {
+                app.swipe_x = 0.0;
+            } else {
+                if now.duration_since(app.swipe_last) > SWIPE_GAP {
+                    // A long pause starts a fresh swipe.
+                    app.swipe_x = 0.0;
+                }
+                app.swipe_x += scroll.x;
+                app.swipe_last = now;
+                if app.swipe_x.abs() >= SWIPE_PX {
+                    app.swipe_x = 0.0;
+                    app.swipe_cooldown = now + SWIPE_COOLDOWN;
+                    // Swiping left (content moves left) reveals the next
+                    // picture, the way a photo carousel does.
+                    let action = if scroll.x > 0.0 {
+                        Action::NextImage
+                    } else {
+                        Action::PrevImage
+                    };
+                    app.act(action, ui.ctx());
+                }
+            }
+        }
+        // A vertical scroll while the picture fits does nothing: there is
+        // nothing to scroll.
+    }
+
+    if response.dragged() {
+        app.pan += response.drag_delta();
+        app.fit = false;
+    }
+    // Double click bounces between "fit" and actual size (100%), the way a
+    // macOS viewer does.
+    if response.double_clicked() {
+        if app.fit {
+            app.fit = false;
+            app.zoom = 1.0;
+        } else {
+            app.fit = true;
+        }
+        app.pan = Vec2::ZERO;
+    }
+
+    // Holding Space is the hand tool: the grab cursor advertises that the
+    // picture can be dragged while Space stays down.
+    if ui.input(|i| i.key_pressed(egui::Key::Space)) {
+        ui.ctx().set_cursor_icon(if response.dragged() {
+            egui::CursorIcon::Grabbing
+        } else {
+            egui::CursorIcon::Grab
+        });
     }
 
     let zoom = if app.fit {

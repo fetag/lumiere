@@ -22,6 +22,8 @@ pub struct State {
     /// Sidebar / Inspector visibility; -1 means "not stored yet".
     pub show_sidebar: i32,
     pub show_inspector: i32,
+    /// Whether a slideshow should start in full screen; -1 = "not stored yet".
+    pub slideshow_fullscreen: i32,
     /// Folders the user pinned into the sidebar's Locations section.
     pub sidebar_dirs: Vec<PathBuf>,
     /// Recently visited folders, most recent first.
@@ -43,6 +45,7 @@ impl Default for State {
             show_folders: -1,
             show_sidebar: -1,
             show_inspector: -1,
+            slideshow_fullscreen: -1,
             sidebar_dirs: Vec::new(),
             recent_dirs: Vec::new(),
         }
@@ -89,6 +92,7 @@ impl State {
                 "show_folders" => state.show_folders = value.parse().unwrap_or(-1),
                 "show_sidebar" => state.show_sidebar = value.parse().unwrap_or(-1),
                 "show_inspector" => state.show_inspector = value.parse().unwrap_or(-1),
+                "slideshow_fullscreen" => state.slideshow_fullscreen = value.parse().unwrap_or(-1),
                 key if key.starts_with("sidebar_dir_") => {
                     if let Ok(i) = key["sidebar_dir_".len()..].parse::<usize>() {
                         if i < 64 {
@@ -145,6 +149,12 @@ impl State {
         if self.show_inspector >= 0 {
             text.push_str(&format!("show_inspector={}\n", self.show_inspector));
         }
+        if self.slideshow_fullscreen >= 0 {
+            text.push_str(&format!(
+                "slideshow_fullscreen={}\n",
+                self.slideshow_fullscreen
+            ));
+        }
         for (i, dir) in self.sidebar_dirs.iter().enumerate() {
             text.push_str(&format!("sidebar_dir_{}={}\n", i, dir.display()));
         }
@@ -175,6 +185,7 @@ mod tests {
             show_folders: 0,
             show_sidebar: 1,
             show_inspector: 0,
+            slideshow_fullscreen: 0,
             sidebar_dirs: vec![
                 PathBuf::from("/Volumes/Work/exports"),
                 PathBuf::from("/tmp/lumiere_demo"),

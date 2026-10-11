@@ -368,6 +368,28 @@ pub enum Action {
     About,
 }
 
+/// The zoom, pan and full-screen state captured when a slideshow starts, so
+/// stopping the show (or closing the viewer) puts the window and the picture
+/// back exactly the way the user had them.
+#[derive(Clone, Copy, Debug)]
+pub struct SlideshowView {
+    pub fullscreen: bool,
+    pub fit: bool,
+    pub zoom: f32,
+    pub pan: Vec2,
+}
+
+impl Default for SlideshowView {
+    fn default() -> Self {
+        Self {
+            fullscreen: false,
+            fit: true,
+            zoom: 1.0,
+            pan: Vec2::ZERO,
+        }
+    }
+}
+
 pub struct App {
     pub mode: Mode,
     pub dir: PathBuf,
@@ -416,6 +438,17 @@ pub struct App {
     pub slideshow: bool,
     pub slideshow_delay: f32,
     pub slideshow_at: Instant,
+    /// Whether a slideshow should start in full screen (Options ▸ Slideshow).
+    pub slideshow_fullscreen: bool,
+    /// The view to restore when the slideshow ends, captured at its start.
+    pub slideshow_saved: Option<SlideshowView>,
+
+    /// Horizontal trackpad input accumulated toward a left/right image swipe
+    /// (see `viewer::view`); the cooldown keeps a flick's momentum from
+    /// paging through several images at once.
+    pub swipe_x: f32,
+    pub swipe_last: Instant,
+    pub swipe_cooldown: Instant,
 
     pub fullscreen: bool,
 
@@ -639,6 +672,13 @@ impl App {
             slideshow: false,
             slideshow_delay: 3.0,
             slideshow_at: Instant::now(),
+            // Full screen by default, the way a show is expected to run;
+            // the user can opt out from Options ▸ Slideshow.
+            slideshow_fullscreen: true,
+            slideshow_saved: None,
+            swipe_x: 0.0,
+            swipe_last: Instant::now(),
+            swipe_cooldown: Instant::now(),
             fullscreen: false,
             settings_open: false,
             text_focused: false,
@@ -840,6 +880,21 @@ impl App {
 
     // -- command dispatch --------------------------------------------------
 
+    /// Puts back the view captured when the slideshow started: the zoom, the
+    /// pan and the full-screen state the user had before the show began.
+    fn restore_slideshow_view(&mut self, ctx: &Context) {
+        let Some(view) = self.slideshow_saved.take() else {
+            return;
+        };
+        self.fit = view.fit;
+        self.zoom = view.zoom;
+        self.pan = view.pan;
+        if view.fullscreen != self.fullscreen {
+            self.fullscreen = view.fullscreen;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(view.fullscreen));
+        }
+    }
+
     pub fn act(&mut self, action: Action, ctx: &Context) {
         match action {
             Action::OpenFolder => {
@@ -936,16 +991,20 @@ impl App {
             }
             Action::CloseViewer => {
                 self.mode = Mode::Browser;
-                self.fullscreen = false;
-                self.slideshow = false;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+                if self.slideshow {
+                    self.slideshow = false;
+                    self.restore_slideshow_view(ctx);
+                }
+                // Without a running slideshow the full-screen state is the
+                // user's own choice (⌃⌘F), so closing the viewer leaves the
+                // window exactly as it was.
             }
             Action::ZoomIn => {
-                self.zoom = (self.zoom * 1.25).min(64.0);
+                self.zoom = (self.zoom * 1.25).min(crate::viewer::ZOOM_MAX);
                 self.fit = false;
             }
             Action::ZoomOut => {
-                self.zoom = (self.zoom / 1.25).max(0.02);
+                self.zoom = (self.zoom / 1.25).max(crate::viewer::ZOOM_MIN);
                 self.fit = false;
             }
             Action::FitWindow => {
@@ -969,15 +1028,24 @@ impl App {
                 self.mode = Mode::Viewer;
                 let dropped = self.loader.purge_thumbs();
                 self.caches.abandon(&dropped);
+                // Snapshot the view so StopSlideshow can put the window and
+                // the zoom back the way the user had them.
+                self.slideshow_saved = Some(SlideshowView {
+                    fullscreen: self.fullscreen,
+                    fit: self.fit,
+                    zoom: self.zoom,
+                    pan: self.pan,
+                });
                 self.slideshow = true;
                 self.slideshow_at = Instant::now();
-                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
-                self.fullscreen = true;
+                if self.slideshow_fullscreen && !self.fullscreen {
+                    self.fullscreen = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+                }
             }
             Action::StopSlideshow => {
                 self.slideshow = false;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
-                self.fullscreen = false;
+                self.restore_slideshow_view(ctx);
             }
             Action::ToggleFullscreen => {
                 self.fullscreen = !self.fullscreen;
@@ -1747,6 +1815,15 @@ impl App {
                             .step_by(0.5),
                     );
                 });
+                if ui
+                    .checkbox(
+                        &mut self.slideshow_fullscreen,
+                        "Enter full screen automatically",
+                    )
+                    .changed()
+                {
+                    self.state_dirty = true;
+                }
                 theme::section_label(ui, "Maintenance");
                 if ui.button("Clear thumbnail cache").clicked() {
                     clear_cache = true;
@@ -1798,6 +1875,11 @@ impl App {
                     "Keys: Space/Right next, Backspace/Left previous, Enter open, Esc close, \
                      +/- zoom, F fit, 1 actual size, \u{2303}\u{2318}F full screen, \
                      \u{2325}\u{2318}Y slideshow.",
+                );
+                ui.label(
+                    "Gestures: pinch to zoom about the pointer, two-finger scroll pans a \
+                     zoomed image, swipe left/right to browse, double click toggles \
+                     fit/100%, Space + drag pans.",
                 );
             });
         self.about_open = open;
@@ -2642,6 +2724,7 @@ impl App {
                 show_folders: i32::from(self.show_folders),
                 show_sidebar: i32::from(self.show_sidebar),
                 show_inspector: i32::from(self.show_inspector),
+                slideshow_fullscreen: i32::from(self.slideshow_fullscreen),
                 sidebar_dirs: self.sidebar_dirs.clone(),
                 recent_dirs: self.recent_dirs.clone(),
             };
@@ -2843,6 +2926,9 @@ fn apply_preferences(app: &mut App, saved: &crate::state::State) {
     }
     if saved.show_inspector >= 0 {
         app.show_inspector = saved.show_inspector == 1;
+    }
+    if saved.slideshow_fullscreen >= 0 {
+        app.slideshow_fullscreen = saved.slideshow_fullscreen == 1;
     }
     app.sidebar_dirs = saved.sidebar_dirs.clone();
     app.recent_dirs = saved.recent_dirs.clone();
@@ -3180,6 +3266,59 @@ mod tests {
             let _ = ctx.run(input, |ctx| app.draw(ctx));
         }
         *time += 2.0;
+    }
+
+    /// Two quick clicks at `pos`, inside egui's 0.3 s double-click window.
+    fn double_click_at(ctx: &Context, app: &mut App, pos: egui::Pos2, time: &mut f64) {
+        let button = |pressed: bool| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        for (dt, events) in [
+            (0.0, vec![egui::Event::PointerMoved(pos), button(true)]),
+            (0.05, vec![button(false)]),
+            (0.15, vec![button(true)]),
+            (0.2, vec![button(false)]),
+        ] {
+            let mut input = raw_input();
+            input.time = Some(*time + dt);
+            input.events = events;
+            let _ = ctx.run(input, |ctx| app.draw(ctx));
+        }
+        *time += 1.0;
+    }
+
+    /// One frame carrying a trackpad scroll: pixel deltas, no modifiers, the
+    /// way `egui-winit` forwards a two-finger swipe.
+    fn scroll_frame(ctx: &Context, app: &mut App, time: &mut f64, delta: egui::Vec2) {
+        let mut input = raw_input();
+        input.time = Some(*time);
+        input.events = vec![egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta,
+            modifiers: egui::Modifiers::NONE,
+        }];
+        *time += 0.1;
+        let _ = ctx.run(input, |ctx| app.draw(ctx));
+    }
+
+    /// Paints frames until the viewer's full-size texture has arrived; the
+    /// viewer's gestures only work once the picture is on screen.
+    fn wait_for_full_image(ctx: &Context, app: &mut App, time: &mut f64) {
+        let current = app.current_image_path().expect("current image");
+        for _ in 0..120 {
+            let mut input = raw_input();
+            input.time = Some(*time);
+            let _ = ctx.run(input, |ctx| app.draw(ctx));
+            *time += 0.1;
+            if app.caches.full(&current).is_some() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        panic!("the image never reached the full cache");
     }
 
     /// Runs one frame with the given pointer events, for pointer choreography
@@ -4369,6 +4508,263 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A pinch zooms about the gesture centre: the point under the two
+    /// fingers stays put, and a plain two-finger scroll must not zoom.
+    #[test]
+    fn pinch_gesture_zooms_about_the_pointer() {
+        let dir = fixture_dir("pinch");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let mut time = 1.0;
+        app.act(Action::OpenViewer, &ctx);
+        wait_for_full_image(&ctx, &mut app, &mut time);
+
+        // In the viewer the chrome is gone, so the canvas is the whole
+        // 1280x820 test window and its centre is the window's centre.
+        let center = egui::pos2(640.0, 410.0);
+
+        // Pinch in (x2) with the gesture centre on the canvas centre: the
+        // zoom doubles and the pan must not move at all.
+        app.fit = false;
+        app.zoom = 1.0;
+        app.pan = egui::Vec2::ZERO;
+        let mut input = raw_input();
+        input.time = Some(time);
+        input.events = vec![egui::Event::PointerMoved(center), egui::Event::Zoom(2.0)];
+        time += 0.1;
+        let _ = ctx.run(input, |ctx| app.draw(ctx));
+        assert!(!app.fit);
+        assert!((app.zoom - 2.0).abs() < 0.001, "zoom was {}", app.zoom);
+        assert_eq!(app.pan, egui::Vec2::ZERO, "a centred pinch must not pan");
+
+        // Pinch out (x0.5) 200 px right of the centre: zoom 2 -> 1, and the
+        // picture point under the pointer stays where it was (100 px right
+        // of the image centre before and after).
+        let pointer = egui::pos2(840.0, 410.0);
+        let mut input = raw_input();
+        input.time = Some(time);
+        input.events = vec![egui::Event::PointerMoved(pointer), egui::Event::Zoom(0.5)];
+        time += 0.1;
+        let _ = ctx.run(input, |ctx| app.draw(ctx));
+        assert!((app.zoom - 1.0).abs() < 0.001);
+        assert_eq!(app.pan, egui::vec2(100.0, 0.0));
+
+        // A pinch started from "fit" zooms relative to the fit size.
+        app.fit = true;
+        app.pan = egui::Vec2::ZERO;
+        let fit_zoom = (1280.0_f32 / 64.0).min(820.0_f32 / 48.0);
+        let mut input = raw_input();
+        input.time = Some(time);
+        input.events = vec![egui::Event::PointerMoved(center), egui::Event::Zoom(2.0)];
+        let _ = ctx.run(input, |ctx| app.draw(ctx));
+        assert!(!app.fit);
+        assert!(
+            (app.zoom - fit_zoom * 2.0).abs() < 0.01,
+            "zoom was {}",
+            app.zoom
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// While the picture overflows the canvas, a two-finger scroll pans it
+    /// one-to-one — horizontally or vertically — and never zooms or browses.
+    #[test]
+    fn scroll_pans_an_overflowing_image() {
+        let dir = fixture_dir("scrollpan");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let mut time = 1.0;
+        app.act(Action::OpenViewer, &ctx);
+        wait_for_full_image(&ctx, &mut app, &mut time);
+
+        // Zoom far past the canvas: the 64x48 fixture now overflows it.
+        app.fit = false;
+        app.zoom = 40.0;
+        app.pan = egui::Vec2::ZERO;
+        let before = app.selected;
+
+        scroll_frame(&ctx, &mut app, &mut time, egui::vec2(0.0, -80.0));
+        assert_eq!(app.pan, egui::vec2(0.0, 80.0), "vertical scroll pans 1:1");
+        scroll_frame(&ctx, &mut app, &mut time, egui::vec2(120.0, 0.0));
+        assert_eq!(
+            app.pan,
+            egui::vec2(-120.0, 80.0),
+            "horizontal scroll pans, it must not browse"
+        );
+
+        assert_eq!(
+            app.selected, before,
+            "an overflowing picture cannot be swiped past"
+        );
+        assert_eq!(app.swipe_x, 0.0);
+        assert!((app.zoom - 40.0).abs() < 0.001, "scrolling must not zoom");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// While the picture fits, a horizontal swipe pages to the neighbouring
+    /// image: only past a real swipe distance, in either direction, and a
+    /// flick's momentum must not page through several images at once.
+    #[test]
+    fn horizontal_swipe_browses_when_the_picture_fits() {
+        let dir = fixture_dir("swipe");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let mut time = 1.0;
+        app.act(Action::OpenViewer, &ctx);
+        wait_for_full_image(&ctx, &mut app, &mut time);
+        assert!(app.fit, "the viewer opens fitted");
+
+        let images = app.image_indices();
+        let first = app.selected;
+        let pos = images.iter().position(|&i| i == first).unwrap();
+        let next = images[(pos + 1) % images.len()];
+
+        // Half a swipe builds up but does not page.
+        scroll_frame(&ctx, &mut app, &mut time, egui::vec2(60.0, 0.0));
+        assert_eq!(app.swipe_x, 60.0);
+        assert_eq!(app.selected, first);
+
+        // The rest of it crosses the threshold: one step forward.
+        scroll_frame(&ctx, &mut app, &mut time, egui::vec2(60.0, 0.0));
+        assert_eq!(app.selected, next, "a left swipe reveals the next image");
+        assert_eq!(app.swipe_x, 0.0);
+
+        // The flick's momentum arrives within the cooldown: swallowed.
+        scroll_frame(&ctx, &mut app, &mut time, egui::vec2(200.0, 0.0));
+        assert_eq!(app.selected, next, "momentum must not page again");
+        assert_eq!(app.swipe_x, 0.0);
+
+        // A swipe the other way pages back.
+        app.swipe_cooldown = std::time::Instant::now();
+        scroll_frame(&ctx, &mut app, &mut time, egui::vec2(-130.0, 0.0));
+        assert_eq!(
+            app.selected, first,
+            "a right swipe reveals the previous image"
+        );
+
+        // A vertical scroll while fitted does nothing at all.
+        scroll_frame(&ctx, &mut app, &mut time, egui::vec2(0.0, -400.0));
+        assert_eq!(app.selected, first);
+        assert!(app.fit, "a vertical scroll while fitted must not zoom");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Double click bounces between "fit" and actual size (100%).
+    #[test]
+    fn double_click_toggles_fit_and_actual_size() {
+        let dir = fixture_dir("dblclick");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let mut time = 1.0;
+        app.act(Action::OpenViewer, &ctx);
+        wait_for_full_image(&ctx, &mut app, &mut time);
+        assert!(app.fit);
+
+        // In the viewer the canvas is the whole test window; the centre is
+        // clear of the floating toolbar at the bottom left.
+        let center = egui::pos2(640.0, 410.0);
+        double_click_at(&ctx, &mut app, center, &mut time);
+        assert!(!app.fit);
+        assert!(
+            (app.zoom - 1.0).abs() < 0.001,
+            "double click out of fit is actual size"
+        );
+        assert_eq!(app.pan, egui::Vec2::ZERO);
+
+        double_click_at(&ctx, &mut app, center, &mut time);
+        assert!(app.fit, "double click again goes back to fit");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A slideshow never drags the user's window around on its own: with the
+    /// automatic full screen off the show stays windowed, and stopping the
+    /// show restores the zoom, the pan and the window state from before it.
+    #[test]
+    fn slideshow_preserves_the_window_and_zoom_state() {
+        let dir = fixture_dir("slideshowview");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+
+        // The user opts out of the automatic full screen: starting and
+        // stopping must not touch the window at all.
+        app.slideshow_fullscreen = false;
+        app.act(Action::Slideshow, &ctx);
+        assert!(app.slideshow);
+        assert!(
+            !app.fullscreen,
+            "opting out must keep a windowed show windowed"
+        );
+
+        // The user zooms while the show runs; stopping restores the
+        // pre-show view (the app's defaults before the show started).
+        app.fit = false;
+        app.zoom = 4.0;
+        app.pan = egui::vec2(30.0, -12.0);
+        app.act(Action::StopSlideshow, &ctx);
+        assert!(!app.slideshow && !app.fullscreen);
+        assert!(app.fit);
+        assert!(
+            (app.zoom - 1.0).abs() < 0.001,
+            "the pre-show zoom comes back"
+        );
+        assert_eq!(app.pan, egui::Vec2::ZERO);
+
+        // With the automatic full screen on, the show takes the window — and
+        // gives it back.
+        app.slideshow_fullscreen = true;
+        app.act(Action::Slideshow, &ctx);
+        assert!(app.fullscreen);
+        app.act(Action::StopSlideshow, &ctx);
+        assert!(!app.fullscreen && !app.slideshow);
+
+        // A show started from full screen ends full screen.
+        app.act(Action::ToggleFullscreen, &ctx);
+        app.act(Action::Slideshow, &ctx);
+        assert!(app.fullscreen);
+        app.act(Action::StopSlideshow, &ctx);
+        assert!(app.fullscreen, "a full-screen user stays full screen");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Closing the viewer mid-slideshow restores the window the show took;
+    /// a full screen the user chose with ⌃⌘F survives a viewer round trip.
+    #[test]
+    fn closing_the_viewer_during_a_slideshow_restores_the_window() {
+        let dir = fixture_dir("closeview");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+
+        app.slideshow_fullscreen = true;
+        app.act(Action::Slideshow, &ctx);
+        assert!(app.fullscreen);
+        app.act(Action::CloseViewer, &ctx);
+        assert_eq!(app.mode, Mode::Browser);
+        assert!(!app.slideshow);
+        assert!(
+            !app.fullscreen,
+            "the show's full screen is undone with the show"
+        );
+
+        // But a full screen the user chose themselves is not the app's to
+        // undo.
+        app.act(Action::ToggleFullscreen, &ctx);
+        assert!(app.fullscreen);
+        app.act(Action::OpenViewer, &ctx);
+        assert_eq!(app.mode, Mode::Viewer);
+        app.act(Action::CloseViewer, &ctx);
+        assert!(
+            app.fullscreen,
+            "the user's own full screen survives the viewer"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn delete_action_targets_folders_too() {
         let dir = fixture_dir("del");
@@ -4731,6 +5127,7 @@ mod tests {
             sort_reverse: true,
             filter: "*.jpg".to_owned(),
             show_folders: 0,
+            slideshow_fullscreen: 0,
             ..crate::state::State::default()
         }
         .save_to(&path)
@@ -4747,6 +5144,7 @@ mod tests {
         assert_eq!(app.filter, "*.jpg");
         assert_eq!(app.filter_edit, "*.jpg");
         assert!(!app.show_folders);
+        assert!(!app.slideshow_fullscreen);
 
         std::fs::remove_file(&path).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
