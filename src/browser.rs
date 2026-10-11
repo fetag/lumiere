@@ -450,6 +450,8 @@ fn thumbnail(
     if !ui.is_rect_visible(rect) && !response.has_focus() {
         return None;
     }
+    // Registered so the headless tests can aim pointer events at a cell.
+    theme::note_rect(ui, &format!("cell:{index}"), rect);
 
     let selected = app.multi.contains(&index) || app.selected == index;
     // The grid is painted rather than built from widgets, so without this the
@@ -568,27 +570,63 @@ fn thumbnail(
     if response.secondary_clicked() {
         app.selected = index;
     }
+    // A held primary button is a possible drag-out. egui stops reporting the
+    // press (`interact_pointer_pos`) the moment the pointer moves past the
+    // click margin — exactly when a drag starts — so the gesture is fed from
+    // the raw pointer state instead. `is_pointer_button_down_on` is only true
+    // while the press still counts as a click on this cell, which is enough
+    // to capture the gesture's origin.
+    ui.input(|i| {
+        if i.pointer.primary_down() {
+            if let Some(pos) = i.pointer.latest_pos() {
+                app.drag_out_candidate(index, pos, response.is_pointer_button_down_on());
+            }
+        }
+    });
+    // The macOS order: the non-destructive actions first, then Get Info,
+    // and the destructive Move to Trash set apart by a separator.
     response.context_menu(|ui| {
+        // A row, registered so the headless tests can find and click it.
+        let row = |ui: &mut egui::Ui, label: &str| -> bool {
+            let resp = ui.button(label);
+            theme::note_rect(ui, label, resp.rect);
+            resp.clicked()
+        };
         if entry.is_image {
-            if ui.button("View").clicked() {
+            if row(ui, "View") {
                 app.mode = Mode::Viewer;
                 ui.close();
             }
-            if ui.button("Open with default app").clicked() {
+        } else if row(ui, "Explore") {
+            app.set_dir(entry.path.clone());
+            ui.close();
+        }
+        if row(ui, "Share") {
+            app.share_selection(vec![entry.path.clone()]);
+            ui.close();
+        }
+        if row(ui, "Reveal in Finder") {
+            app.reveal_selection(vec![entry.path.clone()]);
+            ui.close();
+        }
+        if entry.is_image {
+            if row(ui, "Open with default app") {
                 app.selected = index;
                 app.act(Action::OpenWithDefault, ui.ctx());
                 ui.close();
             }
-        } else if ui.button("Explore").clicked() {
-            app.set_dir(entry.path.clone());
-            ui.close();
+            if row(ui, "Open With…") {
+                app.open_with_for(entry.path.clone());
+                ui.close();
+            }
         }
-        if ui.button("Get Info").clicked() {
+        if row(ui, "Get Info") {
             app.selected = index;
             app.show_inspector = true;
             ui.close();
         }
-        if ui.button("Move to Trash").clicked() {
+        ui.separator();
+        if row(ui, "Move to Trash") {
             app.selected = index;
             app.begin_trash(vec![entry.path.clone()]);
             ui.close();

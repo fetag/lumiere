@@ -438,6 +438,27 @@ pub struct App {
     pub notice: Option<Notice>,
     /// The batch file operation on its worker thread, when one is running.
     job: Option<RunningJob>,
+    /// The "Open With…" dialog, when one is up: the file being opened and
+    /// the applications LaunchServices offered for it.
+    pub open_with: Option<OpenWithTarget>,
+    /// The drag-in state machine: a file drag is recognized from the
+    /// pasteboard and the physical button state, so the decision lives in a
+    /// pure, testable watch rather than in the native glue.
+    drop_watch: crate::dnd::DropWatch,
+    /// A native drag session this app started is in flight: its payload
+    /// also lands on the pasteboard, so the drag-in watch must stay off
+    /// while it is.
+    drag_out_active: bool,
+    /// A held pointer that started on a grid cell: (entry, press position).
+    /// Once it moves far enough, a native drag of the file(s) starts.
+    drag_out: Option<(usize, egui::Pos2)>,
+    /// The entry whose drag-out gesture has crossed the motion threshold;
+    /// started by `pump_dnd`, which runs before the grid layout.
+    pending_drag: Option<usize>,
+    /// (Tests only) the files the most recent drag-out gesture carried, so
+    /// the gesture itself can be asserted without a window.
+    #[cfg(test)]
+    pub last_drag: Option<Vec<PathBuf>>,
 
     pub path_edit: String,
     pub filter_edit: String,
@@ -481,6 +502,15 @@ pub enum FileOp {
     Trash {
         paths: Vec<PathBuf>,
     },
+}
+
+/// The file the "Open With…" dialog is choosing an application for, with
+/// the applications LaunchServices says can open it.
+#[derive(Clone)]
+pub struct OpenWithTarget {
+    pub path: PathBuf,
+    /// (display name, application bundle path) pairs.
+    pub apps: Vec<(String, PathBuf)>,
 }
 
 /// What a batch file operation did: how many items moved, and — with the
@@ -620,6 +650,13 @@ impl App {
             restore_frames: 0,
             notice: None,
             job: None,
+            open_with: None,
+            drop_watch: crate::dnd::DropWatch::new(),
+            drag_out_active: false,
+            drag_out: None,
+            pending_drag: None,
+            #[cfg(test)]
+            last_drag: None,
             path_edit: dir.display().to_string(),
             filter_edit: "*.*".to_owned(),
             last_title: String::new(),
@@ -1819,6 +1856,121 @@ impl App {
         paths
     }
 
+    // -- macOS file workflow: share, reveal, open with, drag ---------------
+
+    /// The Share item: show the system share picker for `paths`.
+    pub fn share_selection(&mut self, paths: Vec<PathBuf>) {
+        if paths.is_empty() {
+            return;
+        }
+        if !crate::panels::share_paths(&paths) {
+            self.notify("Sharing is unavailable");
+        }
+    }
+
+    /// The "Reveal in Finder" item: open a Finder window with the file
+    /// selected.
+    pub fn reveal_selection(&mut self, paths: Vec<PathBuf>) {
+        let Some(first) = paths.first() else {
+            return;
+        };
+        if !crate::panels::reveal_in_finder(first) {
+            self.notify("Reveal in Finder is unavailable");
+        }
+    }
+
+    /// The "Open With…" item: ask LaunchServices which applications can open
+    /// the file and bring up the dialog with them.
+    pub fn open_with_for(&mut self, path: PathBuf) {
+        let apps = crate::panels::apps_to_open(&path);
+        self.open_with = Some(OpenWithTarget { path, apps });
+    }
+
+    /// Files dropped onto the window: a folder becomes the browsed
+    /// directory, an image opens in the viewer (navigating to its folder
+    /// first when it comes from outside the one on screen).
+    pub fn handle_dropped_paths(&mut self, paths: Vec<PathBuf>) {
+        for path in paths {
+            if path.is_dir() {
+                self.set_dir(path);
+                return;
+            }
+            if !path.is_file() || !imaging::is_image(&path) {
+                continue;
+            }
+            let Some(parent) = path.parent().map(PathBuf::from) else {
+                continue;
+            };
+            self.set_dir(parent);
+            // The rescan cleared the selection; put it back on the dropped
+            // image and open it, the way a double-click would.
+            if let Some(index) = self.entries.iter().position(|e| e.path == path) {
+                self.selected = index;
+                self.anchor = index;
+                self.multi.clear();
+                self.multi.insert(index);
+                self.mode = Mode::Viewer;
+                self.fit = true;
+                self.pan = Vec2::ZERO;
+                let dropped = self.loader.purge_thumbs();
+                self.caches.abandon(&dropped);
+            }
+            return;
+        }
+    }
+
+    /// The grid calls this every frame while the primary button is held,
+    /// with the raw pointer position. `pressed_here` is true on the frames
+    /// where egui still counts the press as a click on `index`, and those
+    /// frames are how the gesture's origin is captured: the payload will be
+    /// the file under the press, wherever the pointer later travels.
+    pub fn drag_out_candidate(&mut self, index: usize, pos: egui::Pos2, pressed_here: bool) {
+        // A native session is already running; its own motion must not
+        // re-trigger the gesture.
+        if self.drag_out_active {
+            return;
+        }
+        if pressed_here {
+            // The press (or a pre-threshold wobble) still lands on the cell:
+            // remember where the gesture started.
+            self.drag_out = Some((index, pos));
+            return;
+        }
+        if let Some((i, down)) = self.drag_out {
+            if down.distance(pos) >= 6.0 {
+                // Queue the entry instead of starting the session here: the
+                // grid layout temporarily takes `entries` out of the app
+                // (browser::grid), so the payload is only resolvable after
+                // the layout is done. `pump_dnd` starts it on the next pass.
+                self.drag_out = None;
+                self.pending_drag = Some(i);
+            }
+        }
+    }
+
+    /// Start the native drag session carrying the files at `index` (or the
+    /// selection it belongs to).
+    fn begin_drag_out(&mut self, index: usize) {
+        self.drag_out = None;
+        let paths = if self.multi.contains(&index) || self.selected == index {
+            self.selection_paths()
+        } else {
+            self.entries
+                .get(index)
+                .map(|entry| vec![entry.path.clone()])
+                .unwrap_or_default()
+        };
+        // The preview is square, the size of the cell the drag leaves from.
+        let started = crate::dnd::begin_file_drag(&paths, self.thumb_size as f64);
+        if started {
+            self.drag_out_active = true;
+        }
+        #[cfg(test)]
+        {
+            self.last_drag = Some(paths);
+        }
+    }
+
     /// Ask for a Move/Copy destination. On macOS a native directory chooser is
     /// shown and the transfer happens as soon as the user picks a folder;
     /// anywhere else the built-in dialog is shown and applied on confirm.
@@ -1960,6 +2112,54 @@ impl App {
             };
             ctx.request_repaint();
             self.finish_op(job.op, outcome);
+        }
+    }
+
+    /// Watch for files being dragged onto the window, and end drag-out
+    /// bookkeeping the moment the button physically comes up.
+    ///
+    /// A foreign drag delivers no pointer events to this window, so while
+    /// the button is held (or a drop is being tracked) the app keeps a slow
+    /// repaint going — otherwise an idle window would never sample the
+    /// pasteboard and the release would go unobserved.
+    fn pump_dnd(&mut self, ctx: &Context) {
+        // A release of the primary button, however it reached us, ends the
+        // pending drag-out gesture (a click is not a drag).
+        if !ctx.input(|i| i.pointer.primary_down()) {
+            self.drag_out = None;
+            self.pending_drag = None;
+        } else if let Some(index) = self.pending_drag.take() {
+            // The gesture crossed the threshold during the last layout; the
+            // entry list is whole again, so the session can start now.
+            self.begin_drag_out(index);
+        }
+        let Some(obs) = crate::dnd::observe_drag() else {
+            return; // no native environment: nothing to watch.
+        };
+        if !obs.button_down {
+            // Any release — native or egui — ends both our own drag session
+            // and a pending drag-out candidate.
+            self.drag_out_active = false;
+            self.drag_out = None;
+            self.pending_drag = None;
+        }
+        if self.drag_out_active {
+            // Our own session owns the drag: the payload is what we put on
+            // the pasteboard ourselves, so the drop watch stays idle —
+            // otherwise the session's own drop would be ingested again.
+            return;
+        }
+        let dropped = self
+            .drop_watch
+            .tick(Some(obs.count), obs.button_down, obs.cursor_in_window);
+        if obs.button_down || self.drop_watch.in_flight() {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
+        if dropped {
+            let paths = crate::dnd::pasteboard_file_paths();
+            if !paths.is_empty() {
+                self.handle_dropped_paths(paths);
+            }
         }
     }
 
@@ -2257,6 +2457,47 @@ impl App {
                 });
             });
     }
+
+    /// The "Open With…" dialog: the applications LaunchServices says can open
+    /// the file, each opening it in that application.
+    fn open_with_window(&mut self, ctx: &Context) {
+        let Some(target) = self.open_with.clone() else {
+            return;
+        };
+        egui::Window::new("Open With")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(format!("Open {} in:", file_name_of(Some(&target.path))));
+                ui.add_space(8.0);
+                if target.apps.is_empty() {
+                    ui.label("No applications can open this file.");
+                    ui.add_space(4.0);
+                }
+                for (name, app) in &target.apps {
+                    let label = format!("Open in {name}");
+                    let resp = ui.button(&label);
+                    theme::note_rect(ui, &label, resp.rect);
+                    if resp.clicked() {
+                        let opened =
+                            crate::panels::open_with(std::slice::from_ref(&target.path), app);
+                        self.open_with = None;
+                        if !opened {
+                            self.notify("Couldn't open the file");
+                        }
+                    }
+                }
+                if !target.apps.is_empty() {
+                    ui.add_space(4.0);
+                }
+                let resp = ui.button("Cancel");
+                theme::note_rect(ui, "Cancel", resp.rect);
+                if resp.clicked() {
+                    self.open_with = None;
+                }
+            });
+    }
 }
 
 impl eframe::App for App {
@@ -2279,6 +2520,11 @@ impl App {
         // Whatever the file-operation worker finished this frame becomes
         // the result card before anything is painted.
         self.pump_job(ctx);
+
+        // A file dragged from Finder delivers no events at all — the press
+        // and release belong to the source app — so the drop is watched
+        // through the pasteboard and the physical button state instead.
+        self.pump_dnd(ctx);
 
         let title = self.title();
         if title != self.last_title {
@@ -2448,6 +2694,7 @@ impl App {
         self.rename_window(ctx);
         self.transfer_window(ctx);
         self.confirm_trash_window(ctx);
+        self.open_with_window(ctx);
 
         // Only a real text field holding the focus withdraws the menu's key
         // equivalents; a focused button, grid cell or tree row does not.
@@ -2832,6 +3079,61 @@ mod tests {
             let _ = ctx.run(input, |ctx| app.draw(ctx));
         }
         *time += 2.0;
+    }
+
+    /// Warms the pointer up on `pos` for one frame, then presses and releases
+    /// the secondary button there — what opens a right-click menu.
+    fn right_click_at(ctx: &Context, app: &mut App, pos: egui::Pos2, time: &mut f64) {
+        let press = vec![
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ];
+        for (frame, events) in [vec![egui::Event::PointerMoved(pos)], press]
+            .into_iter()
+            .enumerate()
+        {
+            let mut input = raw_input();
+            input.time = Some(*time + frame as f64 * 0.4);
+            input.events = events;
+            let _ = ctx.run(input, |ctx| app.draw(ctx));
+        }
+        *time += 2.0;
+    }
+
+    /// Runs one frame with the given pointer events, for pointer choreography
+    /// like a drag-out gesture.
+    fn drag_frame(ctx: &Context, app: &mut App, time: &mut f64, events: Vec<egui::Event>) {
+        let mut input = raw_input();
+        input.time = Some(*time);
+        input.events = events;
+        let _ = ctx.run(input, |ctx| app.draw(ctx));
+        *time += 0.2;
+    }
+
+    /// Paints frames until `label` is laid out and returns its center.
+    fn labeled_center(
+        ctx: &Context,
+        app: &mut App,
+        label: &str,
+        time: &mut f64,
+    ) -> Option<egui::Pos2> {
+        for _ in 0..20 {
+            settle(ctx, app, time);
+            if let Some(rect) = theme::rect_of(ctx, label) {
+                return Some(rect.center());
+            }
+        }
+        None
     }
 
     fn click_label(ctx: &Context, app: &mut App, label: &str, time: &mut f64) -> bool {
@@ -4551,6 +4853,184 @@ mod tests {
         assert_eq!(
             menu_action(&app, &["Go", "Play Slideshow"]),
             Action::Slideshow
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // -- macOS file workflow: drop, right-click menu, open with, drag out --
+
+    /// Files dropped onto the window: a folder becomes the browsed
+    /// directory, an image from elsewhere navigates to its folder and opens
+    /// in the viewer, and a non-image file is ignored.
+    #[test]
+    fn dropped_paths_browse_folders_and_open_images() {
+        let dir = fixture_dir("drop");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+
+        // A dropped folder becomes the browsed directory.
+        app.handle_dropped_paths(vec![dir.join("nested")]);
+        assert_eq!(app.dir, dir.join("nested"));
+
+        // A dropped image from another location navigates there and opens
+        // the viewer on it.
+        let other = std::env::temp_dir().join("lumiere_ui_test_drop_other");
+        let _ = std::fs::remove_dir_all(&other);
+        std::fs::create_dir_all(&other).unwrap();
+        let shot = other.join("dropped.png");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([1, 2, 3, 255]))
+            .save(&shot)
+            .unwrap();
+        app.handle_dropped_paths(vec![shot.clone()]);
+        assert_eq!(app.dir, other);
+        assert_eq!(app.mode, Mode::Viewer);
+        assert_eq!(app.current_image_path(), Some(shot.clone()));
+
+        // A non-image file is ignored: the app stays where it is.
+        let notes = other.join("notes.txt");
+        std::fs::write(&notes, "nope").unwrap();
+        app.mode = Mode::Browser;
+        app.handle_dropped_paths(vec![notes]);
+        assert_eq!(app.dir, other);
+        assert_eq!(app.mode, Mode::Browser);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::remove_dir_all(&other).unwrap();
+    }
+
+    /// The right-click menu keeps the macOS order: browse, Share, Reveal in
+    /// Finder, the open options, Get Info, and the destructive Move to Trash
+    /// last.
+    #[test]
+    fn right_click_menu_lists_the_macos_workflow_in_order() {
+        let dir = fixture_dir("ctxmenu");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let mut time = 1.0;
+
+        // The first cell is the `nested` folder; `one.png` is the second.
+        let Some(pos) = labeled_center(&ctx, &mut app, "cell:1", &mut time) else {
+            panic!("grid cell never laid out");
+        };
+        right_click_at(&ctx, &mut app, pos, &mut time);
+        let text = painted_once(&ctx, &mut app, "Open With…");
+        let lines: Vec<&str> = text.lines().collect();
+
+        // Each menu row, in order, on its own painted line.
+        let mut at = 0;
+        for row in [
+            "View",
+            "Share",
+            "Reveal in Finder",
+            "Open with default app",
+            "Open With…",
+            "Get Info",
+            "Move to Trash",
+        ] {
+            let next = lines[at..]
+                .iter()
+                .position(|line| *line == row)
+                .unwrap_or_else(|| panic!("{row:?} row missing"));
+            at += next;
+        }
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The "Open With…" item brings up the dialog with the applications
+    /// LaunchServices can open the file with (a fixed list in a test build);
+    /// choosing one opens the file and closes the dialog.
+    #[test]
+    fn open_with_dialog_lists_apps_and_opens_in_one() {
+        let dir = fixture_dir("openwith");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let mut time = 1.0;
+
+        let Some(pos) = labeled_center(&ctx, &mut app, "cell:1", &mut time) else {
+            panic!("grid cell never laid out");
+        };
+        right_click_at(&ctx, &mut app, pos, &mut time);
+        painted_once(&ctx, &mut app, "Open With…");
+        assert!(click_label(&ctx, &mut app, "Open With…", &mut time));
+
+        let text = painted_once(&ctx, &mut app, "Open in Preview");
+        assert!(text.contains("Open one.png in:"));
+        assert!(text.contains("Open in Preview"));
+        assert!(text.contains("Open in Photos"));
+
+        // Choosing an application opens the file and closes the dialog.
+        assert!(click_label(&ctx, &mut app, "Open in Preview", &mut time));
+        assert!(app.open_with.is_none());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Holding the pointer on a cell and moving it past the threshold starts
+    /// a drag carrying the file under the press; a release before the
+    /// threshold is an ordinary click and starts none.
+    #[test]
+    fn drag_out_gesture_carries_the_cell_file() {
+        let dir = fixture_dir("dragout");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let mut time = 1.0;
+
+        let Some(start) = labeled_center(&ctx, &mut app, "cell:1", &mut time) else {
+            panic!("grid cell never laid out");
+        };
+        app.selected = 1;
+        app.multi.clear();
+
+        let pointer = |pos: egui::Pos2, press: Option<bool>| {
+            let mut events = vec![egui::Event::PointerMoved(pos)];
+            if let Some(pressed) = press {
+                events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            events
+        };
+
+        // Warm the pointer up, press on the cell, then drag past the
+        // threshold: the gesture fires with the file under the press.
+        drag_frame(&ctx, &mut app, &mut time, pointer(start, None));
+        drag_frame(&ctx, &mut app, &mut time, pointer(start, Some(true)));
+        for dx in [7.0, 14.0, 21.0] {
+            drag_frame(
+                &ctx,
+                &mut app,
+                &mut time,
+                pointer(egui::pos2(start.x + dx, start.y + dx / 2.0), None),
+            );
+        }
+        assert_eq!(
+            app.last_drag.as_deref(),
+            Some(vec![dir.join("one.png")].as_slice())
+        );
+
+        // A second gesture released before the threshold is a click, not a
+        // drag: nothing new is recorded.
+        drag_frame(&ctx, &mut app, &mut time, pointer(start, Some(true)));
+        drag_frame(
+            &ctx,
+            &mut app,
+            &mut time,
+            pointer(egui::pos2(start.x + 3.0, start.y), None),
+        );
+        drag_frame(
+            &ctx,
+            &mut app,
+            &mut time,
+            pointer(egui::pos2(start.x + 3.0, start.y), Some(false)),
+        );
+        assert_eq!(
+            app.last_drag.as_deref(),
+            Some(vec![dir.join("one.png")].as_slice())
         );
 
         std::fs::remove_dir_all(&dir).unwrap();

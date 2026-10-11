@@ -3,6 +3,7 @@
 mod alerts;
 mod app;
 mod browser;
+mod dnd;
 mod fsmodel;
 mod imaging;
 mod loader;

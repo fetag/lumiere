@@ -30,6 +30,8 @@ trash = "5"
 objc2 = "0.6.5"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "std",
+    "block2",
+    "NSRunningApplication",
     "NSAlert",
     "NSApplication",
     "NSButton",
@@ -38,9 +40,15 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSEvent",
     "NSMenu",
     "NSMenuItem",
+    "NSDragging",
+    "NSDraggingItem",
+    "NSDraggingSession",
+    "NSGraphicsContext",
     "NSOpenPanel",
     "NSPanel",
+    "NSPasteboard",
     "NSResponder",
+    "NSSharingService",
     "NSSavePanel",
     "NSScreen",
     "NSView",
@@ -49,6 +57,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
 objc2-core-foundation = "0.3.2"
 objc2-core-graphics = { version = "0.3.2", features = [
     "CGContext",
+    "CGEventSource",
     "CGImage",
     "CGColorSpace",
 ] }

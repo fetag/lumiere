@@ -126,3 +126,153 @@ pub fn reveal_in_finder(path: &Path) -> bool {
     let _ = path;
     false
 }
+
+/// Show the system share picker for `paths` (the Share item in the
+/// right-click menu). Returns true when the picker was asked to; everywhere
+/// else, and in a test build where there is no window to anchor it, the call
+/// is a no-op.
+#[cfg(target_os = "macos")]
+pub fn share_paths(paths: &[PathBuf]) -> bool {
+    use objc2::rc::Retained;
+    use objc2::AnyThread;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSSharingServicePicker};
+    use objc2_foundation::{NSArray, NSRectEdge, NSString, NSURL};
+
+    if cfg!(test) || paths.is_empty() {
+        return false;
+    }
+    // AppKit only works on the main thread.
+    let Some(mtm) = MainThreadMarker::new() else {
+        return false;
+    };
+    // The picker anchors to a live view in the app's window.
+    let Some(view) = NSApplication::sharedApplication(mtm)
+        .keyWindow()
+        .and_then(|window| window.contentView())
+    else {
+        return false;
+    };
+    let urls: Vec<Retained<NSURL>> = paths
+        .iter()
+        .map(|path| {
+            let name = path.to_string_lossy();
+            NSURL::fileURLWithPath(&NSString::from_str(name.as_ref()))
+        })
+        .collect();
+    let urls = NSArray::from_retained_slice(&urls);
+    // The bindings declare the items as a bare `NSArray`, but the objects in
+    // it are NSURLs; both are the same array at the Objective-C level, so a
+    // pointer re-interpretation is all it takes.
+    //
+    // SAFETY: `NSArray<NSURL>` and `NSArray` share the layout of an
+    // Objective-C object pointer, and the array is alive for the call.
+    let raw_ptr: *const NSArray = Retained::as_ptr(&urls).cast();
+    let raw: &NSArray = unsafe { &*raw_ptr };
+    // SAFETY: the items are file URLs, which conform to the pasteboard
+    // writing the picker requires.
+    let picker =
+        unsafe { NSSharingServicePicker::initWithItems(NSSharingServicePicker::alloc(), raw) };
+    let frame = view.frame();
+    picker.showRelativeToRect_ofView_preferredEdge(frame, &view, NSRectEdge::MinY);
+    true
+}
+
+/// There is no share picker on other platforms.
+#[cfg(not(target_os = "macos"))]
+pub fn share_paths(paths: &[PathBuf]) -> bool {
+    let _ = paths;
+    false
+}
+
+/// The applications that can open `path`, as (name, app bundle path) pairs,
+/// from LaunchServices — the list behind the "Open With…" item. In a test
+/// build there is no LaunchServices to query, so a fixed list stands in for
+/// it; the dialog and its wiring are what get exercised.
+#[cfg(target_os = "macos")]
+pub fn apps_to_open(path: &Path) -> Vec<(String, PathBuf)> {
+    use objc2_app_kit::NSWorkspace;
+    use objc2_foundation::{NSString, NSURL};
+
+    if cfg!(test) {
+        return vec![
+            (
+                "Preview".to_owned(),
+                PathBuf::from("/System/Applications/Preview.app"),
+            ),
+            (
+                "Photos".to_owned(),
+                PathBuf::from("/System/Applications/Photos.app"),
+            ),
+        ];
+    }
+    let name = path.to_string_lossy();
+    let url = NSURL::fileURLWithPath(&NSString::from_str(name.as_ref()));
+    NSWorkspace::sharedWorkspace()
+        .URLsForApplicationsToOpenURL(&url)
+        .iter()
+        .filter_map(|app| {
+            let app_path = app.path()?;
+            let app_path = PathBuf::from(app_path.to_string());
+            // "Preview.app" -> "Preview".
+            let display = app_path
+                .file_name()?
+                .to_string_lossy()
+                .strip_suffix(".app")
+                .unwrap_or(&app_path.to_string_lossy())
+                .to_owned();
+            Some((display, app_path))
+        })
+        .collect()
+}
+
+/// There are no LaunchServices apps to list on other platforms.
+#[cfg(not(target_os = "macos"))]
+pub fn apps_to_open(path: &Path) -> Vec<(String, PathBuf)> {
+    let _ = path;
+    Vec::new()
+}
+
+/// Open `paths` in the application at `app` (a `.app` bundle path) — the
+/// chosen row of the "Open With…" dialog. Returns true when the system was
+/// asked to; in a test build the call pretends success so the dialog's
+/// wiring can still be exercised.
+#[cfg(target_os = "macos")]
+pub fn open_with(paths: &[PathBuf], app: &Path) -> bool {
+    use objc2::rc::Retained;
+    use objc2_app_kit::NSWorkspace;
+    use objc2_foundation::{NSArray, NSString, NSURL};
+
+    if paths.is_empty() {
+        return false;
+    }
+    if cfg!(test) {
+        let _ = app;
+        return true;
+    }
+    let urls: Vec<Retained<NSURL>> = paths
+        .iter()
+        .map(|path| {
+            let name = path.to_string_lossy();
+            NSURL::fileURLWithPath(&NSString::from_str(name.as_ref()))
+        })
+        .collect();
+    let urls = NSArray::from_retained_slice(&urls);
+    let app_name = app.to_string_lossy();
+    let app_url = NSURL::fileURLWithPath(&NSString::from_str(app_name.as_ref()));
+    let configuration = objc2_app_kit::NSWorkspaceOpenConfiguration::new();
+    NSWorkspace::sharedWorkspace().openURLs_withApplicationAtURL_configuration_completionHandler(
+        &urls,
+        &app_url,
+        &configuration,
+        None,
+    );
+    true
+}
+
+/// There is no application bundle to open the files with on other platforms.
+#[cfg(not(target_os = "macos"))]
+pub fn open_with(paths: &[PathBuf], app: &Path) -> bool {
+    let _ = (paths, app);
+    false
+}

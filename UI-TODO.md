@@ -134,6 +134,16 @@
   - 現況／依據：`src/app.rs:603-610` 的 Open 僅以 `open <path>` 叫起預設 App；內容選單在 `src/browser.rs:375-404` 只有 View、Open with default app、Properties、Delete。
   - 實作方向：加入 Share（`NSSharingServicePicker`）、Reveal in Finder、Quick Look（Space）與 Open With…；右鍵選單依 macOS 用語排序，非破壞性動作先於 Move to Trash。支援拖入檔案／資料夾開啟，並可把選取的檔案拖出至 Finder／其他 App。
   - 驗收：選取圖片可用 Share 成功傳送到至少一個系統分享目標；`Space` 顯示 Quick Look、Reveal in Finder 開啟並選取該檔；拖放檔案和資料夾能正確開啟或瀏覽。
+  - 進度（2026-10-11）：五項工作流完成；**Quick Look（Space）經使用者指示裁掉**，驗收項「Space 顯示 Quick Look」不適用。
+    1. **Share**：`NSSharingServicePicker`（`panels::share_paths`，items 為 NSURL），右鍵選單 Share（圖片與資料夾皆可）。
+    2. **Reveal in Finder**：`NSWorkspace.activateFileViewerSelectingURLs`（`panels::reveal_in_finder`，notice 的 Show in Finder 同路徑），右鍵選單 Reveal in Finder。
+    3. **Open With…**：`panels::apps_to_open`（LaunchServices 註冊查詢）＋list dialog＋`panels::open_with`，右鍵選單（圖片專屬，「Open with default app」之下）。
+    4. **拖入**：eframe 端 `DroppedFile` 取不到可用路徑，改由 `dnd::DropWatch` 狀態機每幀取樣（pasteboard changeCount 上升＋`CGEventSource` 實體 button state＋游標在視窗內），release 時以 `pasteboard_file_paths()` 開啟檔案／資料夾。
+    5. **拖出**：input-based gesture（cell 上 press＋6 px 門檻）→`dnd::begin_file_drag`（`NSDraggingSession`＋`public.file-url` payload，preview 傳 cell 尺寸以避免零尺寸 dragging frame 的 NSRangeException）；layout 期間 `entries` 被 take，payload 以 `pending_drag` 延至 `pump_dnd` 發射；session 事件優先用 `NSApplication.currentEvent()`（拖曳中為真實事件），無則合成；`drag_out_active` 期間 DropWatch 停止 tick，防把自家 session 的 drop 再 ingest 一次。
+  - 右鍵選單重排為 macOS 順序：View/Explore → Share → Reveal in Finder → Open with default app → Open With… → Get Info →（separator）→ Move to Trash（非破壞性在前、trash 以分隔線獨立）。
+  - 依賴：objc2 0.6.5、objc2-app-kit 0.3.2、objc2-core-graphics 0.3.2。
+  - 測試：`dropped_paths_browse_folders_and_open_images`（拖入）、`drag_out_gesture_carries_the_cell_file`（拖出 payload）、`open_with_dialog_lists_apps_and_opens_in_one`、`right_click_menu_lists_the_macos_workflow_in_order`、`dnd::tests`（DropWatch：release 認 drop、窗外 release 取消、idle change 非拖曳、payload 替換取消舊 drag、無 pasteboard 不 drop）。
+  - 實機驗證：右鍵選單順序、Open With 對話框（選 Preview 開啟）、Share picker（含郵件目標）、Reveal in Finder 開啟並選取該檔、拖出 one.png／three.png 均正確 copy 進 Finder 視窗。
 
 - [ ] **讓 Inspector/資訊面板與縮圖選取狀態更清楚且不依賴深藍色。**
   - 現況／依據：`src/browser.rs:282-374` 將選取縮圖整塊填為 `classic::NAVY`，檔名固定 11 px；`src/browser.rs:425-` 以兩個裸文字 tab 呈現 Preview / Information；`src/classic.rs:120-133` 使用深藍色 section label。
