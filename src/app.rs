@@ -452,6 +452,10 @@ pub struct App {
     /// Opposite-direction input accumulated against a locked swipe; reaching
     /// the threshold here pages back and re-locks the other way.
     pub swipe_against: f32,
+    /// Consecutive "dying" deltas seen while a swipe is locked (see
+    /// `viewer::SWIPE_DEAD`); the lock releases once the flick's tail has
+    /// died out, so the next swipe works immediately.
+    pub swipe_decay: u32,
     pub swipe_last: Instant,
 
     pub fullscreen: bool,
@@ -682,6 +686,7 @@ impl App {
             slideshow_saved: None,
             swipe_x: 0.0,
             swipe_against: 0.0,
+            swipe_decay: 0,
             swipe_last: Instant::now(),
             fullscreen: false,
             settings_open: false,
@@ -4624,6 +4629,7 @@ mod tests {
         let first = app.selected;
         let pos = images.iter().position(|&i| i == first).unwrap();
         let next = images[(pos + 1) % images.len()];
+        let after_next = images[(pos + 2) % images.len()];
 
         // Half a swipe builds up but does not page.
         scroll_frame(&ctx, &mut app, &mut time, egui::vec2(60.0, 0.0));
@@ -4643,30 +4649,42 @@ mod tests {
         scroll_frame(&ctx, &mut app, &mut time, egui::vec2(600.0, 0.0));
         assert_eq!(app.selected, next, "one far swipe pages exactly once");
 
-        // A fresh swipe the other way pages back.
+        // The tail then dies out (small per-event deltas): as soon as it
+        // does, the lock releases — no silence required — and a fresh swipe
+        // right after it pages again.
+        for dx in [10.0, 7.0, 5.0, 4.0, 3.0] {
+            scroll_frame(&ctx, &mut app, &mut time, egui::vec2(dx, 0.0));
+        }
+        assert_eq!(app.selected, next, "the dying tail must not page");
+        assert_eq!(app.swipe_x, 0.0, "the lock releases when the tail dies");
+        scroll_frame(&ctx, &mut app, &mut time, egui::vec2(60.0, 0.0));
+        assert_eq!(app.selected, next);
+        scroll_frame(&ctx, &mut app, &mut time, egui::vec2(60.0, 0.0));
+        assert_eq!(app.selected, after_next, "the next swipe works immediately");
+
+        // A swipe the other way pages back.
         scroll_frame(&ctx, &mut app, &mut time, egui::vec2(-130.0, 0.0));
         assert_eq!(
-            app.selected, first,
+            app.selected, next,
             "a right swipe reveals the previous image"
         );
         assert_eq!(app.swipe_x, -120.0, "the lock flips with the page");
 
-        // A fresh swipe after the input went quiet pages again: the gap
-        // (150 ms) elapses, the lock drops, and a huge swipe still pages
-        // exactly once.
+        // After the input went quiet (the 150 ms gap elapsed), a huge fresh
+        // swipe still pages exactly once.
         std::thread::sleep(std::time::Duration::from_millis(250));
         scroll_frame(&ctx, &mut app, &mut time, egui::vec2(500.0, 0.0));
-        assert_eq!(app.selected, next);
+        assert_eq!(app.selected, after_next);
         assert_eq!(app.swipe_x, 120.0);
         scroll_frame(&ctx, &mut app, &mut time, egui::vec2(500.0, 0.0));
         assert_eq!(
-            app.selected, next,
+            app.selected, after_next,
             "the rest of the same swipe is discarded"
         );
 
         // A vertical scroll while fitted does nothing at all.
         scroll_frame(&ctx, &mut app, &mut time, egui::vec2(0.0, -400.0));
-        assert_eq!(app.selected, next);
+        assert_eq!(app.selected, after_next);
         assert!(app.fit, "a vertical scroll while fitted must not zoom");
 
         std::fs::remove_dir_all(&dir).unwrap();

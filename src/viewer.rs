@@ -20,8 +20,8 @@ pub const ZOOM_MAX: f32 = 64.0;
 /// How far the trackpad must travel horizontally before a swipe pages to the
 /// neighbouring image. Once a swipe has paged, the gesture is locked: no
 /// matter how far the same gesture keeps travelling (the flick's momentum
-/// included) it cannot page a second time — only a pause or an equal swipe
-/// the other way starts a fresh one.
+/// included) it cannot page a second time — only a pause, an equal swipe
+/// the other way, or the flick's tail dying out starts a fresh one.
 const SWIPE_PX: f32 = 120.0;
 /// A pause longer than this starts a fresh swipe instead of extending the
 /// last one. Trackpad events arrive every 8–16 ms, so the pause must be far
@@ -29,6 +29,14 @@ const SWIPE_PX: f32 = 120.0;
 /// can never break); but it must stay short enough that two quick swipes —
 /// typically 100–300 ms apart once the momentum dies — still count as two.
 const SWIPE_GAP: Duration = Duration::from_millis(150);
+/// A per-event horizontal delta below this counts as "the gesture is
+/// dying" while a swipe is locked. A flick's momentum decays smoothly to
+/// nothing, while a fresh swipe re-accelerates; once the tail is dying,
+/// the lock releases right away so the next swipe works immediately.
+const SWIPE_DEAD: f32 = 8.0;
+/// Consecutive dying deltas required to release the lock, so a single noisy
+/// event cannot split a live gesture.
+const SWIPE_DEAD_EVENTS: u32 = 4;
 
 pub fn view(app: &mut App, ui: &mut Ui) {
     let Some(path) = app.current_image_path() else {
@@ -140,6 +148,7 @@ pub fn view(app: &mut App, ui: &mut Ui) {
                 // fresh swipe.
                 app.swipe_x = 0.0;
                 app.swipe_against = 0.0;
+                app.swipe_decay = 0;
             }
             app.swipe_last = now;
             if app.swipe_x.abs() >= SWIPE_PX {
@@ -151,6 +160,7 @@ pub fn view(app: &mut App, ui: &mut Ui) {
                     app.swipe_against += scroll.x.abs();
                     if app.swipe_against >= SWIPE_PX {
                         app.swipe_against = 0.0;
+                        app.swipe_decay = 0;
                         app.swipe_x = -app.swipe_x;
                         let action = if app.swipe_x < 0.0 {
                             Action::PrevImage
@@ -158,6 +168,22 @@ pub fn view(app: &mut App, ui: &mut Ui) {
                             Action::NextImage
                         };
                         app.act(action, ui.ctx());
+                    }
+                } else {
+                    // The flick's tail dies out smoothly: once the deltas
+                    // are small enough for a while, the gesture is over and
+                    // the lock releases right away, so the user's next
+                    // swipe works immediately instead of waiting for the
+                    // tail to stop delivering events.
+                    app.swipe_decay = if scroll.x.abs() < SWIPE_DEAD {
+                        app.swipe_decay + 1
+                    } else {
+                        0
+                    };
+                    if app.swipe_decay >= SWIPE_DEAD_EVENTS {
+                        app.swipe_x = 0.0;
+                        app.swipe_against = 0.0;
+                        app.swipe_decay = 0;
                     }
                 }
             } else {
