@@ -52,7 +52,7 @@ repeatedly running bundles from `build/`, `dist/`, or `/tmp`.
 - EXIF via `kamadak-exif`
 - "Move to Trash" (`⌘⌫`) confirms with a native alert and moves items to the
   macOS Trash (`trash` crate), so they stay recoverable from Finder
-- Thumbnail cache: `~/Library/Caches/com.james.Lumiere/thumbs`
+- Thumbnail cache: `~/Library/Caches/net.fetag.lumiere/thumbs`
 
 ## Layout
 
