@@ -1,12 +1,44 @@
-# Lumiere
+<p align="center">
+  <img src="assets/AppIcon.png" alt="Lumiere icon" width="128" height="128">
+</p>
 
-Image browser/viewer for macOS, written in Rust with
-[egui](https://github.com/emilk/egui)/eframe. Three-pane browser (folder tree,
-thumbnail grid, preview/information), full-screen viewer, and slideshow, in a
-macOS-adaptive light/dark UI that follows the system appearance, with the
-system font and monochrome line icons.
+<h1 align="center">Lumiere</h1>
 
-## Build and run
+<p align="center">
+  A native-feeling image browser and viewer for macOS, built in Rust with
+  <a href="https://github.com/emilk/egui">egui</a>/<a href="https://github.com/emilk/egui/tree/master/crates/eframe">eframe</a>.
+</p>
+
+<p align="center">
+  Three-pane browsing, full-screen viewing, slideshow, HEIC/AVIF support, and a macOS-adaptive UI.
+</p>
+
+---
+
+## Why Lumiere?
+
+Lumiere is an image browser/viewer for macOS that aims to feel at home on the
+platform while staying lightweight and fast. It uses a three-pane layout for
+everyday browsing, a dedicated full-screen viewer for focused viewing, and a
+slideshow mode for hands-off playback.
+
+The UI follows the macOS light/dark appearance, uses the system font, and keeps
+the chrome visually restrained with monochrome line icons.
+
+## Highlights
+
+- **Three-pane browser**: folder tree, thumbnail grid, and preview/information pane
+- **Dedicated viewer**: zoom, pan, rotate, flip, actual size, and fit-to-window
+- **Slideshow mode**: quick start/stop from the keyboard or menu bar
+- **macOS-aware UI**: adaptive light/dark styling, native-looking chrome, system font
+- **Wide format support**: common formats via `image`, plus HEIC/HEIF/AVIF via macOS ImageIO
+- **Recoverable delete**: `⌘⌫` moves items to the macOS Trash after confirmation
+- **Persistent session state**: restores the last folder and window geometry
+- **Real menu bar integration**: keyboard shortcuts are defined once and reflected consistently in menus and app handling
+
+## Quick start
+
+### Build and run
 
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"   # if cargo is not already on PATH
@@ -14,7 +46,7 @@ cargo build --release
 ./target/release/lumiere /path/to/folder
 ```
 
-Checks:
+### Checks
 
 ```sh
 cargo fmt --check
@@ -22,22 +54,27 @@ cargo clippy --all-targets
 cargo test
 ```
 
-Packaging a `.app` bundle (icon, Info.plist, ad-hoc signature):
+### Package as a `.app`
+
+Build a macOS app bundle with icon, `Info.plist`, and ad-hoc signature:
 
 ```sh
 ./bundle.sh          # -> build/Lumiere.app
 ```
 
-Installing the bundle to a stable user-facing path (recommended for Dock icon
-cache stability on macOS):
+### Install to `~/Applications`
+
+Install the bundle to a stable user-facing path. This is the recommended path
+on macOS because it is more reliable for Dock icon cache behavior:
 
 ```sh
 ./install.sh                 # -> ~/Applications/Lumiere.app, then open it
 ./install.sh /path/to/folder # same, but launches that folder immediately
 ```
 
-Session state (last folder, window size and position) is stored in
-`~/Library/Application Support/Lumiere/state.ini`.
+Session state is stored in:
+
+- `~/Library/Application Support/Lumiere/state.ini`
 
 Note: Finder / `NSWorkspace` already see the committed app icon correctly. If
 the Dock still shows the generic placeholder after swapping `AppIcon.icns`, it
@@ -45,7 +82,7 @@ is usually a Dock / IconServices cache issue; installing to one stable path
 (`~/Applications/Lumiere.app`) and launching that copy is more reliable than
 repeatedly running bundles from `build/`, `dist/`, or `/tmp`.
 
-## Decoding
+## Format support and storage
 
 - Built-in via the `image` crate: JPEG, PNG, GIF, BMP, TIFF, WebP, TGA, PCX, ICO, …
 - HEIC / HEIF / AVIF via macOS ImageIO (`src/imaging/macos.rs`, `objc2-image-io`)
@@ -53,23 +90,6 @@ repeatedly running bundles from `build/`, `dist/`, or `/tmp`.
 - "Move to Trash" (`⌘⌫`) confirms with a native alert and moves items to the
   macOS Trash (`trash` crate), so they stay recoverable from Finder
 - Thumbnail cache: `~/Library/Caches/net.fetag.lumiere/thumbs`
-
-## Layout
-
-| File | Purpose |
-| --- | --- |
-| `src/main.rs` | eframe entry point, CLI folder argument |
-| `src/app.rs` | app state, menus, toolbar, status bar, keyboard map, dialogs, tests |
-| `src/browser.rs` | folder tree, thumbnail grid, preview / information pane |
-| `src/viewer.rs` | full image view: zoom, pan, rotate, flip, floating toolbar |
-| `src/loader.rs` | worker pool, request queue (full/preview jump the queue), reply channel |
-| `src/imaging.rs` | format detection, decode, EXIF, thumbnail cache |
-| `src/imaging/macos.rs` | ImageIO bridge for HEIC/HEIF/AVIF |
-| `src/fsmodel.rs` | directory scan, sorting, wildcard filter, tree model |
-| `src/theme.rs` | macOS visual layer: adaptive light/dark chrome, system font, monochrome line icons |
-| `src/menu.rs` | the menu bar as one platform-neutral description |
-| `src/menu/macos.rs` | that description as `NSMenu`s in the real macOS menu bar |
-| `src/window.rs` | whether a restored window position is still on a display |
 
 ## Keyboard shortcuts
 
@@ -103,6 +123,23 @@ bar owns the `⌘` chords and AppKit consumes them before the window sees them.
 Note: shortcuts match on the key event's own modifiers, not on
 `InputState::modifiers` — winit/eframe does not always update the latter in the
 same frame as the key event.
+
+## Project layout
+
+| File | Purpose |
+| --- | --- |
+| `src/main.rs` | eframe entry point, CLI folder argument |
+| `src/app.rs` | app state, menus, toolbar, status bar, keyboard map, dialogs, tests |
+| `src/browser.rs` | folder tree, thumbnail grid, preview / information pane |
+| `src/viewer.rs` | full image view: zoom, pan, rotate, flip, floating toolbar |
+| `src/loader.rs` | worker pool, request queue (full/preview jump the queue), reply channel |
+| `src/imaging.rs` | format detection, decode, EXIF, thumbnail cache |
+| `src/imaging/macos.rs` | ImageIO bridge for HEIC/HEIF/AVIF |
+| `src/fsmodel.rs` | directory scan, sorting, wildcard filter, tree model |
+| `src/theme.rs` | macOS visual layer: adaptive light/dark chrome, system font, monochrome line icons |
+| `src/menu.rs` | the menu bar as one platform-neutral description |
+| `src/menu/macos.rs` | that description as `NSMenu`s in the real macOS menu bar |
+| `src/window.rs` | whether a restored window position is still on a display |
 
 ## Testing
 
