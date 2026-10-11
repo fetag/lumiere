@@ -22,7 +22,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleName</key>            <string>Lumiere</string>
     <key>CFBundleDisplayName</key>     <string>Lumiere</string>
     <key>CFBundleExecutable</key>      <string>Lumiere</string>
-    <key>CFBundleIdentifier</key>      <string>net.fetag.Lumiere</string>
+    <key>CFBundleIdentifier</key>      <string>com.james.Lumiere</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleShortVersionString</key> <string>0.1.0</string>
     <key>CFBundleVersion</key>         <string>1</string>
@@ -45,18 +45,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# Generate the app icon (drawn by examples/make_icon.rs).
-cargo run --release --example make_icon -- "$OUT/icon-1024.png"
-ICONSET="$OUT/AppIcon.iconset"
-rm -rf "$ICONSET"
-mkdir -p "$ICONSET"
-for spec in "16 icon_16x16" "32 icon_16x16@2x" "32 icon_32x32" "64 icon_32x32@2x" \
-            "128 icon_128x128" "256 icon_128x128@2x" "256 icon_256x256" \
-            "512 icon_256x256@2x" "512 icon_512x512" "1024 icon_512x512@2x"; do
-    set -- $spec
-    sips -z "$1" "$1" "$OUT/icon-1024.png" --out "$ICONSET/$2.png" >/dev/null
-done
-iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+# Install the app icon: the committed .icns (see assets/).
+cp assets/Lumiere.icns "$APP/Contents/Resources/AppIcon.icns"
 
 # Ad-hoc signature so Gatekeeper lets a locally built app run.
 # For distribution replace "-" with a Developer ID identity and notarize:

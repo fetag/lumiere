@@ -28,8 +28,22 @@ Packaging a `.app` bundle (icon, Info.plist, ad-hoc signature):
 ./bundle.sh          # -> build/Lumiere.app
 ```
 
+Installing the bundle to a stable user-facing path (recommended for Dock icon
+cache stability on macOS):
+
+```sh
+./install.sh                 # -> ~/Applications/Lumiere.app, then open it
+./install.sh /path/to/folder # same, but launches that folder immediately
+```
+
 Session state (last folder, window size and position) is stored in
 `~/Library/Application Support/Lumiere/state.ini`.
+
+Note: Finder / `NSWorkspace` already see the committed app icon correctly. If
+the Dock still shows the generic placeholder after swapping `AppIcon.icns`, it
+is usually a Dock / IconServices cache issue; installing to one stable path
+(`~/Applications/Lumiere.app`) and launching that copy is more reliable than
+repeatedly running bundles from `build/`, `dist/`, or `/tmp`.
 
 ## Decoding
 
@@ -38,7 +52,7 @@ Session state (last folder, window size and position) is stored in
 - EXIF via `kamadak-exif`
 - "Move to Trash" (`⌘⌫`) confirms with a native alert and moves items to the
   macOS Trash (`trash` crate), so they stay recoverable from Finder
-- Thumbnail cache: `~/Library/Caches/net.fetag.Lumiere/thumbs`
+- Thumbnail cache: `~/Library/Caches/com.james.Lumiere/thumbs`
 
 ## Layout
 

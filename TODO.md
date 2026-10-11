@@ -55,7 +55,7 @@
 - [x] README.md：功能、格式、模組表、快捷鍵表、測試與截圖驗證方式 — 已建立 `README.md`
 - [x] `.app` bundle 打包：`./bundle.sh`（Info.plist、CFBundleDocumentTypes、ad-hoc codesign）— 實測 `open build/Lumiere.app` 可啟動並還原上次資料夾
 - [x] codesign / notarize 步驟文件：寫在 `bundle.sh` 註解（Developer ID + notarytool 步驟）
-- [x] App icon（.icns）：`examples/make_icon.rs` 畫出 1024px PNG，`bundle.sh` 用 sips + iconutil 產生 `AppIcon.icns` 並寫入 `CFBundleIconFile` — 已確認 bundle 內有 icns 且 app 可啟動；Dock 外觀尚未截圖確認
+- [x] App icon（.icns）：`assets/Lumiere.icns`（使用者設計稿，含 1024px），`bundle.sh` 直接複製進 `Contents/Resources/AppIcon.icns`（CFBundleIconFile=AppIcon）；bundle id / cache 路徑改為 `com.james.Lumiere`。Finder / `NSWorkspace` 已確認讀到紫色新 icon；Dock 執行中 tile 仍可能暫留 placeholder，屬 Dock / IconServices cache，故補 `install.sh` 固定安裝到 `~/Applications/Lumiere.app`
 - [ ] 用 LaunchServices 開檔（`open -a Lumiere.app foo.jpg`）不會帶 argv，需要處理 Apple Events openFile；目前只能靠 argv 或還原上次資料夾
       卡點：winit 會把開檔事件收進 `Event::Opened`，但 eframe 0.33 的 run loop 完全不處理這個 event（`grep Opened eframe/egui-winit` 無結果），所以 app 端拿不到；要嘛自己用 objc2 掛 NSApplicationDelegate（會和 winit 的 delegate 打架），要嘛等 eframe 支援
 - [x] 啟動時帶圖片檔路徑會切到該檔所在資料夾並選取該檔 — test `opening_a_file_selects_it`

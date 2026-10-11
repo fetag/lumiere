@@ -405,7 +405,7 @@ pub fn cache_root() -> PathBuf {
     let base = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
     // QuickLook-style: ~/Library/Caches/<bundle-id>/thumbs on macOS.
     #[cfg(target_os = "macos")]
-    let app = "net.fetag.Lumiere";
+    let app = "com.james.Lumiere";
     #[cfg(not(target_os = "macos"))]
     let app = "Lumiere";
     base.join(app).join("thumbs")
