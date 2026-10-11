@@ -377,6 +377,11 @@ pub struct App {
 
     pub tree: TreeModel,
     pub tree_selected: Option<usize>,
+    /// The grid cell / tree row that has keyboard focus, if any; kept in sync
+    /// with egui's focus each frame so arrow keys move selection and focus
+    /// together.
+    pub grid_focus: Option<usize>,
+    pub tree_focus: Option<usize>,
 
     pub caches: Caches,
     pub loader: Loader,
@@ -410,6 +415,10 @@ pub struct App {
     pub settings_open: bool,
     /// Whether an egui text edit owns the keyboard right now.
     pub text_focused: bool,
+    /// The text fields laid out during the current frame; `text_focused` is
+    /// recomputed from these at the end of the frame, so a focused grid cell
+    /// or toolbar button does not withdraw the menu's key equivalents.
+    pub text_field_ids: Vec<egui::Id>,
     pub about_open: bool,
     pub explore_open: bool,
     pub explore_path: PathBuf,
@@ -495,6 +504,8 @@ impl App {
             anchor: 0,
             tree: TreeModel::new(),
             tree_selected: None,
+            grid_focus: None,
+            tree_focus: None,
             caches: Caches::default(),
             loader: Loader::new(4),
             sort: SortKey::Name,
@@ -520,6 +531,7 @@ impl App {
             fullscreen: false,
             settings_open: false,
             text_focused: false,
+            text_field_ids: Vec::new(),
             about_open: false,
             explore_open: false,
             explore_path: dir.clone(),
@@ -1436,6 +1448,7 @@ impl App {
                 [(ui.available_width() - 190.0).max(120.0), 20.0],
                 egui::TextEdit::singleline(&mut self.path_edit).font(egui::FontId::monospace(12.0)),
             );
+            self.text_field_ids.push(response.id);
             if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 navigate = Some(PathBuf::from(self.path_edit.trim()));
             }
@@ -1449,6 +1462,7 @@ impl App {
                 [90.0, 20.0],
                 egui::TextEdit::singleline(&mut self.filter_edit),
             );
+            self.text_field_ids.push(filter_response.id);
             theme::note_rect(ui, "Files filter", filter_response.rect);
             let filter_lost_focus = filter_response.lost_focus();
             if filter_lost_focus && self.filter_edit != self.filter {
@@ -1716,6 +1730,7 @@ impl App {
                         .desired_width(320.0)
                         .cursor_at_end(true),
                 );
+                self.text_field_ids.push(response.id);
                 response.request_focus();
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -1906,6 +1921,7 @@ impl App {
                         .desired_width(320.0)
                         .cursor_at_end(true),
                 );
+                self.text_field_ids.push(response.id);
                 response.request_focus();
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -2004,6 +2020,10 @@ impl eframe::App for App {
 impl App {
     /// One frame of UI, usable from tests as well as the eframe backend.
     pub fn draw(&mut self, ctx: &Context) {
+        // The text fields are re-collected as the panels are laid out; a
+        // focused button or grid cell must not count as "typing".
+        self.text_field_ids.clear();
+
         let title = self.title();
         if title != self.last_title {
             self.last_title = title.clone();
@@ -2067,7 +2087,6 @@ impl App {
         // AppKit offers key equivalents to the menu bar before the window ever
         // sees the key, so a menu that claims `⌘A` or Return would take them away
         // from an egui text field that is open. Track who owns the keyboard.
-        self.text_focused = ctx.memory(|m| m.focused().is_some());
         self.handle_keys(ctx);
         self.tick_slideshow(ctx);
 
@@ -2161,6 +2180,13 @@ impl App {
         self.rename_window(ctx);
         self.transfer_window(ctx);
         self.confirm_trash_window(ctx);
+
+        // Only a real text field holding the focus withdraws the menu's key
+        // equivalents; a focused button, grid cell or tree row does not.
+        self.text_focused = self
+            .text_field_ids
+            .iter()
+            .any(|id| ctx.memory(|m| m.focused() == Some(*id)));
     }
 }
 
@@ -2690,24 +2716,199 @@ mod tests {
 
         // The tree is handed to the platform in the frame's output, so this is
         // what a screen reader would have been told.
-        let names: Vec<String> = frame
+        let update = frame
             .platform_output
             .accesskit_update
             .as_ref()
-            .map(|update| {
-                update
-                    .nodes
-                    .iter()
-                    .filter_map(|(_, node)| node.label().map(str::to_owned))
-                    .collect()
-            })
-            .unwrap_or_default();
+            .expect("accesskit is enabled");
+        let names: Vec<String> = update
+            .nodes
+            .iter()
+            .filter_map(|(_, node)| node.label().map(str::to_owned))
+            .collect();
         for name in ["one.png", "two.png", "three.png"] {
             assert!(
                 names.iter().any(|read| read.starts_with(name)),
                 "{name} is not announced; the tree says {names:?}"
             );
         }
+
+        // A cell reads like a list item: named, with the type and size in the
+        // value, and carrying the selection state.
+        let find = |name: &str| -> &egui::accesskit::Node {
+            update
+                .nodes
+                .iter()
+                .find(|(_, node)| {
+                    node.label() == Some(name) && node.role() == egui::accesskit::Role::ListItem
+                })
+                .map(|(_, node)| node)
+                .unwrap_or_else(|| panic!("no list item labelled {name}; tree says {names:?}"))
+        };
+        let folder = find("nested");
+        assert_eq!(folder.role_description(), Some("folder"));
+        assert_eq!(folder.value(), Some("Folder"));
+        assert_eq!(folder.is_selected(), Some(true), "the selected entry");
+
+        let image = find("one.png");
+        assert_eq!(image.role_description(), Some("image"));
+        assert!(
+            image.value().is_some_and(|value| value.starts_with("PNG")),
+            "the type and size should be in the value: {:?}",
+            image.value()
+        );
+        assert_eq!(image.is_selected(), Some(false));
+
+        // The toolbar buttons read as buttons, not one nameless canvas.
+        let refresh = update
+            .nodes
+            .iter()
+            .find(|(_, node)| {
+                node.label() == Some("Refresh") && node.role() == egui::accesskit::Role::Button
+            })
+            .map(|(_, node)| node)
+            .expect("the toolbar button is missing from the tree");
+        assert!(refresh.supports_action(egui::accesskit::Action::Click));
+        assert!(refresh.supports_action(egui::accesskit::Action::Focus));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// With a cell focused, the arrow keys move the selection and the focus
+    /// ring together and Enter opens it, so the grid is fully operable
+    /// without a pointer.
+    #[test]
+    fn arrow_keys_and_enter_operate_the_focused_grid() {
+        let dir = fixture_dir("a11ykeys");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+
+        let mut time = 1.0;
+        let mut frame = |app: &mut App, events: Vec<egui::Event>| {
+            time += 0.4;
+            let mut input = raw_input();
+            input.time = Some(time);
+            input.events = events;
+            ctx.run(input, |ctx| app.draw(ctx))
+        };
+        let key = |key: egui::Key| egui::Event::Key {
+            key,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+            repeat: false,
+            physical_key: None,
+        };
+
+        // Lay the cells out once so they can receive focus.
+        let output = frame(&mut app, vec![]);
+        let ring_color = ctx.style().visuals.hyperlink_color;
+        // The ring is a stroked rect; scan the frame's shapes for it.
+        let ring_is_drawn = |output: &egui::FullOutput| {
+            output
+                .shapes
+                .iter()
+                .any(|shape| matches!(&shape.shape, egui::Shape::Rect(rect) if rect.stroke.color == ring_color))
+        };
+        assert!(!ring_is_drawn(&output), "nothing is focused yet");
+
+        // Focus the first cell, as a Tab press or a screen reader would.
+        ctx.memory_mut(|m| m.request_focus(crate::browser::grid_cell_id(0)));
+        let output = frame(&mut app, vec![]);
+        assert!(
+            ring_is_drawn(&output),
+            "the focused cell should draw the ring"
+        );
+
+        // ArrowRight moves the selection and the focus ring together.
+        frame(&mut app, vec![key(egui::Key::ArrowRight)]);
+        assert_eq!(app.selected, 1);
+        assert_eq!(
+            ctx.memory(|m| m.focused()),
+            Some(crate::browser::grid_cell_id(1)),
+            "the focus ring must follow the selection"
+        );
+
+        // ArrowDown jumps a whole row; the fixture's four entries share one
+        // row, so it clamps to the last one.
+        frame(&mut app, vec![key(egui::Key::ArrowDown)]);
+        assert_eq!(app.selected, 3);
+
+        // Enter opens what is selected.
+        frame(&mut app, vec![key(egui::Key::Enter)]);
+        assert_eq!(app.mode, Mode::Viewer);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The folder sidebar is driven the same way: the arrow keys move the
+    /// focused row, and the row opens and closes from the keyboard.
+    #[test]
+    fn arrow_keys_operate_the_folder_tree() {
+        let dir = fixture_dir("a11ytree");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+
+        let mut time = 1.0;
+        let mut frame = |app: &mut App, events: Vec<egui::Event>| {
+            time += 0.4;
+            let mut input = raw_input();
+            input.time = Some(time);
+            input.events = events;
+            ctx.run(input, |ctx| app.draw(ctx))
+        };
+        let key = |key: egui::Key| egui::Event::Key {
+            key,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+            repeat: false,
+            physical_key: None,
+        };
+
+        // The sidebar starts with its roots; pick one that really has folders
+        // so there is something to open and close.
+        let rows = app.tree.visible();
+        let root = rows
+            .iter()
+            .find(|(index, _)| {
+                let path = app.tree.node(*index).path.clone();
+                std::fs::read_dir(&path)
+                    .is_ok_and(|entries| entries.flatten().any(|entry| entry.path().is_dir()))
+            })
+            .map(|(index, _)| *index)
+            .expect("a root with folders");
+        let root_pos = rows.iter().position(|(index, _)| *index == root).unwrap();
+        assert!(root_pos + 1 < rows.len());
+
+        frame(&mut app, vec![]);
+        ctx.memory_mut(|m| m.request_focus(crate::browser::tree_row_id(root)));
+        frame(&mut app, vec![]);
+
+        // ArrowRight opens the row, loading its children, and the focus
+        // stays on the row the whole time.
+        frame(&mut app, vec![key(egui::Key::ArrowRight)]);
+        assert!(app.tree.node(root).expanded);
+        assert!(
+            app.tree.visible().len() > rows.len(),
+            "the children should now be visible"
+        );
+        assert_eq!(
+            ctx.memory(|m| m.focused()),
+            Some(crate::browser::tree_row_id(root))
+        );
+
+        // ArrowLeft closes the row again.
+        frame(&mut app, vec![key(egui::Key::ArrowLeft)]);
+        assert!(!app.tree.node(root).expanded);
+
+        // ArrowDown moves the row and the focus together.
+        frame(&mut app, vec![key(egui::Key::ArrowDown)]);
+        let rows = app.tree.visible();
+        let expected = rows[root_pos + 1].0;
+        assert_eq!(app.tree_selected, Some(expected));
+        assert_eq!(
+            ctx.memory(|m| m.focused()),
+            Some(crate::browser::tree_row_id(expected))
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

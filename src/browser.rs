@@ -8,12 +8,109 @@ use crate::imaging;
 use crate::loader::Kind;
 use crate::theme::{self, Icon};
 
+/// The stable identity of a grid cell, so focus requests and focus tracking
+/// keep working even when the list re-sorts or re-scans.
+pub(crate) fn grid_cell_id(index: usize) -> egui::Id {
+    egui::Id::new("lumiere grid cell").with(index)
+}
+
+/// The stable identity of a folder-tree row.
+pub(crate) fn tree_row_id(index: usize) -> egui::Id {
+    egui::Id::new("lumiere tree row").with(index)
+}
+
+/// The arrow keys act on the focused pane's rows/cells and must not be
+/// hijacked by egui's own directional focus search, so each pane locks them
+/// for the focused row. Tab and Escape stay free, so the user can still
+/// leave the pane or drop the focus.
+fn focus_lock() -> egui::EventFilter {
+    egui::EventFilter {
+        horizontal_arrows: true,
+        vertical_arrows: true,
+        ..Default::default()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Left pane: folder tree
 // ---------------------------------------------------------------------------
 
 pub fn tree_pane(app: &mut App, ui: &mut Ui) {
-    let items = app.tree.visible();
+    // Which row (if any) holds the keyboard focus right now; `None` also
+    // covers "focus is on something else entirely". The tracker is kept in
+    // step with the live focus.
+    let visible = app.tree.visible();
+    let focused_row = match ui.ctx().memory(|m| m.focused()) {
+        Some(focused_id) => visible
+            .iter()
+            .find(|(index, _)| tree_row_id(*index) == focused_id)
+            .map(|(index, _)| *index),
+        None => None,
+    };
+    app.tree_focus = focused_row;
+
+    // Row navigation, only while a tree row is the one that has focus.
+    if focused_row.is_some() {
+        let mut delta: Option<isize> = None;
+        let mut open = false;
+        let mut collapse = false;
+        let mut expand = false;
+        ui.ctx().input_mut(|i| {
+            if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
+                delta = Some(1);
+            } else if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
+                delta = Some(-1);
+            } else if i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
+                open = true;
+            } else if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight) {
+                expand = true;
+            } else if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft) {
+                collapse = true;
+            }
+        });
+
+        if open {
+            if let Some(index) = focused_row {
+                app.tree_selected = Some(index);
+                app.tree.ensure_loaded(index);
+                app.tree.set_expanded(index, true);
+                app.set_dir(app.tree.node(index).path.clone());
+            }
+        }
+        if expand || collapse {
+            if let Some(index) = focused_row {
+                if app.tree.node(index).has_children || !app.tree.node(index).loaded {
+                    // Load the children first, exactly like the expander's
+                    // click does, so an opened row actually reveals them.
+                    app.tree.ensure_loaded(index);
+                    app.tree.set_expanded(index, expand);
+                }
+                // Keep the focus on the row while it opens or closes; the
+                // search the arrow would otherwise start is cancelled.
+                ui.ctx()
+                    .memory_mut(|m| m.move_focus(egui::FocusDirection::None));
+            }
+        }
+        if let Some(delta) = delta {
+            let count = visible.len() as isize;
+            if count > 0 {
+                let row = focused_row
+                    .map(|index| visible.iter().position(|(i, _)| *i == index).unwrap_or(0))
+                    .unwrap_or(0);
+                let next = (row as isize + delta).clamp(0, count - 1) as usize;
+                let index = visible[next].0;
+                app.tree_selected = Some(index);
+                // The row follows the selection, and egui's own directional
+                // focus search is cancelled so the two never drift apart.
+                ui.ctx().memory_mut(|m| {
+                    m.move_focus(egui::FocusDirection::None);
+                    m.request_focus(tree_row_id(index));
+                });
+            }
+        }
+    }
+
+    let items = visible;
 
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -80,14 +177,33 @@ pub fn tree_pane(app: &mut App, ui: &mut Ui) {
                             .selectable(false)
                             .truncate(),
                     );
-                    let text_response = ui.interact(
-                        text_response.rect,
-                        ui.id().with(("tree", index)),
-                        Sense::click(),
-                    );
+                    let row_id = tree_row_id(index);
+                    let text_response = ui.interact(text_response.rect, row_id, Sense::click());
+
+                    // A screen reader should hear this row the way Finder's
+                    // sidebar rows are heard: a named, selectable tree item
+                    // whose children are opened or closed.
                     ui.ctx().accesskit_node_builder(text_response.id, |node| {
+                        node.set_role(egui::accesskit::Role::TreeItem);
                         node.set_label(label.as_str());
+                        node.set_selected(selected);
+                        if may_have_children {
+                            node.set_expanded(expanded);
+                        }
                     });
+
+                    // Keyboard focus lands here through Tab or a screen
+                    // reader; remember it, ring it, and lock the arrows so
+                    // navigation stays inside the sidebar.
+                    if text_response.has_focus() {
+                        app.tree_focus = Some(index);
+                        theme::focus_ring(ui, text_response.rect, 2.0);
+                        ui.ctx()
+                            .memory_mut(|m| m.set_focus_lock_filter(row_id, focus_lock()));
+                    }
+                    if text_response.gained_focus() {
+                        ui.scroll_to_rect(text_response.rect, None);
+                    }
                     theme::note_rect(ui, &format!("tree:{label}"), text_response.rect);
                     if text_response.clicked() {
                         app.tree_selected = Some(index);
@@ -151,9 +267,26 @@ pub fn grid(app: &mut App, ui: &mut Ui) {
     let available_width = ui.available_width();
     let cols = ((available_width - 8.0) / cell_w).floor().max(1.0) as usize;
 
-    // Arrow key navigation, only when nothing is editing text.
-    if ui.ctx().memory(|m| m.focused().is_none()) {
+    let modifiers = ui.input(|i| click_modifiers(&i.events, i.modifiers));
+
+    // Which cell (if any) holds the keyboard focus right now, and keep the
+    // tracker in step with it. `None` covers both "no focus at all" and
+    // "focus is on something else entirely".
+    let focused_cell = match ui.ctx().memory(|m| m.focused()) {
+        Some(focused_id) => (0..app.entries.len()).find(|&index| grid_cell_id(index) == focused_id),
+        None => None,
+    };
+    app.grid_focus = focused_cell;
+
+    let mut click: Option<Click> = None;
+
+    // Arrow-key navigation, while nothing is editing text and either the grid
+    // has no focus at all or the focus is on one of its cells. Selection and
+    // keyboard focus move together, so a screen reader and a keyboard user
+    // always agree about what is picked.
+    if focused_cell.is_some() || ui.ctx().memory(|m| m.focused().is_none()) {
         let mut delta: Option<isize> = None;
+        let mut open = false;
         ui.ctx().input_mut(|i| {
             if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight) {
                 delta = Some(1);
@@ -163,8 +296,15 @@ pub fn grid(app: &mut App, ui: &mut Ui) {
                 delta = Some(cols as isize);
             } else if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
                 delta = Some(-(cols as isize));
+            } else if focused_cell.is_some()
+                && i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+            {
+                open = true;
             }
         });
+        if open {
+            click = Some(Click::Open(app.selected));
+        }
         if let Some(delta) = delta {
             let count = app.entries.len() as isize;
             if count > 0 {
@@ -175,16 +315,21 @@ pub fn grid(app: &mut App, ui: &mut Ui) {
                 app.multi.clear();
                 app.multi.insert(app.selected);
                 app.scroll_to_selected = true;
+                // egui's own directional focus search would otherwise fire in
+                // the same frame and drag the focus to some neighbouring
+                // widget, out of step with the selection; cancel it and pin
+                // the focus to the cell the selection just moved to.
+                ui.ctx().memory_mut(|m| {
+                    m.move_focus(egui::FocusDirection::None);
+                    m.request_focus(grid_cell_id(app.selected));
+                });
             }
         }
     }
 
-    let modifiers = ui.input(|i| click_modifiers(&i.events, i.modifiers));
-
-    // Move the entry list out of `app` so the cells can mutate the caches.
+    // Take the entry list out of `app` so the cells can mutate the caches.
     let entries = std::mem::take(&mut app.entries);
     let rows = entries.len().div_ceil(cols);
-    let mut click: Option<Click> = None;
     let mut visible_rows = 0..0;
     if app.scroll_to_selected {
         app.scroll_to_selected = false;
@@ -300,21 +445,47 @@ fn thumbnail(
     modifiers: egui::Modifiers,
 ) -> Option<Click> {
     let size = cell.thumb;
-    let (rect, response) = ui.allocate_exact_size(vec2(cell.w, cell.h), Sense::click());
-    if !ui.is_rect_visible(rect) {
+    let (rect, _) = ui.allocate_exact_size(vec2(cell.w, cell.h), Sense::hover());
+    let response = ui.interact(rect, grid_cell_id(index), Sense::click());
+    if !ui.is_rect_visible(rect) && !response.has_focus() {
         return None;
     }
 
     let selected = app.multi.contains(&index) || app.selected == index;
     // The grid is painted rather than built from widgets, so without this the
-    // whole browser area is silent to VoiceOver.
-    ui.ctx().accesskit_node_builder(response.id, |node| {
-        node.set_label(format!(
+    // whole browser area is silent to VoiceOver. Each cell is a named list
+    // item that a screen reader can select, and it announces the entry's
+    // type and size in the value, the way a Finder cell does.
+    let value = if entry.is_dir {
+        "Folder".to_owned()
+    } else {
+        format!(
             "{}, {}",
-            entry.name,
-            if selected { "selected" } else { "item" }
-        ));
+            imaging::extension(&entry.path).to_uppercase(),
+            imaging::human_bytes(entry.size)
+        )
+    };
+    ui.ctx().accesskit_node_builder(response.id, |node| {
+        node.set_role(egui::accesskit::Role::ListItem);
+        node.set_role_description(if entry.is_dir { "folder" } else { "image" });
+        node.set_label(entry.name.as_str());
+        node.set_value(value.as_str());
+        node.set_selected(selected);
     });
+
+    // Keyboard focus lands here through Tab or a screen reader; remember it,
+    // ring it, and lock the arrows so the selection — not some neighbouring
+    // widget — follows the keys.
+    if response.has_focus() {
+        app.grid_focus = Some(index);
+        theme::focus_ring(ui, rect, 2.0);
+        ui.ctx()
+            .memory_mut(|m| m.set_focus_lock_filter(response.id, focus_lock()));
+    }
+    if response.gained_focus() {
+        ui.scroll_to_rect(rect, None);
+    }
+
     let painter = ui.painter();
 
     // The selection is the adaptive tint, not a fixed colour: pale blue in

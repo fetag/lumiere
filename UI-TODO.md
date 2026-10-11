@@ -78,16 +78,38 @@
     - live 驗證（AX）：AXPress 觸發 File ▸ Move to Trash → NSAlert 顯示 `Move to Trash`／`Move "sub" to the Trash?`，按鈕 Move to Trash／Cancel，Cancel `AXFocused=1`；按 Cancel 後檔案原封不動、無殘留視窗；Select All＋Move to Trash → `Move 3 items to the Trash?`＋1./2./3. 列出三張圖；按 Move to Trash 後三檔離開目錄（進垃圾桶）、未選取的資料夾保留、grid 自動 rescan；主視窗 `⌘⌫`（key code 51＋Command）直接觸發。本環境 keystroke 送不到 modal alert（同 P0-4 的 NSOpenPanel 限制），default 鍵語義改以 `AXFocused` 屬性驗證。
     - 留給後面的（未動）：右鍵選單的 `Open with default app` 文案與整體排序（P1-4）；批次結果仍是單一 toast，失敗檔案清單＋Show in Finder／Retry 留給狀態回饋項（P1-6）。
 
-- [ ] **建立最小可用的原生 Accessibility 基礎。**
+- [x] **建立最小可用的原生 Accessibility 基礎。**
   - 現況／依據：README 的 Testing 段落明載「egui windows 沒有 native accessibility elements」；`src/browser.rs` 的縮圖、`src/viewer.rs` 的浮動工具列與 `src/theme.rs` 的 `draw_icon` 圖示皆由 canvas 繪製。
   - 實作方向：為所有 command 提供可被 macOS Accessibility API 揭露的名稱、role、value、enabled/selected state 與 keyboard focus；縮圖需有檔名、類型、尺寸與選取狀態；canvas 圖示不可成為唯一可操作入口。若框架無法支援，將核心導航、列表、按鈕和對話框改為原生控制項或補一層 NSAccessibility bridge。
   - 驗收：VoiceOver 可依序讀出工具列／縮圖／側欄／Inspector 的名稱與狀態，並可用鍵盤啟動；macOS Accessibility Inspector 可看到可辨識的 controls，而非單一 canvas；焦點環清楚可見。
-  - 進度（尚未驗收完）：
-    - 所有 command 現在都在原生選單列裡，因此名稱、快捷鍵、✓ 狀態、enabled 都由 AppKit 揭露，不需要自己 bridge；這是最主要的一塊。
-    - egui 端（AccessKit 是 eframe 的預設 feature）已補上標籤：縮圖格子上報「檔名, selected/item」（`src/browser.rs`）、側欄樹節點上報資料夾名稱、視窗內選單項目的 accessible name 只唸命令名稱，快捷鍵改放 `AXKeyboardShortcut`（`src/app.rs` 的 `menu_items`）。
-    - 測試 `thumbnails_are_readable_by_accessibility` 會檢查 AccessKit tree 是否包含各檔名。
-    - 主工具列與 viewer 浮動工具列的圖示按鈕現在都有 accessible name（P0-3 的 `theme::tool_button` 加上 `accesskit_node_builder` label），不再只有 tooltip。
-    - **仍缺**：焦點環（keyboard focus ring）沒有視覺呈現，`role`/`value`/`selected` 大部分未設定。需要以 VoiceOver 與 Accessibility Inspector 手動驗收後才能標記完成。
+  - 已完成（交接）：
+    - 所有 command 都在原生選單列裡（P0-1／P0-2），名稱、快捷鍵、✓、enabled 全由 AppKit 揭露，不需要自己 bridge。egui 端（AccessKit 是 eframe 預設 feature）補齊 role／label／value／selected／expanded：
+      - 縮圖格子（`src/browser.rs`）→ `Role::ListItem`（macOS 上呈為 `AXGroup`，item-like 所以暴露 `AXSelected`）＋`set_role_description("image"/"folder")`＋`set_label(檔名)`＋`set_value("PNG, 160 B")`／`"Folder"`＋`set_selected`。
+      - 側欄樹列 → `Role::TreeItem`（macOS 上呈為 `AXRow`）＋`set_label(資料夾名)`＋`set_selected`＋有子資料夾時 `set_expanded`。
+      - 工具列按鈕（`theme::tool_button`）→ `Role::Button`＋`set_label`（P0-3 已加 label，本次補 role）。
+      - viewer canvas → `Role::Image`＋`set_label(檔名)`＋`set_value("64 x 48 px, 1804%")`；載入中／失敗時 value 為 `loading`／`failed to load`。
+    - **焦點環**：`theme::focus_ring(ui, rect, radius)` — 2 px 描邊畫在 `rect.expand(2.0)`，顏色用 `visuals.hyperlink_color`（系統強調色，明暗模式皆適配，與 Finder 一致）。grid cell、tree row、tool_button 在 `has_focus()` 時畫。
+    - **鍵盤模型**：格子與樹列改用 `ui.interact(rect, 穩定 id, Sense::click())` 取得焦點（點擊不聚焦，keyboard-only focus）。穩定 id：`grid_cell_id(index)`／`tree_row_id(index)`（`Id::new("lumiere grid cell"/"lumiere tree row").with(index)`），rescan／重排後焦點追蹤不失聯。
+      - grid：有 cell 焦點（或完全沒焦點）時箭頭鍵移動 selected＋anchor＋multi 並同步 `request_focus` 到新格子；`Enter`（僅 cell 有焦點時）開啟選取項。
+      - tree：僅有 row 焦點時活躍；Up/Down 移列（選取與焦點一起走）、Right/Left 展開／收合（先 `ensure_loaded` 再 `set_expanded`，與 expander 點擊行為一致）、`Enter` 開啟資料夾。
+      - **工具列按鈕刻意不鎖箭頭鍵**：讓箭頭在相鄰按鈕間移動，這是原生 toolbar 的行為。
+    - **egui 箭頭鍵劫持的解法（重要）**：egui `begin_pass` 會從箭頭鍵設定 `focus_direction`，`end_pass` 的方向搜尋（±45°）會**覆蓋**我們 mid-frame 的 `request_focus`。解法：鍵盤區塊 consume 箭頭後呼叫 `m.move_focus(egui::FocusDirection::None)`＋`m.request_focus(target)` 取消該幀劫持；同時對焦點 cell/row 每幀 `set_focus_lock_filter`（`EventFilter { horizontal_arrows, vertical_arrows: true }`）作雙保險。Tab 與 Escape 保持自由，可離開 pane 或丟掉焦點。
+    - **`text_focused` 修正**（`src/app.rs`）：4 個 TextEdit（path bar、filter、rename、transfer）的 `response.id` 收錄到 `App.text_field_ids`（draw 開始時 clear），draw 結束時才算 `text_focused`＝焦點是否落在這些 id 上。舊的 `m.focused().is_some()` 會讓「焦點在 grid cell」時把選單的 key equivalents 撤掉；現在焦點在按鈕／cell／row 上時 `⌘A`、`Return` 等仍交給選單列。
+    - viewer 的 `No image selected`／`Loading...`／`Failed to load image` 改為真實 `Label`（`status_label` helper：`ui.new_child`＋`Layout::centered_and_justified(TopDown)`＋`id_salt("viewer_status")`），狀態對輔助技術可見，不再是畫在 canvas 上的像素。
+    - **測試**（headless，54 passed，`cargo fmt --check`、`cargo clippy --all-targets` 全綠）：
+      - `thumbnails_are_readable_by_accessibility` 擴充：斷言 role（ListItem/TreeItem/Button）、role_description（image/folder）、value（"Folder"、`PNG, 160 B` 格式）、is_selected；Refresh 按鈕有 Click＋Focus actions。
+      - 新增 `arrow_keys_and_enter_operate_the_focused_grid`：焦點環有／無斷言（掃 shapes 找環色描邊）、ArrowRight 後 selected 與 focus 同移到 cell 1、ArrowDown clamp 到最後一格、Enter 進 Viewer。
+      - 新增 `arrow_keys_operate_the_folder_tree`：選一個有子資料夾的 root，ArrowRight 展開並載入 children、ArrowLeft 收合、ArrowDown 移列且 focus 跟隨。
+    - **實機 AX 驗證**（遵循先前條目慣例：headless 不足夠，用 Swift AX C API 快照 walker 對 `target/release/lumiere` 實跑——AppleScript `entire contents` 會與 accesskit 每幀重建競態）：
+      - 縮圖格 = `AXGroup`＋value（"PNG, 160 B"/"Folder"）＋`AXSelected`；側欄 9 個 `AXRow` 帶資料夾名；35 個具名 `AXButton`；2 個 `AXTextField`。
+      - accesskit 的 Focus action 可設 `AXFocused`；`AXPress` 格子 → `AXSelected=true`。
+      - grid 鍵盤：ArrowRight 選取＋焦點同步移動；ArrowDown clamp 到最後一格；Enter 開 Viewer（canvas 呈為 `AXImage`，label="two.png"、value="64 x 48 px, 1804%"，12 個具名 HUD 按鈕）；Escape 回瀏覽器。
+      - tree 鍵盤：Focus "Documents" `AXRow` → `AXFocused` 落在 row 上；ArrowDown 焦點＋選取移到 "Downloads"（`AXSelected=true`）；ArrowRight 展開並載入子資料夾（7 個新 row）；ArrowLeft 收合。
+      - 環境筆記：process 名小寫 `lumiere`；`System Events key code` 對主視窗有效（對 modal panel 無效，同 P0-4）；`CGEvent` 直接 post key 在本環境送不進去，用 `osascript -e 'tell application "System Events" to key code N'`。
+    - **已知邊角案例**：
+      - `set_focus_lock_filter` 要求 `had_focus_last_frame`，所以鎖鍵從焦點的第二幀起才生效；首幀的箭頭已由 mid-frame 的 `move_focus(None)` 補平，實測無漂移。
+      - 未鎖箭頭的 non-pane widget（如樹列 expander 小按鈕）若拿到焦點，按箭頭會走 egui 的方向搜尋；Tab／Escape 可恢復。屬可接受的最小基礎範圍，若要更嚴密可在每個 widget 統一鎖鍵。
+    - **留給使用者的手動走查**（工具無法代勞的部分）：開 VoiceOver 完整依序讀一遍工具列→側欄→縮圖→Inspector，確認讀法與跳動順手；用 macOS Accessibility Inspector 視覺確認控件樹與焦點環外觀。
   - 順帶修掉一個會讓人以為 App 沒啟動的問題：`state.ini` 記的視窗位置若在已拔掉的螢幕上，視窗會恢复到螢幕外。`src/window.rs` 現在用 `NSScreen` 檢查位置是否還在任何顯示器內，不在就交給系統決定位置。
 
 ## P1 — 讓瀏覽與看圖像一個現代 macOS App

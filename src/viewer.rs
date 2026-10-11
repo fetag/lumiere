@@ -11,13 +11,11 @@ use crate::theme::{self, Icon};
 
 pub fn view(app: &mut App, ui: &mut Ui) {
     let Some(path) = app.current_image_path() else {
-        let rect = ui.available_rect_before_wrap();
-        ui.painter().text(
-            rect.center(),
-            Align2::CENTER_CENTER,
+        status_label(
+            ui,
+            ui.available_rect_before_wrap(),
             "No image selected",
-            FontId::proportional(14.0),
-            Color32::WHITE,
+            app,
         );
         return;
     };
@@ -37,19 +35,34 @@ pub fn view(app: &mut App, ui: &mut Ui) {
     let canvas = ui.available_rect_before_wrap();
     let response = ui.allocate_rect(canvas, Sense::click_and_drag());
 
+    // The canvas is one big drawn picture; tell the accessibility tree what
+    // it is and what is on it, the way a native image well would.
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_owned();
+
     let Some((texture, width, height)) = cached else {
-        let label = if app.caches.full_failed(&path) {
-            "Failed to load image"
-        } else {
-            "Loading..."
-        };
-        ui.painter().text(
-            canvas.center(),
-            Align2::CENTER_CENTER,
-            label,
-            FontId::proportional(14.0),
-            Color32::WHITE,
+        status_label(
+            ui,
+            canvas,
+            if app.caches.full_failed(&path) {
+                "Failed to load image"
+            } else {
+                "Loading..."
+            },
+            app,
         );
+        ui.ctx().accesskit_node_builder(response.id, |node| {
+            node.set_role(egui::accesskit::Role::Image);
+            node.set_label(file_name.as_str());
+            if app.caches.full_failed(&path) {
+                node.set_value("failed to load");
+            } else {
+                node.set_value("loading");
+            }
+        });
         draw_toolbar(app, ui, canvas);
         return;
     };
@@ -97,6 +110,14 @@ pub fn view(app: &mut App, ui: &mut Ui) {
         app.zoom
     };
 
+    // Now that the size and zoom are known, complete the canvas' description.
+    let value = format!("{width} x {height} px, {:.0}%", zoom * 100.0);
+    ui.ctx().accesskit_node_builder(response.id, |node| {
+        node.set_role(egui::accesskit::Role::Image);
+        node.set_label(file_name.as_str());
+        node.set_value(value.as_str());
+    });
+
     // ---- draw -------------------------------------------------------------
 
     let center = canvas.center() + app.pan;
@@ -131,6 +152,26 @@ pub fn view(app: &mut App, ui: &mut Ui) {
             Color32::WHITE
         },
     );
+}
+
+/// A status line as a real, accessible `Label` centred on the canvas, so a
+/// screen reader hears "Loading..." or "Failed to load image" instead of a
+/// painted patch of pixels.
+fn status_label(ui: &mut Ui, rect: Rect, text: &str, app: &App) {
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::centered_and_justified(
+                egui::Direction::TopDown,
+            ))
+            .id_salt("viewer_status"),
+    );
+    let color = if app.canvas_dark {
+        Color32::from_gray(200)
+    } else {
+        Color32::WHITE
+    };
+    child.label(egui::RichText::new(text).color(color).size(14.0));
 }
 
 fn paint_rotated(

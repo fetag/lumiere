@@ -130,8 +130,16 @@ pub fn tool_button(ui: &mut Ui, glyph: Icon, title: &str, enabled: bool) -> Resp
     // The icon is drawn, not a text widget, so name it for the accessibility
     // tree the way a native toolbar button would be.
     ui.ctx().accesskit_node_builder(response.id, |node| {
+        node.set_role(egui::accesskit::Role::Button);
         node.set_label(title);
     });
+
+    // A keyboard user reaches these buttons with Tab or the arrow keys; mark
+    // the one that has focus. Arrows are deliberately left un-locked so they
+    // step between the neighbouring buttons, as a native toolbar does.
+    if response.has_focus() {
+        focus_ring(ui, rect, 4.0);
+    }
 
     if ui.is_rect_visible(rect) {
         let visuals = ui.visuals();
@@ -167,6 +175,18 @@ pub fn tool_button(ui: &mut Ui, glyph: Icon, title: &str, enabled: bool) -> Resp
         draw_icon(p, rect.center(), 16.0, glyph, fg);
     }
     response.on_hover_text(title)
+}
+
+/// The visible keyboard focus ring: a 2px accent-blue outline just outside
+/// `rect`, in the system accent colour, so it stays readable in light and
+/// dark mode alike. Drawn for whatever control the keyboard is on.
+pub fn focus_ring(ui: &Ui, rect: Rect, radius: f32) {
+    ui.painter().rect_stroke(
+        rect.expand(2.0),
+        radius + 2.0,
+        Stroke::new(2.0, ui.visuals().hyperlink_color),
+        egui::StrokeKind::Outside,
+    );
 }
 
 /// The single subtle line between toolbar button groups.
