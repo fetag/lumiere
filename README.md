@@ -36,7 +36,7 @@ Session state (last folder, window size and position) is stored in
 - HEIC / HEIF / AVIF via macOS ImageIO (`src/imaging/macos.rs`, `objc2-image-io`)
 - EXIF via `kamadak-exif`
 - Delete moves to the macOS Trash (`trash` crate)
-- Thumbnail cache: `~/Library/Caches/Lumiere/thumbs`
+- Thumbnail cache: `~/Library/Caches/net.fetag.Lumiere/thumbs`
 
 ## Layout
 

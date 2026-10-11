@@ -390,7 +390,12 @@ pub fn write_exif_jpeg(path: &Path) -> std::io::Result<()> {
 
 pub fn cache_root() -> PathBuf {
     let base = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
-    base.join("Lumiere").join("thumbs")
+    // QuickLook-style: ~/Library/Caches/<bundle-id>/thumbs on macOS.
+    #[cfg(target_os = "macos")]
+    let app = "net.fetag.Lumiere";
+    #[cfg(not(target_os = "macos"))]
+    let app = "Lumiere";
+    base.join(app).join("thumbs")
 }
 
 fn fnv1a(bytes: &[u8], seed: u64) -> u64 {

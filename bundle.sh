@@ -22,7 +22,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleName</key>            <string>Lumiere</string>
     <key>CFBundleDisplayName</key>     <string>Lumiere</string>
     <key>CFBundleExecutable</key>      <string>Lumiere</string>
-    <key>CFBundleIdentifier</key>      <string>com.lumiere.Lumiere</string>
+    <key>CFBundleIdentifier</key>      <string>net.fetag.Lumiere</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleShortVersionString</key> <string>0.1.0</string>
     <key>CFBundleVersion</key>         <string>1</string>
