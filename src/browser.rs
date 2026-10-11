@@ -615,6 +615,13 @@ fn thumbnail(
 // ---------------------------------------------------------------------------
 
 pub fn preview_pane(app: &mut App, ui: &mut Ui) {
+    // egui sizes this panel from the content's used rect every frame, so the
+    // content must span exactly the panel's inner width and never exceed it;
+    // otherwise the pane drifts toward the width of whatever entry is
+    // selected (usually its long file name) instead of holding the width the
+    // user dragged it to.
+    ui.take_available_width();
+
     let Some(entry) = app.current().cloned() else {
         ui.label("No selection");
         return;
@@ -680,6 +687,9 @@ pub fn preview_pane(app: &mut App, ui: &mut Ui) {
     }
 
     ui.add_space(6.0);
+    // A long file name wraps to as many lines as it needs inside the pane's
+    // fixed width (egui also breaks single long words), so it can never push
+    // the pane wider.
     ui.label(egui::RichText::new(entry.name.clone()).strong().size(13.0));
     ui.label(format!(
         "{}  {}",
@@ -722,17 +732,34 @@ pub fn preview_pane(app: &mut App, ui: &mut Ui) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            egui::Grid::new("info_grid")
-                .num_columns(2)
-                .spacing([8.0, 3.0])
-                .striped(false)
-                .show(ui, |ui| {
-                    for (key, value) in rows {
+            // A Grid sizes its columns to the full, untruncated text, so a
+            // long path would push the pane wider. Each row is a fixed-width
+            // key plus a value that truncates at the pane's edge instead
+            // (the full value stays in the hover tooltip), so the values
+            // still line up while the pane keeps its width.
+            let key_font = egui::FontId::proportional(12.0);
+            let key_col = rows
+                .iter()
+                .map(|(key, _)| {
+                    ui.painter()
+                        .layout_no_wrap(key.clone(), key_font.clone(), egui::Color32::WHITE)
+                        .size()
+                        .x
+                })
+                .fold(0.0, f32::max)
+                .ceil();
+            for (key, value) in rows {
+                ui.horizontal(|ui| {
+                    ui.scope(|ui| {
+                        ui.set_min_width(key_col);
                         ui.label(egui::RichText::new(key).weak().size(12.0));
-                        ui.label(egui::RichText::new(value).size(12.0).monospace());
-                        ui.end_row();
-                    }
+                    });
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(value).size(12.0).monospace())
+                            .truncate(),
+                    );
                 });
+            }
         });
 }
 

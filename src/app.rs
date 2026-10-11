@@ -3078,7 +3078,6 @@ mod tests {
         app.about_open = false;
         app.act(Action::OpenFolder, &ctx);
         let text = painted_once(&ctx, &mut app, "Explore");
-        eprintln!("DBG explore<<{text}>>END");
         assert!(text.contains("Explore"));
 
         std::fs::remove_dir_all(&dir).unwrap();
@@ -3786,6 +3785,96 @@ mod tests {
         assert!(text.contains("Path"));
         assert!(text.contains("Dimensions"));
         assert!(text.contains("PNG"));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The preview pane must hold the width the user set (or the default)
+    /// instead of breathing with the selected entry: a long file name or
+    /// monospace path must not push the pane wider, and a narrow selection
+    /// must not shrink it. The sidebar is pinned the same way.
+    #[test]
+    fn preview_pane_holds_the_width_the_user_set() {
+        let dir = fixture_dir("previewwidth");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+
+        let width_of = |id: &str| {
+            ctx.data_mut(|d| {
+                d.get_persisted::<egui::containers::panel::PanelState>(egui::Id::new(id))
+            })
+            .map(|s| s.rect.width())
+        };
+
+        let mut time = 1.0;
+        let mut frame = |app: &mut App, events: Vec<egui::Event>| {
+            time += 0.4;
+            let mut input = raw_input();
+            input.time = Some(time);
+            input.events = events;
+            let _ = ctx.run(input, |ctx| app.draw(ctx));
+        };
+
+        // The default width holds, even though the fixture's path is long.
+        for _ in 0..4 {
+            frame(&mut app, vec![]);
+        }
+        assert_eq!(width_of("previewpane"), Some(280.0));
+
+        // Selecting an image (long monospace path in the metadata) does not
+        // change it.
+        app.selected = app.image_indices()[0];
+        for _ in 0..4 {
+            frame(&mut app, vec![]);
+        }
+        assert_eq!(width_of("previewpane"), Some(280.0));
+
+        // ... and neither does a folder with a very long name.
+        std::fs::create_dir_all(
+            dir.join("a_very_long_folder_name_that_keeps_going_and_going_1234567890"),
+        )
+        .unwrap();
+        app.rescan();
+        app.selected = app
+            .entries
+            .iter()
+            .position(|e| e.is_dir && e.name.starts_with("a_very_long"))
+            .unwrap();
+        for _ in 0..4 {
+            frame(&mut app, vec![]);
+        }
+        assert_eq!(width_of("previewpane"), Some(280.0));
+
+        // Drag the resize handle to widen the pane, as a user would. The pane
+        // is 280 wide on the 1280 px test screen, so its handle sits at
+        // x = 1000 (grab radius 6); press just inside the frame margin at
+        // x = 1003, out from under the grid's cells. The pane keeps its right
+        // edge, so the new width is |pointer.x - 1280|: dragging to x = 900
+        // widens it to 380.
+        let move_ptr = |x: f32| egui::Event::PointerMoved(egui::pos2(x, 400.0));
+        let button = |x: f32, pressed: bool| egui::Event::PointerButton {
+            pos: egui::pos2(x, 400.0),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(&mut app, vec![move_ptr(1003.0)]); // warm the pointer up
+        frame(&mut app, vec![move_ptr(1003.0), button(1003.0, true)]);
+        frame(&mut app, vec![move_ptr(900.0)]); // drag out to 380 px
+        frame(&mut app, vec![move_ptr(900.0), button(900.0, false)]);
+        frame(&mut app, vec![]);
+        assert_eq!(width_of("previewpane"), Some(380.0));
+
+        // The dragged width holds, no matter what is selected.
+        app.selected = app.image_indices()[0];
+        for _ in 0..4 {
+            frame(&mut app, vec![]);
+        }
+        assert_eq!(width_of("previewpane"), Some(380.0));
+
+        // The sidebar holds its default width too (its full-width ScrollArea
+        // already keeps the content from dictating the pane's width).
+        assert_eq!(width_of("foldertree"), Some(240.0));
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
