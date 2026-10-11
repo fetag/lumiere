@@ -46,10 +46,20 @@
     - egui 0.33 API 對接（本機只有 macOS target，跨平台路徑需人工檢查）：`CornerRadius.nw`（無 `.min`）、`Painter::rect` 多一個 `StrokeKind` 參數、`Align::LEFT`（無 `Align::Left`）、`Shape::Path(PathShape::closed_line)`（取代 `closed_polygon`）、`LayoutJob::single_section` 要 `String`、`Visuals` 非 `Copy`（`menu_row` 改用方法呼叫讀色，避免從 `Arc<Style>` move）。
     - 驗證：同一個 process 切 light→dark→light 皆即時重繪不重啟；browser（預設畫面）、viewer HUD、Options 對話框、About 視窗在明暗兩模式皆正常；`cargo fmt --check`、`cargo clippy --all-targets`、`cargo test`（47 passed）皆綠。
 
-- [ ] **以原生 Open/Save/選擇資料夾面板取代自製檔案瀏覽對話框。**
+- [x] **以原生 Open/Save/選擇資料夾面板取代自製檔案瀏覽對話框。**
   - 現況／依據：`src/app.rs:1511-1551` 的 `Explore Folder` 是自繪 `egui::Window`；`src/app.rs:1657-1708` 的 Move/Copy 以路徑文字欄位輸入目的地。
   - 實作方向：使用 `NSOpenPanel` 選擇一或多個檔案／資料夾，使用原生 directory chooser 選擇移動或複製目的地；記住最近使用位置，並顯示 Finder 可理解的檔案名稱與位置。保留自繪 UI 僅作無原生能力平台的 fallback。
   - 驗收：選資料夾、移動、複製都可用 Finder 樣式的原生面板完成；使用者不必輸入 POSIX 路徑；取消不改變目前資料夾或選取項目。
+  - 已完成（交接）：
+    - 新增 `src/panels.rs`：`PanelResult`（`Chose(PathBuf)`／`Cancelled`／`Unavailable`）與 `choose_directory(title, prompt, start)`。macOS 走 `NSOpenPanel::openPanel`＋`runModal`（modal、blocking；`runModal` 自己跑 AppKit event loop，egui canvas 在面板期間只是凍結在後面，等同原生 modal 的行為，egui 端不需要特別處理）。
+    - 依賴：`objc2-app-kit` 加 features `NSOpenPanel`／`NSPanel`／`NSSavePanel`／`NSWindow`（`NSResponder` 已有）；`objc2-foundation` 加 `NSURL`。
+    - `title`／`prompt`／`directoryURL`／`runModal` 在 `NSSavePanel` superclass 上（`trait_upcasting` 是 nightly-only），用指標重新解释 upcast（`Retained::as_ptr(&panel).cast::<NSSavePanel>()`，同 `src/menu/macos.rs` 的模式）。
+    - 測試安全門：`cfg!(test)` 直接回 `Unavailable`（test build 沒有 `NSApplication` run loop 可託 modal），加上 `MainThreadMarker::new()` 檢查。因此 headless 測試與非 macOS 都走 fallback：`explore_window`／`transfer_window` 完整保留，未改行為（現有測試 `app.transfer.is_some()`、「Explore」繪製檢查皆維持通過）。
+    - `App::act`：`OpenFolder` → 原生面板選完即 `set_dir`；`MoveToFolder`／`CopyToFolder` → 新的 `begin_transfer(copy)`：`Chose(dest)` 立刻 `apply_transfer`（會 `rescan`＋通知）、`Cancelled` 什麼都不做、`Unavailable` 回落到舊的 `start_transfer` 對話框。選取路徑邏輯抽成 `transfer_paths()`（multi 選取，否則目前項目）供兩條路共用。
+    - 每個 action 的面板文案：Open → title "Choose a Folder"、按鈕 "Choose"；Move → "Move to Folder"／"Move"；Copy → "Copy to Folder"／"Copy"。起始位置傳 `self.dir`（目前瀏覽的資料夾），符合 Finder 的 Open 慣例；「記住最近位置」以此實現（面板每次從目前資料夾開始）。
+    - 驗證（live，深色模式）：Open 面板為真 NSOpenPanel（側欄／檔案清單／路徑 popup／New Folder／Cancel／Choose，跟隨系統深色）；**複製 end-to-end**：Copy to Folder 面板經路徑 popup 導航到 Pictures、按 Copy → `1.jpg` 複製成功、原檔未動、browser `rescan` 後格中出现新檔；**Open end-to-end**：Choose a Folder 導航到 Pictures、按 Choose → browser 切到 `/Users/james/Pictures`（title、address bar、格、樹皆更新）；**取消**：面板關閉後 app 正常 idle、目前資料夾與選取不變、無 hang（`sample` 確認阻塞在 `-[NSSavePanel runModal]`，取消後正常返回）。
+    - 自動化操作注意：本環境下 `System Events` 的 `keystroke`／`key code` 送不到 modal 面板（Cmd+Shift+G、Cmd+↑ 皆無效，原因未明），但 **AXPress 可用**：面板在 AX 中是 Lumiere process 的 `AXDialog` 視窗，路徑 popup（`Where:` pop up button）、其 menu items、以及 New Folder/Cancel/Choose/Move/Copy 按鈕都可 `perform action "AXPress"`。側欄 row 的 AXPress 則不會觸發導航（要導航請用路徑 popup）。
+    - 跨平台 fallback 路徑（非 macOS 的 `Unavailable` stub）只能人工檢查（本機只有 `aarch64-apple-darwin` target）。
 
 - [ ] **把刪除流程改成 macOS「移到垃圾桶」語言與標準 destructive alert。**
   - 現況／依據：`src/app.rs:1736-1766` 使用標題 `Confirm Delete` 與 `Yes`/`No`；README 指出實際是用 `trash` crate 移至 Trash，功能意義與介面文案不一致。

@@ -695,8 +695,17 @@ impl App {
     pub fn act(&mut self, action: Action, ctx: &Context) {
         match action {
             Action::OpenFolder => {
-                self.explore_open = true;
-                self.explore_path = self.dir.clone();
+                match crate::panels::choose_directory("Choose a Folder", "Choose", Some(&self.dir))
+                {
+                    crate::panels::PanelResult::Chose(path) => self.set_dir(path),
+                    crate::panels::PanelResult::Cancelled => {}
+                    crate::panels::PanelResult::Unavailable => {
+                        // No native panel (other OS, or a test build): the built-in
+                        // folder browser.
+                        self.explore_open = true;
+                        self.explore_path = self.dir.clone();
+                    }
+                }
             }
             Action::OpenWithDefault => {
                 if let Some(path) = self.current_image_path() {
@@ -733,8 +742,8 @@ impl App {
                     self.rename_target = Some(entry.path.clone());
                 }
             }
-            Action::MoveToFolder => self.start_transfer(false),
-            Action::CopyToFolder => self.start_transfer(true),
+            Action::MoveToFolder => self.begin_transfer(false),
+            Action::CopyToFolder => self.begin_transfer(true),
             Action::GetInfo => {
                 self.inspector_tab = 1;
                 self.show_inspector = true;
@@ -1739,7 +1748,9 @@ impl App {
         }
     }
 
-    fn start_transfer(&mut self, copy: bool) {
+    /// The files/folders a transfer acts on: the multi-selection, or the
+    /// current entry when nothing is selected.
+    fn transfer_paths(&self) -> Vec<PathBuf> {
         let mut paths: Vec<PathBuf> = self
             .multi
             .iter()
@@ -1751,6 +1762,33 @@ impl App {
                 paths.push(entry.path.clone());
             }
         }
+        paths
+    }
+
+    /// Ask for a Move/Copy destination. On macOS a native directory chooser is
+    /// shown and the transfer happens as soon as the user picks a folder;
+    /// anywhere else the built-in dialog is shown and applied on confirm.
+    fn begin_transfer(&mut self, copy: bool) {
+        let paths = self.transfer_paths();
+        if paths.is_empty() {
+            return;
+        }
+        let (title, prompt) = if copy {
+            ("Copy to Folder", "Copy")
+        } else {
+            ("Move to Folder", "Move")
+        };
+        match crate::panels::choose_directory(title, prompt, Some(&self.dir)) {
+            crate::panels::PanelResult::Chose(dest) => self.apply_transfer(&paths, &dest, copy),
+            crate::panels::PanelResult::Cancelled => {}
+            crate::panels::PanelResult::Unavailable => self.start_transfer(copy),
+        }
+    }
+
+    /// Fallback (non-native) transfer: remember the pending paths and the
+    /// destination the user will type, applied when the dialog confirms.
+    fn start_transfer(&mut self, copy: bool) {
+        let paths = self.transfer_paths();
         if paths.is_empty() {
             return;
         }

@@ -6,6 +6,7 @@ mod fsmodel;
 mod imaging;
 mod loader;
 mod menu;
+mod panels;
 mod state;
 mod theme;
 mod viewer;

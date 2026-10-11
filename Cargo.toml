@@ -36,8 +36,12 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSEvent",
     "NSMenu",
     "NSMenuItem",
+    "NSOpenPanel",
+    "NSPanel",
     "NSResponder",
+    "NSSavePanel",
     "NSScreen",
+    "NSWindow",
 ] }
 objc2-core-foundation = "0.3.2"
 objc2-core-graphics = { version = "0.3.2", features = [
@@ -51,6 +55,7 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSObjCRuntime",
     "NSString",
     "NSProcessInfo",
+    "NSURL",
 ] }
 objc2-image-io = "0.3.2"
 
