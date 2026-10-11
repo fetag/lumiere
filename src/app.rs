@@ -7,11 +7,11 @@ use std::time::{Duration, Instant};
 
 use egui::{Context, TextureHandle, TextureOptions, Vec2};
 
-use crate::classic::{self, Icon};
 use crate::fsmodel::{self, Entry, SortKey, TreeModel};
 use crate::imaging::{self, Info};
 use crate::loader::{Kind, Loader, Request};
 use crate::menu::{Item, Key, Shortcut};
+use crate::theme::{self, Icon};
 
 pub const APP_TITLE: &str = "Lumiere";
 
@@ -452,8 +452,8 @@ impl App {
     /// UI can be exercised head-lessly from tests.
     pub fn build(ctx: &Context, start: Option<PathBuf>) -> Self {
         crate::menu::attach(ctx);
-        classic::apply_theme(ctx);
-        classic::install_cjk_font(ctx);
+        crate::theme::apply_theme(ctx);
+        crate::theme::install_fonts(ctx);
 
         let start_file = start.as_ref().filter(|p| p.is_file()).cloned();
         if !cfg!(test) {
@@ -1333,86 +1333,86 @@ impl App {
         let mut pending: Vec<Action> = Vec::new();
         let mut open_dialog = false;
         ui.horizontal(|ui| {
-            if classic::tool_button(ui, Icon::FolderUp, "Up one level", true).clicked() {
+            if theme::tool_button(ui, Icon::FolderUp, "Up one level", true).clicked() {
                 pending.push(Action::UpFolder);
             }
-            if classic::tool_button(ui, Icon::Home, "Home folder", true).clicked() {
+            if theme::tool_button(ui, Icon::Home, "Home folder", true).clicked() {
                 pending.push(Action::GoHome);
             }
-            if classic::tool_button(ui, Icon::Refresh, "Refresh", true).clicked() {
+            if theme::tool_button(ui, Icon::Refresh, "Refresh", true).clicked() {
                 pending.push(Action::Reload);
             }
-            classic::vtool_separator(ui);
-            if classic::tool_button(ui, Icon::ThumbSmall, "Small thumbnails", true).clicked() {
+            theme::vtool_separator(ui);
+            if theme::tool_button(ui, Icon::ThumbSmall, "Small thumbnails", true).clicked() {
                 pending.push(Action::ThumbSmall);
             }
-            if classic::tool_button(ui, Icon::ThumbMedium, "Medium thumbnails", true).clicked() {
+            if theme::tool_button(ui, Icon::ThumbMedium, "Medium thumbnails", true).clicked() {
                 pending.push(Action::ThumbMedium);
             }
-            if classic::tool_button(ui, Icon::ThumbLarge, "Large thumbnails", true).clicked() {
+            if theme::tool_button(ui, Icon::ThumbLarge, "Large thumbnails", true).clicked() {
                 pending.push(Action::ThumbLarge);
             }
-            classic::vtool_separator(ui);
-            if classic::tool_button(ui, Icon::First, "First image", true).clicked() {
+            theme::vtool_separator(ui);
+            if theme::tool_button(ui, Icon::First, "First image", true).clicked() {
                 pending.push(Action::FirstImage);
             }
-            if classic::tool_button(ui, Icon::Prev, "Previous image", true).clicked() {
+            if theme::tool_button(ui, Icon::Prev, "Previous image", true).clicked() {
                 pending.push(Action::PrevImage);
             }
-            if classic::tool_button(ui, Icon::Next, "Next image", true).clicked() {
+            if theme::tool_button(ui, Icon::Next, "Next image", true).clicked() {
                 pending.push(Action::NextImage);
             }
-            if classic::tool_button(ui, Icon::Last, "Last image", true).clicked() {
+            if theme::tool_button(ui, Icon::Last, "Last image", true).clicked() {
                 pending.push(Action::LastImage);
             }
-            classic::vtool_separator(ui);
-            if classic::tool_button(ui, Icon::Slideshow, "Slideshow", true).clicked() {
+            theme::vtool_separator(ui);
+            if theme::tool_button(ui, Icon::Slideshow, "Slideshow", true).clicked() {
                 pending.push(Action::Slideshow);
             }
-            if classic::tool_button(ui, Icon::Stop, "Stop slideshow", self.slideshow).clicked() {
+            if theme::tool_button(ui, Icon::Stop, "Stop slideshow", self.slideshow).clicked() {
                 pending.push(Action::StopSlideshow);
             }
-            classic::vtool_separator(ui);
-            if classic::tool_button(ui, Icon::ZoomOut, "Zoom out", true).clicked() {
+            theme::vtool_separator(ui);
+            if theme::tool_button(ui, Icon::ZoomOut, "Zoom out", true).clicked() {
                 pending.push(Action::ZoomOut);
             }
-            if classic::tool_button(ui, Icon::ZoomIn, "Zoom in", true).clicked() {
+            if theme::tool_button(ui, Icon::ZoomIn, "Zoom in", true).clicked() {
                 pending.push(Action::ZoomIn);
             }
-            if classic::tool_button(ui, Icon::Fit, "Fit to window", true).clicked() {
+            if theme::tool_button(ui, Icon::Fit, "Fit to window", true).clicked() {
                 pending.push(Action::FitWindow);
             }
-            if classic::tool_button(ui, Icon::Actual, "Actual size", true).clicked() {
+            if theme::tool_button(ui, Icon::Actual, "Actual size", true).clicked() {
                 pending.push(Action::ActualSize);
             }
-            classic::vtool_separator(ui);
-            if classic::tool_button(ui, Icon::RotateLeft, "Rotate left", true).clicked() {
+            theme::vtool_separator(ui);
+            if theme::tool_button(ui, Icon::RotateLeft, "Rotate left", true).clicked() {
                 pending.push(Action::RotateCCW);
             }
-            if classic::tool_button(ui, Icon::RotateRight, "Rotate right", true).clicked() {
+            if theme::tool_button(ui, Icon::RotateRight, "Rotate right", true).clicked() {
                 pending.push(Action::RotateCW);
             }
-            if classic::tool_button(ui, Icon::FlipH, "Flip horizontal", true).clicked() {
+            if theme::tool_button(ui, Icon::FlipH, "Flip horizontal", true).clicked() {
                 pending.push(Action::FlipH);
             }
-            if classic::tool_button(ui, Icon::FlipV, "Flip vertical", true).clicked() {
+            if theme::tool_button(ui, Icon::FlipV, "Flip vertical", true).clicked() {
                 pending.push(Action::FlipV);
             }
-            classic::vtool_separator(ui);
-            if classic::tool_button(ui, Icon::Fullscreen, "Full screen (F11)", true).clicked() {
+            theme::vtool_separator(ui);
+            if theme::tool_button(ui, Icon::Fullscreen, "Full screen", true).clicked() {
                 pending.push(Action::ToggleFullscreen);
             }
-            if classic::tool_button(
+            if theme::tool_button(
                 ui,
                 Icon::Delete,
-                "Delete",
+                "Move to Trash",
                 self.current_image_path().is_some(),
             )
             .clicked()
             {
                 pending.push(Action::MoveToTrash);
             }
-            if classic::tool_button(ui, Icon::Info, "Properties", true).clicked() {
+            if theme::tool_button(ui, Icon::Info, "Get Info", true).clicked() {
                 open_dialog = true;
                 pending.push(Action::GetInfo);
             }
@@ -1438,7 +1438,7 @@ impl App {
                 navigate = Some(PathBuf::from(self.path_edit.trim()));
             }
             let go = ui.button("Go");
-            classic::note_rect(ui, "Go", go.rect);
+            theme::note_rect(ui, "Go", go.rect);
             if go.clicked() {
                 navigate = Some(PathBuf::from(self.path_edit.trim()));
             }
@@ -1447,7 +1447,7 @@ impl App {
                 [90.0, 20.0],
                 egui::TextEdit::singleline(&mut self.filter_edit),
             );
-            classic::note_rect(ui, "Files filter", filter_response.rect);
+            theme::note_rect(ui, "Files filter", filter_response.rect);
             let filter_lost_focus = filter_response.lost_focus();
             if filter_lost_focus && self.filter_edit != self.filter {
                 self.filter = self.filter_edit.clone();
@@ -1455,7 +1455,7 @@ impl App {
                 rescan = true;
             }
             let apply = ui.button("Apply");
-            classic::note_rect(ui, "Apply", apply.rect);
+            theme::note_rect(ui, "Apply", apply.rect);
             if apply.clicked() {
                 self.filter = self.filter_edit.clone();
                 self.state_dirty = true;
@@ -1497,7 +1497,7 @@ impl App {
             places.push(("Macintosh HD".to_owned(), PathBuf::from("/")));
             for (label, path) in places {
                 let response = ui.selectable_label(self.dir == path, &label);
-                classic::note_rect(ui, &label, response.rect);
+                theme::note_rect(ui, &label, response.rect);
                 if response.clicked() {
                     goto = Some(path);
                 }
@@ -1543,9 +1543,9 @@ impl App {
             .unwrap_or(left);
 
         ui.horizontal(|ui| {
-            classic::status_field(ui, &status, 320.0);
-            classic::status_field(ui, &middle, (ui.available_width() - 120.0).max(80.0));
-            classic::status_field(ui, &right, 90.0);
+            theme::status_field(ui, &status, 320.0);
+            theme::status_field(ui, &middle, (ui.available_width() - 120.0).max(80.0));
+            theme::status_field(ui, &right, 90.0);
         });
     }
 
@@ -1560,7 +1560,7 @@ impl App {
             .resizable(false)
             .default_pos([320.0, 200.0])
             .show(ctx, |ui| {
-                classic::section_label(ui, "Thumbnails");
+                theme::section_label(ui, "Thumbnails");
                 ui.horizontal(|ui| {
                     ui.label("Size:");
                     if ui
@@ -1576,14 +1576,14 @@ impl App {
                 {
                     rescan = true;
                 }
-                classic::section_label(ui, "Viewer");
+                theme::section_label(ui, "Viewer");
                 if ui
                     .checkbox(&mut self.canvas_dark, "Black background")
                     .changed()
                 {
                     ctx.request_repaint();
                 }
-                classic::section_label(ui, "Slideshow");
+                theme::section_label(ui, "Slideshow");
                 ui.horizontal(|ui| {
                     ui.label("Delay:");
                     ui.add(
@@ -1592,7 +1592,7 @@ impl App {
                             .step_by(0.5),
                     );
                 });
-                classic::section_label(ui, "Maintenance");
+                theme::section_label(ui, "Maintenance");
                 if ui.button("Clear thumbnail cache").clicked() {
                     clear_cache = true;
                 }
@@ -1622,16 +1622,16 @@ impl App {
                 ui.horizontal(|ui| {
                     let (rect, _) =
                         ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
-                    classic::draw_icon(
+                    theme::draw_icon(
                         ui.painter(),
                         rect.center(),
                         36.0,
                         Icon::Image,
-                        classic::TEXT,
+                        ui.visuals().text_color(),
                     );
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new("Lumiere").strong());
-                        ui.label("Classic browser / viewer, rebuilt in Rust");
+                        ui.label("An image browser and viewer for macOS, written in Rust");
                         ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
                         ui.label(
                             egui::RichText::new("egui + image + Apple ImageIO (HEIC/AVIF)").small(),
@@ -1641,7 +1641,8 @@ impl App {
                 ui.separator();
                 ui.label(
                     "Keys: Space/Right next, Backspace/Left previous, Enter open, Esc close, \
-                     +/- zoom, F fit, 1 actual size, F11 full screen, Cmd+Shift+Y slideshow.",
+                     +/- zoom, F fit, 1 actual size, \u{2303}\u{2318}F full screen, \
+                     \u{2325}\u{2318}Y slideshow.",
                 );
             });
         self.about_open = open;
@@ -2053,9 +2054,9 @@ impl App {
         }
 
         let fill = if self.mode == Mode::Viewer {
-            canvas_color(self)
+            canvas_color(self, ctx)
         } else {
-            egui::Color32::WHITE
+            ctx.style().visuals.panel_fill
         };
         egui::CentralPanel::default()
             .frame(
@@ -2079,14 +2080,18 @@ impl App {
 
 #[cfg(not(target_os = "macos"))]
 fn menu_row(
+    ui: &egui::Ui,
     label: &str,
     shortcut: Option<&Shortcut>,
     checked: Option<bool>,
 ) -> egui::text::LayoutJob {
+    // `Visuals` is not `Copy`, so read the two adaptive colours we need.
+    let mark_color = ui.ctx().style().visuals.text_color();
+    let weak_color = ui.ctx().style().visuals.weak_text_color();
     let mut job = egui::text::LayoutJob::default();
     let mark = egui::TextFormat {
         font_id: egui::FontId::proportional(13.0),
-        color: classic::TEXT,
+        color: mark_color,
         ..Default::default()
     };
     let prefix = match checked {
@@ -2098,7 +2103,7 @@ fn menu_row(
     if let Some(shortcut) = shortcut {
         let weak = egui::TextFormat {
             font_id: egui::FontId::proportional(11.0),
-            color: classic::SHADOW,
+            color: weak_color,
             ..Default::default()
         };
         job.append(&format!("    {}", shortcut.display()), 24.0, weak);
@@ -2230,7 +2235,7 @@ fn egui_keys(key: Key) -> Vec<egui::Key> {
 #[cfg(not(target_os = "macos"))]
 fn top_menu(ui: &mut egui::Ui, label: &str, contents: impl FnOnce(&mut egui::Ui)) {
     let response = ui.menu_button(label, contents);
-    classic::note_rect(ui, label, response.response.rect);
+    theme::note_rect(ui, label, response.response.rect);
 }
 
 /// Renders one level of the menu description with egui widgets. Only used where
@@ -2252,7 +2257,7 @@ fn menu_items(ui: &mut egui::Ui, items: &[Item], actions: &mut Vec<Action>) {
             } => {
                 let response = ui.add_enabled(
                     *enabled,
-                    egui::Button::new(menu_row(label, shortcut.as_ref(), Some(*marked)))
+                    egui::Button::new(menu_row(ui, label, shortcut.as_ref(), Some(*marked)))
                         .min_size(egui::vec2(240.0, 0.0)),
                 );
                 // The row a human reads is a tick gutter, the command name and
@@ -2264,7 +2269,7 @@ fn menu_items(ui: &mut egui::Ui, items: &[Item], actions: &mut Vec<Action>) {
                         node.set_keyboard_shortcut(shortcut.display());
                     }
                 });
-                classic::note_rect(ui, label, response.rect);
+                theme::note_rect(ui, label, response.rect);
                 if response.clicked() {
                     actions.push(*action);
                     ui.close();
@@ -2287,11 +2292,16 @@ fn copy_path(from: &Path, to: &Path) -> std::io::Result<()> {
     }
 }
 
-pub fn canvas_color(app: &App) -> egui::Color32 {
+/// The backdrop behind the image in the viewer: black when asked for or in
+/// full screen, otherwise a neutral grey that suits whichever appearance the
+/// system is currently in.
+pub fn canvas_color(app: &App, ctx: &Context) -> egui::Color32 {
     if app.canvas_dark || app.fullscreen {
         egui::Color32::from_gray(0)
+    } else if ctx.style().visuals.dark_mode {
+        egui::Color32::from_gray(0x26)
     } else {
-        classic::CANVAS
+        egui::Color32::from_gray(0x80)
     }
 }
 
@@ -2341,7 +2351,7 @@ mod tests {
     }
 
     fn click_label(ctx: &Context, app: &mut App, label: &str, time: &mut f64) -> bool {
-        let Some(rect) = classic::rect_of(ctx, label) else {
+        let Some(rect) = theme::rect_of(ctx, label) else {
             return false;
         };
         click_at(ctx, app, rect.center(), time);
@@ -2366,7 +2376,7 @@ mod tests {
     fn settle(ctx: &Context, app: &mut App, time: &mut f64) {
         // The registry must only hold controls that are on screen right now,
         // otherwise a closed menu leaves a stale rect behind.
-        classic::clear_rects(ctx);
+        theme::clear_rects(ctx);
         let mut input = raw_input();
         input.time = Some(*time);
         let _ = ctx.run(input, |ctx| app.draw(ctx));
@@ -3102,11 +3112,17 @@ mod tests {
         let dir = fixture_dir("canvas");
         let ctx = egui::Context::default();
         let mut app = App::build(&ctx, Some(dir.clone()));
-        assert_eq!(canvas_color(&app), classic::CANVAS);
+        // The canvas follows the current appearance, so assert against it.
+        let expected = if ctx.style().visuals.dark_mode {
+            egui::Color32::from_gray(0x26)
+        } else {
+            egui::Color32::from_gray(0x80)
+        };
+        assert_eq!(canvas_color(&app, &ctx), expected);
         app.act(Action::ToggleFullscreen, &ctx);
-        assert_eq!(canvas_color(&app), egui::Color32::BLACK);
+        assert_eq!(canvas_color(&app, &ctx), egui::Color32::BLACK);
         app.act(Action::ToggleFullscreen, &ctx);
-        assert_eq!(canvas_color(&app), classic::CANVAS);
+        assert_eq!(canvas_color(&app, &ctx), expected);
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

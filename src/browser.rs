@@ -1,12 +1,12 @@
 //! The classic three pane browser: folder tree, thumbnail grid, preview pane.
 
 use egui::text::{LayoutJob, TextWrapping};
-use egui::{pos2, vec2, Align, Color32, FontId, Rect, Sense, TextFormat, Ui, Vec2};
+use egui::{pos2, vec2, Align, Color32, FontId, Rect, Sense, Stroke, TextFormat, Ui, Vec2};
 
 use crate::app::{Action, App, Mode};
-use crate::classic::{self, Icon};
 use crate::imaging;
 use crate::loader::Kind;
+use crate::theme::{self, Icon};
 
 // ---------------------------------------------------------------------------
 // Left pane: folder tree
@@ -34,9 +34,9 @@ pub fn tree_pane(app: &mut App, ui: &mut Ui) {
                             ui.allocate_exact_size(vec2(11.0, 11.0), Sense::click());
                         if ui.is_rect_visible(rect) {
                             let p = ui.painter();
-                            classic::bevel_sunken(p, rect);
+                            // A quiet plus/minus in the ambient text colour.
                             let center = rect.center();
-                            let stroke = egui::Stroke::new(1.0, classic::TEXT);
+                            let stroke = egui::Stroke::new(1.2, ui.visuals().weak_text_color());
                             p.line_segment(
                                 [
                                     pos2(center.x - 3.0, center.y),
@@ -67,7 +67,13 @@ pub fn tree_pane(app: &mut App, ui: &mut Ui) {
                         Icon::Folder
                     };
                     let (icon_rect, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
-                    classic::draw_icon(ui.painter(), icon_rect.center(), 14.0, icon, classic::TEXT);
+                    theme::draw_icon(
+                        ui.painter(),
+                        icon_rect.center(),
+                        14.0,
+                        icon,
+                        ui.visuals().text_color(),
+                    );
 
                     let text_response = ui.add(
                         egui::Label::new(egui::RichText::new(label.clone()).size(13.0))
@@ -82,7 +88,7 @@ pub fn tree_pane(app: &mut App, ui: &mut Ui) {
                     ui.ctx().accesskit_node_builder(text_response.id, |node| {
                         node.set_label(label.as_str());
                     });
-                    classic::note_rect(ui, &format!("tree:{label}"), text_response.rect);
+                    theme::note_rect(ui, &format!("tree:{label}"), text_response.rect);
                     if text_response.clicked() {
                         app.tree_selected = Some(index);
                         app.tree.ensure_loaded(index);
@@ -311,8 +317,10 @@ fn thumbnail(
     });
     let painter = ui.painter();
 
+    // The selection is the adaptive tint, not a fixed colour: pale blue in
+    // light mode, deep blue in dark mode.
     if selected {
-        painter.rect_filled(rect, 0, classic::NAVY);
+        painter.rect_filled(rect, 0, ui.visuals().selection.bg_fill);
     }
 
     let box_size = size as f32;
@@ -320,15 +328,14 @@ fn thumbnail(
         pos2(rect.center().x - box_size / 2.0, rect.top() + 4.0),
         vec2(box_size, box_size),
     );
-    painter.rect_filled(box_rect, 0, Color32::WHITE);
 
     if entry.is_dir {
-        classic::draw_icon(
+        theme::draw_icon(
             painter,
             box_rect.center(),
-            box_size * 0.62,
+            box_size * 0.5,
             Icon::Folder,
-            classic::TEXT,
+            ui.visuals().text_color(),
         );
     } else if let Some(thumb) = app.caches.thumb(&entry.path, size) {
         let scale = (box_size / thumb.width as f32)
@@ -345,33 +352,33 @@ fn thumbnail(
     } else {
         app.caches
             .request(&app.loader, Kind::Thumb, &entry.path, size);
-        classic::draw_icon(
+        theme::draw_icon(
             painter,
             box_rect.center(),
             box_size * 0.4,
             Icon::Image,
-            classic::SHADOW,
+            ui.visuals().weak_text_color(),
         );
     }
 
     if selected {
-        painter.rect_filled(box_rect.shrink(1.0), 0, Color32::TRANSPARENT);
-        classic::bevel_raised(painter, box_rect);
+        painter.rect_stroke(
+            box_rect,
+            0.0,
+            ui.visuals().selection.stroke,
+            egui::StrokeKind::Inside,
+        );
     } else {
         painter.rect_stroke(
             box_rect,
-            0,
-            egui::Stroke::new(1.0, classic::SHADOW),
+            0.0,
+            ui.visuals().widgets.noninteractive.bg_stroke,
             egui::StrokeKind::Inside,
         );
     }
 
     // File name, centred and truncated to the cell width.
-    let text_color = if selected {
-        Color32::WHITE
-    } else {
-        classic::TEXT
-    };
+    let text_color = ui.visuals().text_color();
     let format = TextFormat {
         font_id: FontId::proportional(11.0),
         ..Default::default()
@@ -457,6 +464,18 @@ pub fn preview_pane(app: &mut App, ui: &mut Ui) {
 
     let width = (ui.available_width() - 8.0).max(32.0);
 
+    // The preview sits in a rounded well on the standard field background
+    // (white in light mode, near black in dark), not a sunken Win95 frame.
+    let well = |ui: &Ui, rect: Rect| {
+        ui.painter().rect(
+            rect,
+            6.0,
+            ui.visuals().extreme_bg_color,
+            Stroke::NONE,
+            egui::StrokeKind::Middle,
+        );
+    };
+
     if entry.is_image {
         let request_size = width as u32;
         if let Some(preview) = app.caches.thumb(&entry.path, request_size) {
@@ -470,8 +489,7 @@ pub fn preview_pane(app: &mut App, ui: &mut Ui) {
                 rect.center(),
                 vec2(drawn.x.min(rect.width()), drawn.y.min(rect.height())),
             );
-            ui.painter().rect_filled(rect, 0, Color32::WHITE);
-            classic::bevel_sunken(ui.painter(), rect);
+            well(ui, rect);
             ui.painter().image(
                 preview.texture.id(),
                 drawn_rect,
@@ -482,26 +500,24 @@ pub fn preview_pane(app: &mut App, ui: &mut Ui) {
             app.caches
                 .request(&app.loader, Kind::Preview, &entry.path, request_size);
             let (rect, _) = ui.allocate_exact_size(vec2(width, width * 0.7), Sense::hover());
-            ui.painter().rect_filled(rect, 0, Color32::WHITE);
-            classic::bevel_sunken(ui.painter(), rect);
-            classic::draw_icon(
+            well(ui, rect);
+            theme::draw_icon(
                 ui.painter(),
                 rect.center(),
                 32.0,
                 Icon::Image,
-                classic::SHADOW,
+                ui.visuals().weak_text_color(),
             );
         }
     } else {
         let (rect, _) = ui.allocate_exact_size(vec2(width, width * 0.5), Sense::hover());
-        ui.painter().rect_filled(rect, 0, Color32::WHITE);
-        classic::bevel_sunken(ui.painter(), rect);
-        classic::draw_icon(
+        well(ui, rect);
+        theme::draw_icon(
             ui.painter(),
             rect.center(),
             width * 0.4,
             Icon::Folder,
-            classic::TEXT,
+            ui.visuals().text_color(),
         );
     }
 

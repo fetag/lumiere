@@ -2,7 +2,7 @@
 
 > 檢視範圍：本專案（Rust／eframe／egui）。
 >
-> 本文件是實作規格，不包含應用程式碼修改。專案目前刻意使用 Win95 風格（README 與 `src/classic.rs`），下列項目以 macOS 使用者的既有心智模型為目標，優先處理會造成操作錯誤、找不到功能或無法使用輔助技術的問題。
+> 本文件是實作規格，不包含應用程式碼修改。原本的 Win95 風格視覺層（`src/classic.rs`）已移除，改採 macOS 系統色彩／字型／動態外觀的 visual layer（`src/theme.rs`）；下列項目以 macOS 使用者的既有心智模型為目標，優先處理會造成操作錯誤、找不到功能或無法使用輔助技術的問題。
 
 ## P0 — 先使核心操作符合 macOS
 
@@ -28,10 +28,23 @@
   - **待確認的偏離**：規格寫「重新命名改為 `Return`」，但 `Return` 目前保留給 `View Image`（與 Finder 的 Return＝開啟一致），重新命名用 `⌥⌘R`，且 `F2` 仍然可用。`⌘R` 已讓給 `Reload`，所以旋轉改用 `⇧⌘L`/`⇧⌘R`。若要照規格把 `Return` 給 Rename，只要改 `menu_spec()` 裡 `View Image`／`Rename…` 兩項的 `Shortcut`。
   - 另一個實作細節：AppKit 會先把 key equivalent 交給選單列，因此文字輸入框開啟時（重新命名等）會把 `⌘A`、`⌘⌫`、`Return` 從文字框搶走。`App::key_item()` 在有文字焦點時會暫時不掛這些 key equivalent（選單仍在，只是不顯示快捷鍵）。
 
-- [ ] **停止以手繪 Win95 theme 作為預設介面，改採 macOS 系統色彩、字型與動態外觀。**
+- [x] **停止以手繪 Win95 theme 作為預設介面，改採 macOS 系統色彩、字型與動態外觀。**
   - 現況／依據：`src/classic.rs:1-4` 自述 Win95 外觀；`src/classic.rs:12-27` 固定灰／海軍藍色盤；`src/classic.rs:541-601` 強制淺色、直角、零陰影、13 px 字與硬式邊框；`src/app.rs:371-374` 每次啟動套用此 theme。
   - 實作方向：將 `classic.rs` 拆分為可淘汰的 legacy renderer 與新的 macOS visual layer；跟隨系統 Light/Dark mode、提高對比度與減少透明度設定。以 macOS system font（SF Pro／系統 fallback）與語意色彩取代固定 RGB；除非使用者選擇「Classic」外觀，勿預設使用 bevel、深藍選取底、方角按鈕。
   - 驗收：切換 macOS 明暗模式時，不重啟即可正確重繪；文字、分隔線、selection、disabled 狀態在兩種模式皆符合對比；預設畫面不再有 Win95 雙像素 bevel、深藍 title strip 或方形彈窗。
+  - 已完成（交接）：
+    - `src/classic.rs` 已整支刪除，改由 `src/theme.rs` 提供 macOS visual layer。使用者明確選擇「完整移除 Win95 層」，因此沒有保留可選的「Classic」外觀。
+    - 顏色全部問目前這一幀的 `egui::Visuals`，不自訂色盤：`apply_theme` 只用 `ctx.all_styles_mut` 收緊間距與字型，顏色、圓角、陰影、selection tint 全留在 egui 預設值——它們是動態的，每幀依 OS 明暗挑選。移除舊 code 強制 `dark_mode = false` 的覆寫後，明暗切換就能即時生效（winit `ThemeChanged` → egui-winit 每幀重選 style），不需重啟。
+    - 字型：`theme::install_fonts` 開機時由磁碟載入 `/System/Library/Fonts/SFNS.ttf`（比例）與 `SFNSMono.ttf`（等寬）並放最前，CJK fallback 用 `Arial Unicode.ttf` 放最後，讓中文檔名不會變方框。
+    - 圖示：Unicode 字元覆蓋不足（已用 `ab_glyph`（egui 的解析器）驗證 SFNS 缺 ⌂ ▪ ⏮ ⏭ ⤢ ⛶ ⇄ ℹ 與 emoji），改由 `theme::draw_icon` 以單色線條繪製現代圖示，顏色由呼叫端傳入（通常 `ui.visuals().text_color()`），會跟隨明暗自適應；`Icon` 列舉與各呼叫端點不變。
+    - 選取與文字：縮圖選取改採 `ui.visuals().selection.bg_fill/stroke`（不再有海軍藍），白底格子改透明讓 selection tint 透出；所有文字一律 `visuals.text_color()`（淺藍／深藍選取底都對比正確）；預覽區改成 6 px 圓角 `extreme_bg_color` 凹槽；browser 中央填色由硬編碼白改成 `panel_fill`。
+    - viewer 浮動工具列改成半透明（`window_fill` alpha 235）+ `window_stroke` + `window_corner_radius` 的圓角面板，像原生媒體 HUD；寬度公式隨按鈕改成 `len*34+12`。
+    - `canvas_color(app, ctx)` 改吃 ctx：`canvas_dark` 或全螢幕時黑，否則深色模式灰 `0x26`、淺色模式灰 `0x80`。
+    - 文案：工具列「Full screen (F11)」→「Full screen」、「Delete」→「Move to Trash」、「Properties」→「Get Info」；About 視窗去掉「Classic」副標、F11 改成 `⌃⌘F`。
+    - `theme::tool_button` 加上 `accesskit_node_builder` label，viewer／主工具列的圖示按鈕現在都有 accessible name（順帶推進 P0-6）。
+    - headless 測試用的 control registry（`note_rect`／`rect_of`／`clear_rects`）移到 `theme.rs`，以 `#[cfg(test)]` 閹割，非測試建置 `note_rect` 是 no-op；點擊用的 label（「Macintosh HD」、`tree:{label}`、「Files filter」、「Apply」）全部保留。
+    - egui 0.33 API 對接（本機只有 macOS target，跨平台路徑需人工檢查）：`CornerRadius.nw`（無 `.min`）、`Painter::rect` 多一個 `StrokeKind` 參數、`Align::LEFT`（無 `Align::Left`）、`Shape::Path(PathShape::closed_line)`（取代 `closed_polygon`）、`LayoutJob::single_section` 要 `String`、`Visuals` 非 `Copy`（`menu_row` 改用方法呼叫讀色，避免從 `Arc<Style>` move）。
+    - 驗證：同一個 process 切 light→dark→light 皆即時重繪不重啟；browser（預設畫面）、viewer HUD、Options 對話框、About 視窗在明暗兩模式皆正常；`cargo fmt --check`、`cargo clippy --all-targets`、`cargo test`（47 passed）皆綠。
 
 - [ ] **以原生 Open/Save/選擇資料夾面板取代自製檔案瀏覽對話框。**
   - 現況／依據：`src/app.rs:1511-1551` 的 `Explore Folder` 是自繪 `egui::Window`；`src/app.rs:1657-1708` 的 Move/Copy 以路徑文字欄位輸入目的地。
@@ -44,14 +57,15 @@
   - 驗收：刪除一張或多張照片時，使用者會看到「Move to Trash」而非 Delete/Yes/No；按 `⌘⌫` 能完成、Esc/Cancel 不會變更檔案；檔案可從 Finder 垃圾桶復原。
 
 - [ ] **建立最小可用的原生 Accessibility 基礎。**
-  - 現況／依據：README 的 Testing 段落明載「egui windows 沒有 native accessibility elements」；`src/browser.rs:282-423` 的縮圖、`src/viewer.rs:188-233` 的浮動工具列與 `src/classic.rs:175-526` 的圖示皆由 canvas 繪製。
+  - 現況／依據：README 的 Testing 段落明載「egui windows 沒有 native accessibility elements」；`src/browser.rs` 的縮圖、`src/viewer.rs` 的浮動工具列與 `src/theme.rs` 的 `draw_icon` 圖示皆由 canvas 繪製。
   - 實作方向：為所有 command 提供可被 macOS Accessibility API 揭露的名稱、role、value、enabled/selected state 與 keyboard focus；縮圖需有檔名、類型、尺寸與選取狀態；canvas 圖示不可成為唯一可操作入口。若框架無法支援，將核心導航、列表、按鈕和對話框改為原生控制項或補一層 NSAccessibility bridge。
   - 驗收：VoiceOver 可依序讀出工具列／縮圖／側欄／Inspector 的名稱與狀態，並可用鍵盤啟動；macOS Accessibility Inspector 可看到可辨識的 controls，而非單一 canvas；焦點環清楚可見。
   - 進度（尚未驗收完）：
     - 所有 command 現在都在原生選單列裡，因此名稱、快捷鍵、✓ 狀態、enabled 都由 AppKit 揭露，不需要自己 bridge；這是最主要的一塊。
     - egui 端（AccessKit 是 eframe 的預設 feature）已補上標籤：縮圖格子上報「檔名, selected/item」（`src/browser.rs`）、側欄樹節點上報資料夾名稱、視窗內選單項目的 accessible name 只唸命令名稱，快捷鍵改放 `AXKeyboardShortcut`（`src/app.rs` 的 `menu_items`）。
     - 測試 `thumbnails_are_readable_by_accessibility` 會檢查 AccessKit tree 是否包含各檔名。
-    - **仍缺**：焦点環（keyboard focus ring）沒有視覺呈現，viewer 的浮動工具列圖示仍只有 tooltip 而無 accessible name，`role`/`value`/`selected` 大部分未設定。需要以 VoiceOver 與 Accessibility Inspector 手動驗收後才能標記完成。
+    - 主工具列與 viewer 浮動工具列的圖示按鈕現在都有 accessible name（P0-3 的 `theme::tool_button` 加上 `accesskit_node_builder` label），不再只有 tooltip。
+    - **仍缺**：焦點環（keyboard focus ring）沒有視覺呈現，`role`/`value`/`selected` 大部分未設定。需要以 VoiceOver 與 Accessibility Inspector 手動驗收後才能標記完成。
   - 順帶修掉一個會讓人以為 App 沒啟動的問題：`state.ini` 記的視窗位置若在已拔掉的螢幕上，視窗會恢复到螢幕外。`src/window.rs` 現在用 `NSScreen` 檢查位置是否還在任何顯示器內，不在就交給系統決定位置。
 
 ## P1 — 讓瀏覽與看圖像一個現代 macOS App

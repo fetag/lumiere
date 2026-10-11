@@ -1,9 +1,10 @@
 # Lumiere
 
-Classic late-90s style image browser/viewer for macOS, written in Rust with
+Image browser/viewer for macOS, written in Rust with
 [egui](https://github.com/emilk/egui)/eframe. Three-pane browser (folder tree,
-thumbnail grid, preview/information), full-screen viewer, slideshow, and a
-Windows-95-ish bevel theme drawn by hand.
+thumbnail grid, preview/information), full-screen viewer, and slideshow, in a
+macOS-adaptive light/dark UI that follows the system appearance, with the
+system font and monochrome line icons.
 
 ## Build and run
 
@@ -50,7 +51,7 @@ Session state (last folder, window size and position) is stored in
 | `src/imaging.rs` | format detection, decode, EXIF, thumbnail cache |
 | `src/imaging/macos.rs` | ImageIO bridge for HEIC/HEIF/AVIF |
 | `src/fsmodel.rs` | directory scan, sorting, wildcard filter, tree model |
-| `src/classic.rs` | Win95 era theme: bevels, hand-drawn icons |
+| `src/theme.rs` | macOS visual layer: adaptive light/dark chrome, system font, monochrome line icons |
 | `src/menu.rs` | the menu bar as one platform-neutral description |
 | `src/menu/macos.rs` | that description as `NSMenu`s in the real macOS menu bar |
 | `src/window.rs` | whether a restored window position is still on a display |

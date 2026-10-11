@@ -6,8 +6,8 @@ use egui::{
 };
 
 use crate::app::{Action, App};
-use crate::classic::{self, Icon};
 use crate::loader::Kind;
+use crate::theme::{self, Icon};
 
 pub fn view(app: &mut App, ui: &mut Ui) {
     let Some(path) = app.current_image_path() else {
@@ -192,7 +192,9 @@ fn paint_rotated(
     painter.add(Shape::mesh(mesh));
 }
 
-/// Floating classic toolbar plus navigation, drawn on top of the canvas.
+/// Floating toolbar drawn on top of the canvas: a rounded, lightly
+/// translucent panel that matches the current light/dark appearance (like a
+/// native media HUD), built from the same buttons as the rest of the chrome.
 fn draw_toolbar(app: &mut App, ui: &mut Ui, canvas: Rect) {
     let buttons: [(Icon, &str, Action, bool); 12] = [
         (Icon::First, "First", Action::FirstImage, true),
@@ -214,13 +216,22 @@ fn draw_toolbar(app: &mut App, ui: &mut Ui, canvas: Rect) {
         (Icon::Browser, "Back to browser", Action::CloseViewer, true),
     ];
 
-    let width = buttons.len() as f32 * 32.0 + 12.0;
+    let width = buttons.len() as f32 * 34.0 + 12.0;
     let rect = Rect::from_min_size(
         pos2(canvas.left() + 8.0, canvas.bottom() - 40.0),
         vec2(width, 32.0),
     );
-    ui.painter().rect_filled(rect, 0, classic::FACE);
-    classic::bevel_raised(ui.painter(), rect);
+    let visuals = ui.visuals();
+    // A little translucent, so the image underneath stays visible.
+    let base = visuals.window_fill;
+    let fill = Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), 235);
+    ui.painter().rect(
+        rect,
+        visuals.window_corner_radius.nw,
+        fill,
+        visuals.window_stroke,
+        egui::StrokeKind::Middle,
+    );
 
     let mut child = ui.new_child(
         egui::UiBuilder::new()
@@ -231,7 +242,7 @@ fn draw_toolbar(app: &mut App, ui: &mut Ui, canvas: Rect) {
     let ctx = ui.ctx().clone();
     let mut actions: Vec<Action> = Vec::new();
     for (glyph, title, action, enabled) in buttons {
-        if classic::tool_button(&mut child, glyph, title, enabled).clicked() {
+        if theme::tool_button(&mut child, glyph, title, enabled).clicked() {
             actions.push(action);
         }
     }

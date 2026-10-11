@@ -2,12 +2,12 @@
 
 mod app;
 mod browser;
-mod classic;
 mod fsmodel;
 mod imaging;
 mod loader;
 mod menu;
 mod state;
+mod theme;
 mod viewer;
 mod window;
 
