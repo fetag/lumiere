@@ -36,7 +36,6 @@ pub struct FullEntry {
     pub height: u32,
     /// Bytes of the uploaded texture (clamped), not of the decoded original.
     pub bytes: usize,
-    pub info: Info,
 }
 
 /// Pending "Move to Folder" / "Copy to Folder" dialog state.
@@ -60,6 +59,9 @@ pub struct Caches {
     /// Full-size decodes that failed: re-requesting them every frame would put
     /// the viewer into the same Loading-flicker loop as the eviction bug.
     failed_fulls: HashSet<PathBuf>,
+    /// Thumbnail and preview decodes that failed: the grid and the preview
+    /// pane would otherwise re-request the broken picture on every frame.
+    failed_thumbs: HashSet<(PathBuf, u32)>,
 }
 
 const MAX_THUMBS: usize = 4000;
@@ -90,9 +92,14 @@ impl Caches {
         self.failed_fulls.contains(path)
     }
 
+    pub fn thumb_failed(&self, path: &Path, size: u32) -> bool {
+        self.failed_thumbs.contains(&(path.to_path_buf(), size))
+    }
+
     /// Forget failed decodes, e.g. after a refresh: the file may have changed.
     pub fn clear_failures(&mut self) {
         self.failed_fulls.clear();
+        self.failed_thumbs.clear();
     }
 
     /// Format + EXIF without decoding pixels, cached because the preview pane
@@ -128,6 +135,13 @@ impl Caches {
     fn queue_work(&mut self, loader: &Loader, kind: Kind, path: &Path, size: u32, back: bool) {
         let key = (kind, path.to_path_buf(), size);
         if self.pending.contains(&key) {
+            return;
+        }
+        // A thumbnail or preview that already failed is not retried on every
+        // frame: the failure stays noted until the folder is rescanned.
+        if matches!(kind, Kind::Thumb | Kind::Preview)
+            && self.failed_thumbs.contains(&(path.to_path_buf(), size))
+        {
             return;
         }
         if self.pending.len() > 512 {
@@ -214,8 +228,14 @@ impl Caches {
                 }
                 Err(error) => {
                     log::warn!("{}: {error}", request.path.display());
-                    if request.kind == Kind::Full {
-                        self.failed_fulls.insert(request.path.clone());
+                    match request.kind {
+                        Kind::Full => {
+                            self.failed_fulls.insert(request.path.clone());
+                        }
+                        Kind::Thumb | Kind::Preview => {
+                            self.failed_thumbs
+                                .insert((request.path.clone(), request.size));
+                        }
                     }
                     None
                 }
@@ -244,7 +264,6 @@ impl Caches {
                     );
                 }
                 Kind::Full => {
-                    let info = imaging::info(&request.path);
                     let key = request.path.clone();
                     self.failed_fulls.remove(&key);
                     if let Some(old) = self.fulls.remove(&key) {
@@ -263,7 +282,6 @@ impl Caches {
                             width,
                             height,
                             bytes,
-                            info,
                         },
                     );
                 }
@@ -3364,6 +3382,56 @@ mod tests {
         true
     }
 
+    /// Like [`click_label`], but returns the output of the click's frame so a
+    /// test can inspect the commands that frame emitted (egui hands the
+    /// platform output back to the caller and clears it from the context).
+    fn click_label_output(
+        ctx: &Context,
+        app: &mut App,
+        label: &str,
+        time: &mut f64,
+    ) -> Option<egui::FullOutput> {
+        let rect = theme::rect_of(ctx, label)?;
+        let pos = rect.center();
+        let move_frame = vec![egui::Event::PointerMoved(pos)];
+        let press = vec![
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ];
+        let mut output = None;
+        for (frame, events) in [move_frame, press].into_iter().enumerate() {
+            let mut input = raw_input();
+            input.time = Some(*time + frame as f64 * 0.4);
+            input.events = events;
+            output = Some(ctx.run(input, |ctx| app.draw(ctx)));
+        }
+        *time += 2.0;
+        output
+    }
+
+    /// True if `output` — the return value of the frame that performed the
+    /// copy — carries a copy command with `text`. egui takes the frame's
+    /// output out of the context at the end of the pass, so it can only be
+    /// read from the `FullOutput` the frame returned. In a real build
+    /// egui-winit executes the command on the OS clipboard.
+    fn copied(output: &egui::FullOutput, text: &str) -> bool {
+        output
+            .platform_output
+            .commands
+            .iter()
+            .any(|command| matches!(command, egui::OutputCommand::CopyText(t) if t == text))
+    }
+
     /// Paints frames until the given text shows up (windows need a sizing pass
     /// before their content is drawn).
     fn painted_once(ctx: &Context, app: &mut App, needle: &str) -> String {
@@ -5639,6 +5707,8 @@ mod tests {
             "Reveal in Finder",
             "Open with default app",
             "Open With…",
+            "Copy",
+            "Copy Path",
             "Get Info",
             "Move to Trash",
         ] {
@@ -5648,6 +5718,152 @@ mod tests {
                 .unwrap_or_else(|| panic!("{row:?} row missing"));
             at += next;
         }
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Copy / Copy Path put the file's name or its full path on the
+    /// clipboard, so the metadata is copyable without moving anything.
+    #[test]
+    fn copy_menu_rows_put_the_name_and_path_on_the_clipboard() {
+        let dir = fixture_dir("copy");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let mut time = 1.0;
+
+        // `cell:1` is one.png.
+        let Some(pos) = labeled_center(&ctx, &mut app, "cell:1", &mut time) else {
+            panic!("grid cell never laid out");
+        };
+        right_click_at(&ctx, &mut app, pos, &mut time);
+        painted_once(&ctx, &mut app, "Copy Path");
+        let output = click_label_output(&ctx, &mut app, "Copy Path", &mut time)
+            .expect("Copy Path row laid out");
+        assert!(
+            copied(&output, &dir.join("one.png").display().to_string()),
+            "Copy Path must put the full path on the clipboard"
+        );
+
+        // The plain Copy row copies the bare name.
+        right_click_at(&ctx, &mut app, pos, &mut time);
+        painted_once(&ctx, &mut app, "Copy Path");
+        let output =
+            click_label_output(&ctx, &mut app, "Copy", &mut time).expect("Copy row laid out");
+        assert!(
+            copied(&output, "one.png"),
+            "Copy must put the file name on the clipboard"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The inspector's dimensions are read from the file header, so they
+    /// appear on the first frame — no full decode, no "loading..." line.
+    #[test]
+    fn preview_metadata_comes_from_the_file_header() {
+        let dir = fixture_dir("metahdr");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        app.selected = app.image_indices()[0];
+
+        let text = painted_once(&ctx, &mut app, "64 x 48");
+        assert!(text.contains("Dimensions"), "{text}");
+        assert!(
+            !text.contains("loading..."),
+            "no decode may gate the metadata: {text}"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A picture whose header no decoder will accept shows "unknown" in the
+    /// inspector, and its failed thumbnail is remembered instead of being
+    /// re-queued on every frame.
+    #[test]
+    fn a_picture_that_cannot_be_read_shows_an_error_state() {
+        let dir = fixture_dir("broken");
+        // A .png whose contents are not a picture at all.
+        std::fs::write(dir.join("broken.png"), b"definitely not a picture").unwrap();
+
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        let index = app
+            .entries
+            .iter()
+            .position(|e| e.name == "broken.png")
+            .unwrap();
+        app.selected = index;
+        let path = dir.join("broken.png");
+
+        // The metadata says "unknown" instead of a load state that never
+        // resolves...
+        let text = painted_once(&ctx, &mut app, "unknown");
+        assert!(text.contains("Dimensions"), "{text}");
+
+        // ...and the failed decode is remembered: without it the grid would
+        // re-queue the broken thumbnail on every frame. The "unknown" row
+        // appears immediately from the header; the loader's failure lands on
+        // its own schedule, so pump frames until it does.
+        let size = app.thumb_size;
+        let mut time = 2.0;
+        let started = Instant::now();
+        while !app.caches.thumb_failed(&path, size) && started.elapsed() < Duration::from_secs(2) {
+            settle(&ctx, &mut app, &mut time);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            app.caches.thumb_failed(&path, size),
+            "the failed thumbnail must be noted"
+        );
+        assert!(
+            !app.caches
+                .pending
+                .contains(&(Kind::Thumb, path.clone(), size)),
+            "a failed thumbnail must not be re-queued"
+        );
+        settle(&ctx, &mut app, &mut time);
+        assert!(
+            !app.caches.pending.contains(&(Kind::Thumb, path, size)),
+            "frames after the failure must not re-queue it either"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Right-clicking a metadata row in the inspector copies its value.
+    #[test]
+    fn copying_a_metadata_row_puts_the_value_on_the_clipboard() {
+        let dir = fixture_dir("metacopy");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        app.selected = app.image_indices()[0];
+        let mut time = 1.0;
+
+        // The metadata rows settle once the preview texture lands (the well
+        // shrinks to the picture's size), so wait for the rect to hold still
+        // before right-clicking it.
+        let mut seen = None;
+        let mut rect = None;
+        for _ in 0..40 {
+            settle(&ctx, &mut app, &mut time);
+            let this = theme::rect_of(&ctx, "meta:Dimensions");
+            if seen == this {
+                rect = this;
+                break;
+            }
+            seen = this;
+        }
+        let Some(rect) = rect else {
+            panic!("metadata row never settled");
+        };
+        right_click_at(&ctx, &mut app, rect.center(), &mut time);
+        painted_once(&ctx, &mut app, "Copy Dimensions");
+        let output = click_label_output(&ctx, &mut app, "Copy Dimensions", &mut time)
+            .expect("Copy Dimensions row laid out");
+        assert!(
+            copied(&output, "64 x 48"),
+            "the row's value must end up on the clipboard"
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

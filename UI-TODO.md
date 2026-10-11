@@ -167,12 +167,21 @@
   - 測試：`dropped_paths_browse_folders_and_open_images`（拖入）、`drag_out_gesture_carries_the_cell_file`（拖出 payload）、`open_with_dialog_lists_apps_and_opens_in_one`、`right_click_menu_lists_the_macos_workflow_in_order`、`dnd::tests`（DropWatch：release 認 drop、窗外 release 取消、idle change 非拖曳、payload 替換取消舊 drag、無 pasteboard 不 drop）。
   - 實機驗證：右鍵選單順序、Open With 對話框（選 Preview 開啟）、Share picker（含郵件目標）、Reveal in Finder 開啟並選取該檔、拖出 one.png／three.png 均正確 copy 進 Finder 視窗。
 
-- [ ] **讓 Inspector/資訊面板與縮圖選取狀態更清楚且不依賴深藍色。**
+- [x] **讓 Inspector/資訊面板與縮圖選取狀態更清楚且不依賴深藍色。**
   - 現況／依據：`src/browser.rs:282-374` 將選取縮圖整塊填為 `classic::NAVY`，檔名固定 11 px；`src/browser.rs:425-` 以兩個裸文字 tab 呈現 Preview / Information；`src/classic.rs:120-133` 使用深藍色 section label。
   - 實作方向：採 macOS selection tint 與 sidebar/list selection 規則；縮圖保留適當留白、支援多行檔名或省略號與完整名稱 tooltip；Inspector 使用標準 segmented control/tab 樣式，內容採 key/value 對齊、可複製的 metadata 與明確 loading/error state。
   - 驗收：明暗模式、Increase Contrast 下仍能一眼辨識選取項；長檔名不會只靠 11 px 文字難以識別，至少可懸停取得完整名稱；Inspector 的焦點、選擇與讀取狀態清楚。
-  - 進度（部分完成，經使用者指示）：Preview／Information 兩個 tab 已合併——**Information 整個移除**，其多出來的欄位（Type、Path、Dimensions、Format、EXIF）直接併入 Preview 面板下方（`src/browser.rs` 的 `preview_pane`，去掉了 tab row 與 `inspector_tab` 狀態欄位；`Get Info`／右鍵選單只負責打開面板）。因此實作方向裡的「segmented control/tab 樣式」已無對象；剩餘：selection tint、長檔名省略號／tooltip、metadata 可複製、loading/error state（現況 `Dimensions: loading...` 在完整解碼前恆顯示，路徑等長值無省略號，皆沿用舊樣式未改）。
+  - 進度（部分完成，經使用者指示）：Preview／Information 兩個 tab 已合併——**Information 整個移除**，其多出來的欄位（Type、Path、Dimensions、Format、EXIF）直接併入 Preview 面板下方（`src/browser.rs` 的 `preview_pane`，去掉了 tab row 與 `inspector_tab` 狀態欄位；`Get Info`／右鍵選單只負責打開面板）。因此實作方向裡的「segmented control/tab 樣式」已無對象；剩餘四項（selection tint、長檔名省略號／tooltip、metadata 可複製、loading/error state）已於 2026-10-11 完成（見下條）。
   - 進度（2026-10-11，經使用者指示）：工具列 `Get Info` 按鈕改為 Inspector（Preview）面板的顯示／隱藏 toggle——推 `Action::ToggleInspector`（取代原「只打開」的 `GetInfo`，並移除殘留的死變數 `open_dialog`）；`theme::tool_button` 拆出 `tool_button_toggle`，active 時以 `visuals.selection.bg_fill` 常亮底色，面板開關狀態一眼可見（明暗自適應）。選單 `⌘I` Get Info（打開）、`⌥⌘I` Show Inspector（toggle）與右鍵選單 `Get Info`（打開）行為不變。headless 測試 `get_info_button_toggles_the_preview_pane` 驗證隱藏後 metadata 不再繪製、再點回來。
+  - 進度（2026-10-11，剩餘四項完成，本項視為完成）：
+    - **selection tint**：theme 項已改 `visuals.selection.bg_fill/stroke`（grid cell、sidebar、Get Info 鈕皆明暗自適應），本輪未改色邏輯，實機再確認。
+    - **長檔名 tooltip**：grid cell `on_hover_text(檔名 + "\n" + 類型, 大小)`；inspector 被 truncate 的 value（含長路徑）在 `layout_no_wrap` 寬度 > 實繪寬度時掛 `on_hover_text`（舊註解承諾 tooltip 但實上沒實作）。
+    - **metadata 可複製**：右鍵選單加 `Copy`（檔名）／`Copy Path`（完整路徑）；inspector metadata 列右鍵 `Copy {key}` 複製該值。egui 0.33 無 clipboard 寫入 API——`ctx.output_mut` push `OutputCommand::CopyText`，egui-winit 在幀末寫系統剪貼簿（headless 測試改在回傳的 `FullOutput` 驗命令）。
+    - **loading/error state**：metadata 改讀**檔頭**（`caches.info()` header-only、不解 pixel）：Dimensions/Format/EXIF 第一幀即現。舊碼的 `Dimensions: loading...` 讀 `caches.full()`，而它只由 viewer 的 `Kind::Full` 解碼填（inspector 自己 request 的 `Kind::Preview` 進的是縮圖 cache）——等於要先把圖在 viewer 開過才會消失，已不存在。檔頭讀不到時 Dimensions 顯示 `unknown`（error state）而非永不解析的 load state；`Caches` 新增 `failed_thumbs`（path+size）記帳 thumb/preview 解碼失敗：grid／preview well 的圖示變紅（`theme::DECODE_FAILED`，灰＝載入中、紅＝失敗），`queue_work` 跳過已失敗項目（壞圖先前**每幀重試**）；`clear_failures` 一併清。`FullEntry.info` 不再被讀，移除。
+    - 測試：`copy_menu_rows_put_the_name_and_path_on_the_clipboard`（Copy／Copy Path）、`preview_metadata_comes_from_the_file_header`（無 decode、Dimensions 即現、無 "loading..."）、`a_picture_that_cannot_be_read_shows_an_error_state`（broken.png → "unknown"＋`thumb_failed` 記帳＋後續幀不重新入隊）、`copying_a_metadata_row_puts_the_value_on_the_clipboard`（列右鍵 → Copy Dimensions → value）；`right_click_menu_lists_the_macos_workflow_in_order` 加入新兩列。84 全綠。
+    - 實測踩坑：① `ctx.output()` 在 `ctx.run` 後是空的——`end_pass` 把 `viewport.output` take 進回傳的 `FullOutput`，clipboard 命令只能從 `run` 的回傳值讀（helper `click_label_output`）；② inspector metadata 列位置在 preview texture 落地後**跳一次**（well 從佔位高度縮到圖片高度），右鍵前必須等 rect 連續兩幀穩定，否則落在舊位置、選單打不開。
+    - 實機驗證（合成事件＋AX＋剪貼簿）：右鍵 one.png → `Copy Path` → 剪貼簿 `/tmp/lumiere_p06_ax/one.png`、`Copy` → `one.png`；inspector 列右鍵 `Copy Dimensions` → `2867 x 1600`（純檔頭、未開過 viewer）；broken.png ⌘R 重載後入格、app 不崩、該列 value＝`unknown`、選中狀態下 `top` 樣本 CPU 0%（無重試迴圈）；grid cell hover 約 2 秒後 AX 樹出現 tooltip 文字（hover 前後含 "PNG, 1.4 MB" 的元素數 2→4；**egui tooltip 是窗內 Area 不是 NSWindow**，數窗／截圖都驗不到）。
+    - **留給使用者的手動走查**：tooltip 的視覺呈現、Increase Contrast 下選取 tint 的辨識度（無工具可做像素級驗證）。
 
 - [ ] **建立狀態、錯誤與進度回饋的 macOS 語言。**
   - 現況／依據：`src/app.rs:1372-1412` 使用三格 Win95 status field；`src/app.rs:1710-1732`、`src/app.rs:1750-1755` 只產生短暫 toast／字串錯誤；`src/viewer.rs:39-47` 僅畫出 `Loading…`。

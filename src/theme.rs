@@ -11,6 +11,11 @@ use egui::{
 };
 use std::sync::Arc;
 
+/// The warning colour for a picture that cannot be decoded. It is a state
+/// colour, not chrome, so (unlike everything else in the theme) it does not
+/// ask the visuals: the same red reads as an error in light and dark.
+pub const DECODE_FAILED: Color32 = Color32::from_rgb(0xC4, 0x3B, 0x30);
+
 /// Tighten the default spacing and type to match the compact panes, and leave
 /// every colour, corner radius, shadow and selection tint at egui's defaults.
 /// Those defaults are adaptive: the active style is picked per frame from the

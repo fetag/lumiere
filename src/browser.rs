@@ -519,7 +519,7 @@ fn thumbnail(
 ) -> Option<Click> {
     let size = cell.thumb;
     let (rect, _) = ui.allocate_exact_size(vec2(cell.w, cell.h), Sense::hover());
-    let response = ui.interact(rect, grid_cell_id(index), Sense::click());
+    let mut response = ui.interact(rect, grid_cell_id(index), Sense::click());
     if !ui.is_rect_visible(rect) && !response.has_focus() {
         return None;
     }
@@ -547,6 +547,9 @@ fn thumbnail(
         node.set_value(value.as_str());
         node.set_selected(selected);
     });
+    // The name below the picture is truncated to the cell width; the tooltip
+    // carries the full name plus the type and size the cell cannot afford.
+    response = response.on_hover_text(format!("{}\n{}", entry.name, value));
 
     // Keyboard focus lands here through Tab or a screen reader; remember it,
     // ring it, and lock the arrows so the selection — not some neighbouring
@@ -598,12 +601,19 @@ fn thumbnail(
     } else {
         app.caches
             .request(&app.loader, Kind::Thumb, &entry.path, size);
+        // A picture that cannot be decoded is marked, not just left blank:
+        // the red icon is the error state, the grey one is still loading.
+        let colour = if app.caches.thumb_failed(&entry.path, size) {
+            theme::DECODE_FAILED
+        } else {
+            ui.visuals().weak_text_color()
+        };
         theme::draw_icon(
             painter,
             box_rect.center(),
             box_size * 0.4,
             Icon::Image,
-            ui.visuals().weak_text_color(),
+            colour,
         );
     }
 
@@ -709,6 +719,16 @@ fn thumbnail(
                 ui.close();
             }
         }
+        // The clipboard gets the name or the full path — the reading of
+        // "Copy" a picture browser can do without moving anything.
+        if row(ui, "Copy") {
+            copy_text(ui.ctx(), entry.name.clone());
+            ui.close();
+        }
+        if row(ui, "Copy Path") {
+            copy_text(ui.ctx(), entry.path.display().to_string());
+            ui.close();
+        }
         if row(ui, "Get Info") {
             app.selected = index;
             app.show_inspector = true;
@@ -741,6 +761,16 @@ fn thumbnail(
 // ---------------------------------------------------------------------------
 // Right pane: preview with the file's metadata below it
 // ---------------------------------------------------------------------------
+
+/// Put text on the clipboard. egui does not own the clipboard: it emits a
+/// command and the backend (egui-winit) puts the text on the OS clipboard at
+/// the end of the frame; headless tests read the command back from the
+/// frame's output.
+fn copy_text(ctx: &egui::Context, text: String) {
+    ctx.output_mut(|output| {
+        output.commands.push(egui::OutputCommand::CopyText(text));
+    });
+}
 
 pub fn preview_pane(app: &mut App, ui: &mut Ui) {
     // egui sizes this panel from the content's used rect every frame, so the
@@ -794,13 +824,14 @@ pub fn preview_pane(app: &mut App, ui: &mut Ui) {
                 .request(&app.loader, Kind::Preview, &entry.path, request_size);
             let (rect, _) = ui.allocate_exact_size(vec2(width, width * 0.7), Sense::hover());
             well(ui, rect);
-            theme::draw_icon(
-                ui.painter(),
-                rect.center(),
-                32.0,
-                Icon::Image,
-                ui.visuals().weak_text_color(),
-            );
+            // Grey while the decode is running, red once it is known to have
+            // failed: loading and error must read differently.
+            let colour = if app.caches.thumb_failed(&entry.path, request_size) {
+                theme::DECODE_FAILED
+            } else {
+                ui.visuals().weak_text_color()
+            };
+            theme::draw_icon(ui.painter(), rect.center(), 32.0, Icon::Image, colour);
         }
     } else {
         let (rect, _) = ui.allocate_exact_size(vec2(width, width * 0.5), Sense::hover());
@@ -827,6 +858,10 @@ pub fn preview_pane(app: &mut App, ui: &mut Ui) {
 
     // The metadata below the picture. It omits the rows the header above
     // already prints (name, size, modified) and scrolls when it overflows.
+    // Everything is read from the file header — dimensions need no pixel
+    // decode — so the rows appear on the first frame instead of sitting on a
+    // "loading..." line until a full decode lands. A header no decoder can
+    // read shows "unknown" rather than a load state that never resolves.
     let mut rows: Vec<(String, String)> = vec![
         (
             "Type".into(),
@@ -838,20 +873,16 @@ pub fn preview_pane(app: &mut App, ui: &mut Ui) {
         ),
         ("Path".into(), entry.path.display().to_string()),
     ];
-    if let Some(full) = app.caches.full(&entry.path) {
+    if entry.is_image {
+        let info = app.caches.info(&entry.path);
         rows.push((
             "Dimensions".into(),
-            format!("{} x {}", full.width, full.height),
+            if info.width > 0 && info.height > 0 {
+                format!("{} x {}", info.width, info.height)
+            } else {
+                "unknown".into()
+            },
         ));
-        rows.push(("Format".into(), full.info.format.clone()));
-        for (key, value) in &full.info.exif {
-            rows.push((key.clone(), value.clone()));
-        }
-    } else if entry.is_image {
-        app.caches
-            .request(&app.loader, Kind::Preview, &entry.path, width as u32);
-        rows.push(("Dimensions".into(), "loading...".into()));
-        let info = app.caches.info(&entry.path);
         rows.push(("Format".into(), info.format));
         rows.extend(info.exif);
     }
@@ -866,6 +897,7 @@ pub fn preview_pane(app: &mut App, ui: &mut Ui) {
             // (the full value stays in the hover tooltip), so the values
             // still line up while the pane keeps its width.
             let key_font = egui::FontId::proportional(12.0);
+            let value_font = egui::FontId::monospace(12.0);
             let key_col = rows
                 .iter()
                 .map(|(key, _)| {
@@ -880,12 +912,39 @@ pub fn preview_pane(app: &mut App, ui: &mut Ui) {
                 ui.horizontal(|ui| {
                     ui.scope(|ui| {
                         ui.set_min_width(key_col);
-                        ui.label(egui::RichText::new(key).weak().size(12.0));
+                        ui.label(egui::RichText::new(key.clone()).weak().size(12.0));
                     });
-                    ui.add(
-                        egui::Label::new(egui::RichText::new(value).size(12.0).monospace())
+                    let value_resp = ui.add(
+                        egui::Label::new(egui::RichText::new(value.clone()).size(12.0).monospace())
                             .truncate(),
                     );
+                    // The row truncates long values at the pane's edge; the
+                    // full value then lives in the hover tooltip.
+                    let full_width = ui
+                        .painter()
+                        .layout_no_wrap(value.clone(), value_font.clone(), egui::Color32::WHITE)
+                        .size()
+                        .x;
+                    let mut click = ui.interact(
+                        value_resp.rect,
+                        ui.make_persistent_id(key.as_str()),
+                        Sense::click(),
+                    );
+                    theme::note_rect(ui, &format!("meta:{key}"), value_resp.rect);
+                    if full_width > value_resp.rect.width() + 1.0 {
+                        click = click.on_hover_text(value.clone());
+                    }
+                    // Right-clicking a value copies it, so the metadata is
+                    // copyable without leaving the pane.
+                    click.context_menu(|ui| {
+                        let label = format!("Copy {key}");
+                        let resp = ui.button(label.clone());
+                        theme::note_rect(ui, &label, resp.rect);
+                        if resp.clicked() {
+                            copy_text(ui.ctx(), value);
+                            ui.close();
+                        }
+                    });
                 });
             }
         });
