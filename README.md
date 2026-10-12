@@ -164,7 +164,12 @@ checks of the canvas go through key codes; the menu bar, by contrast, is real
 AppKit and fully scriptable.
 Full screen uses a native macOS Space, which `screencapture` may not capture.
 
-## Status
+## License
 
-Work in progress. See [TODO.md](TODO.md) for the current task list and what has
-already been verified.
+Lumiere is licensed under the [GNU General Public License, version 3 or later](LICENSE)
+(GPL-3.0-or-later). You may use, modify, and redistribute it under those terms;
+distributed modified versions must provide their corresponding source code under
+the same license.
+
+The project includes third-party material under its own terms. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the applicable notices.

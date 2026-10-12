@@ -3,6 +3,8 @@ name = "lumiere"
 version = "0.1.1"
 edition = "2021"
 description = "A classic 3.x style image browser / viewer for macOS, written in Rust"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/fetag/lumiere"
 
 [dependencies]
 chrono = "0.4.45"
