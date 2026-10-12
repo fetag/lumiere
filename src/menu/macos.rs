@@ -194,11 +194,8 @@ fn add_items(
                 marked,
             } => {
                 if *action == Action::About {
-                    // The standard about panel is a real window AppKit owns and
-                    // draws: the bundle icon, name, version and copyright from
-                    // Info.plist, plus `Credits.rtf` from Resources. Routing it
-                    // through the egui side would make it a panel inside our
-                    // surface, so it goes straight to the responder chain.
+                    // Keep the platform About panel: it uses the bundle icon,
+                    // name, version and copyright from Info.plist.
                     let item = standard_item(
                         &NSString::from_str(label),
                         sel!(orderFrontStandardAboutPanel:),

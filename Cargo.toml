@@ -21,6 +21,7 @@ image = { version = "0.25", default-features = false, features = [
     "webp",
 ] }
 egui = "0.33.3"
+egui_extras = { version = "0.33.3", features = ["svg"] }
 kamadak-exif = "0.6.1"
 log = "0.4"
 pcx = "0.2.5"

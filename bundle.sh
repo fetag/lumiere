@@ -40,7 +40,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key>  <string>11.0</string>
     <key>NSHighResolutionCapable</key> <true/>
     <key>CFBundleIconFile</key>       <string>AppIcon</string>
-    <key>NSHumanReadableCopyright</key> <string>(c) 2026 FETAG.NET</string>
+    <key>NSHumanReadableCopyright</key> <string>Copyright © 2026 fetag</string>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>

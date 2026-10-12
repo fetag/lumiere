@@ -229,7 +229,7 @@ fn sidebar_section(
             );
         }
         theme::draw_icon(
-            painter,
+            ui,
             pos2(rect.min.x + 10.0, rect.center().y),
             13.0,
             Icon::Folder,
@@ -580,7 +580,7 @@ fn thumbnail(
 
     if entry.is_dir {
         theme::draw_icon(
-            painter,
+            ui,
             box_rect.center(),
             box_size * 0.5,
             Icon::Folder,
@@ -608,13 +608,7 @@ fn thumbnail(
         } else {
             ui.visuals().weak_text_color()
         };
-        theme::draw_icon(
-            painter,
-            box_rect.center(),
-            box_size * 0.4,
-            Icon::Image,
-            colour,
-        );
+        theme::draw_icon(ui, box_rect.center(), box_size * 0.4, Icon::Image, colour);
     }
 
     if selected {
@@ -633,7 +627,11 @@ fn thumbnail(
         );
     }
 
-    // File name, centred and truncated to the cell width.
+    // File name, centred and truncated inside its own cell. The galley must
+    // have a single source of horizontal alignment: centring it both here and
+    // in the LayoutJob lets a long file name borrow space from the cell to its
+    // left. The clip rect is a final guard against a malformed or unusual
+    // file name ever painting into its neighbour.
     let text_color = ui.visuals().text_color();
     let format = TextFormat {
         font_id: FontId::proportional(11.0),
@@ -641,14 +639,20 @@ fn thumbnail(
     };
     let mut job = LayoutJob::single_section(entry.name.clone(), format);
     job.wrap = TextWrapping::truncate_at_width(cell.w - 4.0);
-    job.halign = Align::Center;
+    job.halign = Align::LEFT;
     job.justify = false;
     let galley = painter.layout_job(job);
-    let text_pos = pos2(
-        rect.center().x - galley.size().x / 2.0,
-        box_rect.bottom() + 4.0,
+    let text_rect = Rect::from_min_size(
+        pos2(rect.left() + 2.0, box_rect.bottom() + 4.0),
+        vec2(cell.w - 4.0, rect.bottom() - box_rect.bottom() - 4.0),
     );
-    painter.galley(text_pos, galley, text_color);
+    let text_pos = pos2(
+        text_rect.center().x - galley.size().x.min(text_rect.width()) / 2.0,
+        text_rect.top(),
+    );
+    painter
+        .with_clip_rect(text_rect)
+        .galley(text_pos, galley, text_color);
 
     if response.secondary_clicked() {
         app.selected = index;
@@ -831,13 +835,13 @@ pub fn preview_pane(app: &mut App, ui: &mut Ui) {
             } else {
                 ui.visuals().weak_text_color()
             };
-            theme::draw_icon(ui.painter(), rect.center(), 32.0, Icon::Image, colour);
+            theme::draw_icon(ui, rect.center(), 32.0, Icon::Image, colour);
         }
     } else {
         let (rect, _) = ui.allocate_exact_size(vec2(width, width * 0.5), Sense::hover());
         well(ui, rect);
         theme::draw_icon(
-            ui.painter(),
+            ui,
             rect.center(),
             width * 0.4,
             Icon::Folder,

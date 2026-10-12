@@ -456,7 +456,7 @@ pub struct App {
     pub slideshow: bool,
     pub slideshow_delay: f32,
     pub slideshow_at: Instant,
-    /// Whether a slideshow should start in full screen (Options ▸ Slideshow).
+    /// Whether a slideshow should start in full screen (Settings ▸ Slideshow).
     pub slideshow_fullscreen: bool,
     /// The view to restore when the slideshow ends, captured at its start.
     pub slideshow_saved: Option<SlideshowView>,
@@ -640,6 +640,9 @@ impl App {
         crate::menu::attach(ctx);
         crate::theme::apply_theme(ctx);
         crate::theme::install_fonts(ctx);
+        // Bootstrap Icons are SVGs. Register egui's cached SVG image loader
+        // once so toolbar icons stay crisp on Retina displays.
+        egui_extras::install_image_loaders(ctx);
 
         let start_file = start.as_ref().filter(|p| p.is_file()).cloned();
         if !cfg!(test) {
@@ -708,7 +711,7 @@ impl App {
             slideshow_delay: 3.0,
             slideshow_at: Instant::now(),
             // Full screen by default, the way a show is expected to run;
-            // the user can opt out from Options ▸ Slideshow.
+            // the user can opt out from Settings ▸ Slideshow.
             slideshow_fullscreen: true,
             slideshow_saved: None,
             swipe_x: 0.0,
@@ -1838,57 +1841,86 @@ impl App {
         let mut clear_cache = false;
         let mut rescan = false;
         let mut open = self.settings_open;
-        egui::Window::new("Options")
+        egui::Window::new("Settings")
             .open(&mut open)
+            .collapsible(false)
             .resizable(false)
+            .default_width(410.0)
             .default_pos([320.0, 200.0])
             .show(ctx, |ui| {
-                theme::section_label(ui, "Thumbnails");
-                ui.horizontal(|ui| {
-                    ui.label("Size:");
-                    if ui
-                        .add(egui::Slider::new(&mut self.thumb_size, 32..=320).suffix(" px"))
-                        .changed()
-                    {
-                        self.caches.clear_thumbs();
-                    }
+                ui.set_width(390.0);
+                ui.add_space(2.0);
+
+                Self::settings_group(ui, "Browser", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Thumbnail size");
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(format!("{} px", self.thumb_size));
+                            let mut size = self.thumb_size as f32;
+                            if theme::settings_slider(ui, &mut size, 32.0..=320.0, 1.0).changed() {
+                                self.thumb_size = size.round() as u32;
+                                self.caches.clear_thumbs();
+                            }
+                        });
+                    });
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label("Show folders in browser");
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if theme::settings_switch(ui, &mut self.show_folders).changed() {
+                                rescan = true;
+                            }
+                        });
+                    });
                 });
-                if ui
-                    .checkbox(&mut self.show_folders, "Show folders in browser")
-                    .changed()
-                {
-                    rescan = true;
-                }
-                theme::section_label(ui, "Viewer");
-                if ui
-                    .checkbox(&mut self.canvas_dark, "Black background")
-                    .changed()
-                {
-                    ctx.request_repaint();
-                }
-                theme::section_label(ui, "Slideshow");
-                ui.horizontal(|ui| {
-                    ui.label("Delay:");
-                    ui.add(
-                        egui::Slider::new(&mut self.slideshow_delay, 0.5..=30.0)
-                            .suffix(" s")
-                            .step_by(0.5),
+
+                Self::settings_group(ui, "Viewer", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Use black background");
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if theme::settings_switch(ui, &mut self.canvas_dark).changed() {
+                                ctx.request_repaint();
+                            }
+                        });
+                    });
+                });
+
+                Self::settings_group(ui, "Slideshow", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Change image every");
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(format!("{:.1} s", self.slideshow_delay));
+                            theme::settings_slider(ui, &mut self.slideshow_delay, 0.5..=30.0, 0.5);
+                        });
+                    });
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label("Enter full screen automatically");
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if theme::settings_switch(ui, &mut self.slideshow_fullscreen).changed()
+                            {
+                                self.state_dirty = true;
+                            }
+                        });
+                    });
+                });
+
+                Self::settings_group(ui, "Storage", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Thumbnail cache");
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("Clear Cache…").clicked() {
+                                clear_cache = true;
+                            }
+                        });
+                    });
+                    ui.add_space(2.0);
+                    ui.label(
+                        egui::RichText::new(imaging::cache_root().display().to_string())
+                            .small()
+                            .color(ui.visuals().weak_text_color()),
                     );
                 });
-                if ui
-                    .checkbox(
-                        &mut self.slideshow_fullscreen,
-                        "Enter full screen automatically",
-                    )
-                    .changed()
-                {
-                    self.state_dirty = true;
-                }
-                theme::section_label(ui, "Maintenance");
-                if ui.button("Clear thumbnail cache").clicked() {
-                    clear_cache = true;
-                }
-                ui.label(format!("Cache folder: {}", imaging::cache_root().display()));
             });
         self.settings_open = open;
 
@@ -1902,6 +1934,23 @@ impl App {
         if rescan {
             self.rescan();
         }
+    }
+
+    /// An inset preference group: a compact approximation of the grouped
+    /// rows used by macOS Settings, with controls aligned in a quiet card.
+    fn settings_group(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
+        ui.label(
+            egui::RichText::new(title)
+                .small()
+                .color(ui.visuals().weak_text_color()),
+        );
+        ui.add_space(2.0);
+        egui::Frame::new()
+            .fill(ui.visuals().widgets.inactive.weak_bg_fill)
+            .corner_radius(8.0)
+            .inner_margin(egui::Margin::symmetric(12, 9))
+            .show(ui, add_contents);
+        ui.add_space(8.0);
     }
 
     fn about_window(&mut self, ctx: &Context) {
@@ -1920,7 +1969,10 @@ impl App {
                             ui.painter().image(
                                 icon.id(),
                                 rect,
-                                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                egui::Rect::from_min_max(
+                                    egui::pos2(0.0, 0.0),
+                                    egui::pos2(1.0, 1.0),
+                                ),
                                 egui::Color32::WHITE,
                             );
                         }
@@ -1928,7 +1980,7 @@ impl App {
                         // tree; a drawn glyph keeps the panel intact elsewhere.
                         None => {
                             theme::draw_icon(
-                                ui.painter(),
+                                ui,
                                 rect.center(),
                                 36.0,
                                 Icon::Image,
@@ -1960,8 +2012,7 @@ impl App {
                         [width as usize, height as usize],
                         decoded.as_ref(),
                     );
-                    self.app_icon =
-                        Some(ctx.load_texture("app-icon", img, Default::default()));
+                    self.app_icon = Some(ctx.load_texture("app-icon", img, Default::default()));
                 }
             }
         }
@@ -2452,8 +2503,22 @@ impl App {
     /// friendly single-file wording.
     fn report_trash(&mut self, paths: &[PathBuf], outcome: OpOutcome) {
         if outcome.moved > 0 {
+            let was_viewing = self.mode == Mode::Viewer;
             self.multi.clear();
             self.rescan();
+            // A deletion in the viewer selects the item that moved into the
+            // old slot (or the next available picture). It is a new image,
+            // so carrying over a zoom/pan from the deleted one is surprising.
+            if was_viewing {
+                self.ensure_image_selected();
+                if self.current_image_path().is_some() {
+                    self.fit = true;
+                    self.zoom = 1.0;
+                    self.pan = Vec2::ZERO;
+                } else {
+                    self.mode = Mode::Browser;
+                }
+            }
         }
         let total = outcome.moved + outcome.failures.len();
         if total == 0 {
@@ -5036,6 +5101,36 @@ mod tests {
     }
 
     #[test]
+    fn trashing_a_viewed_image_fits_the_replacement() {
+        let dir = fixture_dir("trash_viewer_fit");
+        let ctx = egui::Context::default();
+        let mut app = App::build(&ctx, Some(dir.clone()));
+        app.selected = app.image_indices()[0];
+        let deleted = app.current_image_path().expect("image to remove");
+        app.mode = Mode::Viewer;
+        app.fit = false;
+        app.zoom = 2.5;
+        app.pan = Vec2::new(42.0, -18.0);
+
+        std::fs::remove_file(&deleted).unwrap();
+        app.report_trash(
+            std::slice::from_ref(&deleted),
+            OpOutcome {
+                moved: 1,
+                failures: Vec::new(),
+            },
+        );
+
+        assert_eq!(app.mode, Mode::Viewer);
+        assert_ne!(app.current_image_path().as_deref(), Some(deleted.as_path()));
+        assert!(app.fit);
+        assert_eq!(app.zoom, 1.0);
+        assert_eq!(app.pan, Vec2::ZERO);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn menu_shortcuts_open_dialogs() {
         let dir = fixture_dir("menukeys");
         let ctx = egui::Context::default();
@@ -5102,7 +5197,10 @@ mod tests {
         app.open_document(second.join("three.png"));
 
         assert_eq!(app.dir, second);
-        assert_eq!(app.current().map(|entry| entry.name.as_str()), Some("three.png"));
+        assert_eq!(
+            app.current().map(|entry| entry.name.as_str()),
+            Some("three.png")
+        );
         assert!(app.scroll_to_selected);
         assert_eq!(app.mode, Mode::Viewer);
 
