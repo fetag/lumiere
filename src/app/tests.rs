@@ -1148,7 +1148,7 @@ fn real_photo_1jpg_stays_cached() {
 }
 
 #[test]
-fn real_photo_huge_image_stays_cached() {
+fn real_photo_huge_image_respects_decode_budget() {
     let dir = PathBuf::from("/Users/james/Pictures/Photo");
     let huge = dir.join("影像.jpg");
     if !huge.is_file() {
@@ -1163,6 +1163,25 @@ fn real_photo_huge_image_stays_cached() {
         .expect("影像.jpg listed");
     app.selected = idx;
     app.act(Action::OpenViewer, &ctx);
+
+    // The large local fixture is now outside the deliberate decode budget.
+    // Its terminal failure must stay stable instead of being queued each frame.
+    if imaging::pixel_size(&huge)
+        .is_some_and(|(width, height)| imaging::check_decode_dimensions(width, height).is_err())
+    {
+        for frame in 0..600 {
+            let mut input = raw_input();
+            input.time = Some(1.0 + frame as f64 * 0.1);
+            let _ = ctx.run(input, |ctx| app.draw(ctx));
+            if app.caches.full_failed(&huge) {
+                assert!(app.caches.full(&huge).is_none());
+                assert!(!app.caches.pending.contains(&(Kind::Full, huge.clone(), 0)));
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        panic!("oversized image never reached its failure state");
+    }
 
     let mut arrived = false;
     let mut frames_after_arrival = 0;

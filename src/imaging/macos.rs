@@ -4,11 +4,13 @@
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
-use objc2_core_foundation::{CFIndex, CGPoint, CGRect, CGSize, CFURL};
+use objc2_core_foundation::{
+    CFDictionary, CFIndex, CFNumber, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize, CFURL,
+};
 use objc2_core_graphics::{
     CGBitmapContextCreate, CGBitmapContextGetData, CGColorSpace, CGContext, CGImage,
 };
-use objc2_image_io::CGImageSource;
+use objc2_image_io::{kCGImagePropertyPixelHeight, kCGImagePropertyPixelWidth, CGImageSource};
 
 use super::{check_decode_dimensions, Decoded};
 
@@ -29,6 +31,23 @@ pub fn decode(path: &Path) -> Result<Decoded, String> {
         .ok_or_else(|| "invalid URL".to_string())?;
 
         let source = CGImageSource::with_url(&url, None).ok_or("ImageIO could not open file")?;
+        let properties = source
+            .properties_at_index(0, None)
+            .ok_or("ImageIO could not read image dimensions")?;
+        // ImageIO property dictionaries have CFString keys and CFType values.
+        let properties: CFRetained<CFDictionary<CFString, CFType>> =
+            CFRetained::cast_unchecked(properties);
+        let dimension = |key| -> Result<u32, String> {
+            properties
+                .get(key)
+                .and_then(|value| value.downcast_ref::<CFNumber>().and_then(CFNumber::as_i64))
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or_else(|| "ImageIO returned invalid image dimensions".to_owned())
+        };
+        check_decode_dimensions(
+            dimension(kCGImagePropertyPixelWidth)?,
+            dimension(kCGImagePropertyPixelHeight)?,
+        )?;
         let image = source
             .image_at_index(0, None)
             .ok_or("ImageIO could not decode file")?;

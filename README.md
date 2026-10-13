@@ -90,6 +90,8 @@ repeatedly running bundles from `build/`, `dist/`, or `/tmp`.
 - "Move to Trash" (`⌘⌫`) confirms with a native alert and moves items to the
   macOS Trash (`trash` crate), so they stay recoverable from Finder
 - Thumbnail cache: `~/Library/Caches/net.fetag.lumiere/thumbs`
+- Rename, Move and Copy reject existing destination names rather than overwrite files. Copy also rejects symbolic links.
+- Image decoding is limited to 50 million pixels. Background pixel processing is serialized to limit simultaneous decode allocations; oversized images show a load failure.
 
 ## Keyboard shortcuts
 

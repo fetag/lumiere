@@ -108,7 +108,6 @@ pub fn observe_drag() -> Option<DragObservation> {
     use objc2::MainThreadMarker;
     use objc2_app_kit::{NSApplication, NSEvent, NSPasteboard};
     use objc2_core_graphics::{CGEventSource, CGEventSourceStateID, CGMouseButton};
-    use objc2_foundation::NSPoint;
 
     if cfg!(test) {
         return None;
@@ -122,27 +121,24 @@ pub fn observe_drag() -> Option<DragObservation> {
         CGEventSourceStateID::CombinedSessionState,
         CGMouseButton::Left,
     );
-    let count = NSPasteboard::generalPasteboard().changeCount() as u32;
-    // `NSEvent::mouseLocation` uses Quartz's global space (origin top-left,
-    // y down); window frames use AppKit's (origin bottom-left, y up). Both
-    // share the same x and the flip is the main screen's height, which
-    // holds for secondary screens too.
+    let count = NSPasteboard::pasteboardWithName(unsafe { objc2_app_kit::NSPasteboardNameDrag })
+        .changeCount() as u32;
+    // Finder keeps focus during a foreign drag, so keyWindow may be absent.
+    // NSEvent and NSWindow already share AppKit screen coordinates.
+    let cursor = NSEvent::mouseLocation();
     let cursor_in_window = NSApplication::sharedApplication(_mtm)
-        .keyWindow()
-        .and_then(|window| {
-            let cursor = NSEvent::mouseLocation();
-            let main = objc2_app_kit::NSScreen::mainScreen(_mtm)?;
-            let height = main.frame().size.height;
-            let flipped = NSPoint::new(cursor.x, height - cursor.y);
+        .windows()
+        .iter()
+        .any(|window| {
+            if !window.isVisible() {
+                return false;
+            }
             let frame = window.frame();
-            Some(
-                frame.origin.x <= flipped.x
-                    && flipped.x <= frame.origin.x + frame.size.width
-                    && frame.origin.y <= flipped.y
-                    && flipped.y <= frame.origin.y + frame.size.height,
-            )
-        })
-        .unwrap_or(false);
+            frame.origin.x <= cursor.x
+                && cursor.x <= frame.origin.x + frame.size.width
+                && frame.origin.y <= cursor.y
+                && cursor.y <= frame.origin.y + frame.size.height
+        });
     Some(DragObservation {
         count,
         button_down,
@@ -163,7 +159,7 @@ pub fn pasteboard_file_paths() -> Vec<PathBuf> {
     use objc2::rc::Retained;
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSPasteboard;
-    use objc2_foundation::{NSArray, NSString};
+    use objc2_foundation::{NSArray, NSString, NSURL};
 
     if cfg!(test) {
         return Vec::new();
@@ -174,7 +170,25 @@ pub fn pasteboard_file_paths() -> Vec<PathBuf> {
     // A drag writes its file payload as an `NSFilenamesPboardType` property
     // list: an array of path strings. Reading it back as a property list is
     // exactly what winit does for its own `DroppedFile` events.
-    let pb = NSPasteboard::generalPasteboard();
+    let pb = NSPasteboard::pasteboardWithName(unsafe { objc2_app_kit::NSPasteboardNameDrag });
+    // Finder uses per-item file URLs on modern macOS. Decode URLs through
+    // NSURL so spaces, non-ASCII names and percent escapes remain correct.
+    if let Some(items) = pb.pasteboardItems() {
+        let paths: Vec<PathBuf> = items
+            .iter()
+            .filter_map(|item| {
+                let text = item.stringForType(unsafe { objc2_app_kit::NSPasteboardTypeFileURL })?;
+                let url = NSURL::URLWithString(&text)?;
+                if !url.isFileURL() {
+                    return None;
+                }
+                url.path().map(|path| PathBuf::from(path.to_string()))
+            })
+            .collect();
+        if !paths.is_empty() {
+            return paths;
+        }
+    }
     // `NSFilenamesPboardType` is the classic file-drag type winit reads the
     // same way; it is marked deprecated in favour of per-item URL types, but
     // a drag still writes exactly this payload, so it is the right thing to
@@ -209,7 +223,7 @@ pub fn begin_file_drag(paths: &[PathBuf], preview: f64) -> bool {
     use objc2::runtime::ProtocolObject;
     use objc2::AnyThread;
     use objc2::MainThreadMarker;
-    use objc2_app_kit::{NSApplication, NSEvent, NSEventModifierFlags, NSEventType, NSScreen};
+    use objc2_app_kit::{NSApplication, NSEvent, NSEventModifierFlags, NSEventType};
     use objc2_foundation::{NSArray, NSPoint, NSRect, NSSize, NSString};
 
     if cfg!(test) || paths.is_empty() {
@@ -219,16 +233,9 @@ pub fn begin_file_drag(paths: &[PathBuf], preview: f64) -> bool {
         return false;
     };
     // The session must be hosted by a live view in the window the drag
-    // leaves from. That is the window under the cursor while the gesture
-    // runs — the key window can be elsewhere (or absent), so the cursor is
-    // the reliable source. `NSEvent::mouseLocation` is in Quartz's global
-    // space (origin top-left, y down); window frames use AppKit's (origin
-    // bottom-left, y up), and the flip is the main screen's height.
-    let quartz = NSEvent::mouseLocation();
-    let Some(main) = NSScreen::mainScreen(_mtm) else {
-        return false;
-    };
-    let cursor = NSPoint::new(quartz.x, main.frame().size.height - quartz.y);
+    // leaves from. NSEvent::mouseLocation and NSWindow::frame already use
+    // AppKit screen coordinates (origin bottom-left); do not flip the y axis.
+    let cursor = NSEvent::mouseLocation();
     // The windows list is back to front, so the last visible window
     // containing the cursor is the one on top.
     let mut host: Option<Retained<objc2_app_kit::NSWindow>> = None;
@@ -298,12 +305,12 @@ pub fn begin_file_drag(paths: &[PathBuf], preview: f64) -> bool {
             kind == NSEventType::LeftMouseDragged || kind == NSEventType::LeftMouseDown
         });
     let event = real.or_else(|| {
-        // Synthesize a drag event for the window the drag is leaving from,
-        // at the cursor's position in AppKit's global space.
+        // NSEvent mouse-event locations are window-local, not screen-local.
         let window_number = view.window().map_or(0, |window| window.windowNumber());
+        let location = view.window().map(|window| window.convertPointFromScreen(cursor))?;
         NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
             NSEventType::LeftMouseDragged,
-            cursor,
+            location,
             NSEventModifierFlags::empty(),
             0.0,
             window_number,

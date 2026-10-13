@@ -337,9 +337,9 @@ impl App {
                     ui.set_max_width(460.0);
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new(&title).strong());
-                        // A result with no actions can be waved away; a job
-                        // in flight always finishes on its own.
-                        if actions.is_empty() {
+                        // All results can be dismissed; the progress card
+                        // stays visible until its worker finishes.
+                        if self.job.is_none() {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {

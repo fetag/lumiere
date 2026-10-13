@@ -38,7 +38,7 @@ pub fn transfer(
         let result = if copy {
             copy_path(path, &target)
         } else {
-            std::fs::rename(path, &target)
+            rename_without_replace(path, &target)
         };
         match result {
             Ok(()) => moved += 1,
@@ -98,13 +98,53 @@ pub fn copy_path(from: &Path, to: &Path) -> std::io::Result<()> {
                 "cannot copy a folder into itself or one of its subfolders",
             ));
         }
-        std::fs::create_dir_all(to)?;
+        std::fs::create_dir(to)?;
         for entry in std::fs::read_dir(from)? {
             let entry = entry?;
             copy_path(&entry.path(), &to.join(entry.file_name()))?;
         }
         Ok(())
     } else {
-        std::fs::copy(from, to).map(|_| ())
+        let mut source = std::fs::File::open(from)?;
+        // Exclusive creation rejects both existing files and dangling symlinks.
+        let mut destination = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(to)?;
+        std::io::copy(&mut source, &mut destination)?;
+        destination.set_permissions(source_meta.permissions())
+    }
+}
+
+/// macOS provides an atomic no-replace rename, including directories.
+pub fn rename_without_replace(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        unsafe extern "C" {
+            fn renamex_np(
+                from: *const std::ffi::c_char,
+                to: *const std::ffi::c_char,
+                flags: u32,
+            ) -> i32;
+        }
+        let source = CString::new(from.as_os_str().as_bytes())?;
+        let target = CString::new(to.as_os_str().as_bytes())?;
+        // SAFETY: both paths are live NUL-terminated strings. RENAME_EXCL (4)
+        // makes the filesystem reject any existing destination atomically.
+        if unsafe { renamex_np(source.as_ptr(), target.as_ptr(), 4) } == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (from, to);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "atomic no-replace rename is unavailable on this platform",
+        ))
     }
 }

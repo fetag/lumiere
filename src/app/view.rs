@@ -96,7 +96,10 @@ impl App {
                 sidebar_dirs: self.sidebar_dirs.clone(),
                 recent_dirs: self.recent_dirs.clone(),
             };
-            let _ = state.save();
+            if let Err(error) = state.save() {
+                log::warn!("could not save session: {error}");
+                self.notify("Couldn't save window and browsing preferences");
+            }
         }
         // AppKit offers key equivalents to the menu bar before the window ever
         // sees the key, so a menu that claims `⌘A` or Return would take them away

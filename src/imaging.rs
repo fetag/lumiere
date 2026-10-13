@@ -11,7 +11,7 @@ use image::{ImageDecoder, ImageFormat, ImageReader, RgbaImage};
 /// Decoding happens before a texture can be downscaled. Keep untrusted images
 /// from making a worker allocate an unbounded RGBA buffer (four workers may
 /// decode concurrently).
-pub const MAX_DECODE_PIXELS: u64 = 150_000_000;
+pub const MAX_DECODE_PIXELS: u64 = 50_000_000;
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -89,6 +89,10 @@ pub fn is_image(path: &Path) -> bool {
 /// Decode an image, applying EXIF orientation when needed.
 pub fn decode(path: &Path) -> Result<Decoded, String> {
     let ext = extension(path);
+    // Reject known oversized dimensions before considering a native fallback.
+    if let Some((width, height)) = pixel_size(path) {
+        check_decode_dimensions(width, height)?;
+    }
 
     if ext == "pcx" {
         return decode_pcx(path);
@@ -104,6 +108,7 @@ pub fn decode(path: &Path) -> Result<Decoded, String> {
 
     match decode_with_image(path) {
         Ok(img) => Ok(apply_orientation(path, img)),
+        Err(primary) if primary.starts_with("resource limit:") => Err(primary),
         #[cfg(target_os = "macos")]
         Err(primary) => macos::decode(path)
             .map(|img| apply_orientation(path, img))
@@ -114,22 +119,26 @@ pub fn decode(path: &Path) -> Result<Decoded, String> {
 }
 
 fn decode_with_image(path: &Path) -> Result<Decoded, String> {
-    let reader = ImageReader::open(path)
+    let mut reader = ImageReader::open(path)
         .map_err(|e| format!("open failed: {e}"))?
         .with_guessed_format()
         .map_err(|e| format!("format failed: {e}"))?;
-    let (width, height) = reader
-        .into_decoder()
-        .map_err(|e| format!("header failed: {e}"))?
-        .dimensions();
-    check_decode_dimensions(width, height)?;
-    let img = ImageReader::open(path)
-        .map_err(|e| format!("open failed: {e}"))?
-        .with_guessed_format()
-        .map_err(|e| format!("format failed: {e}"))?
-        .decode()
-        .map_err(|e| format!("decode failed: {e}"))?;
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(MAX_DECODE_PIXELS * 8);
+    reader.limits(limits);
+    let decoder = reader.into_decoder().map_err(decode_error)?;
+    let (width, height) = decoder.dimensions();
+    check_decode_dimensions(width, height).map_err(|error| format!("resource limit: {error}"))?;
+    let img = image::DynamicImage::from_decoder(decoder).map_err(decode_error)?;
     Ok(Decoded::from_rgba(img.to_rgba8()))
+}
+
+fn decode_error(error: image::ImageError) -> String {
+    if matches!(error, image::ImageError::Limits(_)) {
+        format!("resource limit: {error}")
+    } else {
+        format!("decode failed: {error}")
+    }
 }
 
 pub fn check_decode_dimensions(width: u32, height: u32) -> Result<(), String> {
@@ -486,8 +495,7 @@ pub fn store_thumbnail(path: &Path, size: u32, img: &Decoded) {
 }
 
 pub fn read_cached_thumbnail(file: &Path) -> Option<Decoded> {
-    let img = image::open(file).ok()?;
-    Some(Decoded::from_rgba(img.to_rgba8()))
+    decode_with_image(file).ok()
 }
 
 /// Delete the oldest cached thumbnails until the cache fits in `max_bytes`.
@@ -726,7 +734,7 @@ mod tests {
 
     #[test]
     fn rejects_a_decode_bomb_before_allocating_pixels() {
-        assert!(check_decode_dimensions(15_001, 10_000).is_err());
-        assert!(check_decode_dimensions(15_000, 10_000).is_ok());
+        assert!(check_decode_dimensions(5_001, 10_000).is_err());
+        assert!(check_decode_dimensions(5_000, 10_000).is_ok());
     }
 }

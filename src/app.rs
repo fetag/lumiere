@@ -764,17 +764,16 @@ impl App {
         if pressed_here {
             // The press (or a pre-threshold wobble) still lands on the cell:
             // remember where the gesture started.
-            self.drag_out = Some((index, pos));
-            return;
+            if self.drag_out.is_none() {
+                self.drag_out = Some((index, pos));
+            }
         }
         if let Some((i, down)) = self.drag_out {
             if down.distance(pos) >= 6.0 {
-                // Queue the entry instead of starting the session here: the
-                // grid layout temporarily takes `entries` out of the app
-                // (browser::grid), so the payload is only resolvable after
-                // the layout is done. `pump_dnd` starts it on the next pass.
-                self.drag_out = None;
-                self.pending_drag = Some(i);
+                // The grid now keeps entries available during layout. Start
+                // within the pointer event frame while AppKit still has the
+                // genuine mouse event, rather than waiting for a repaint.
+                self.begin_drag_out(i);
             }
         }
     }
@@ -956,6 +955,22 @@ impl App {
     /// repaint going — otherwise an idle window would never sample the
     /// pasteboard and the release would go unobserved.
     fn pump_dnd(&mut self, ctx: &Context) {
+        // Prefer the backend's actual drop event whenever it is available.
+        // Reading it explicitly also avoids relying on pasteboard polling
+        // for quick drags whose press and release occur between frames.
+        let native_paths = ctx.input(|input| {
+            input
+                .raw
+                .dropped_files
+                .iter()
+                .filter_map(|file| file.path.clone())
+                .collect::<Vec<_>>()
+        });
+        if !native_paths.is_empty() {
+            self.drop_watch = crate::dnd::DropWatch::new();
+            self.handle_dropped_paths(native_paths);
+            return;
+        }
         // A release of the primary button, however it reached us, ends the
         // pending drag-out gesture (a click is not a drag).
         if !ctx.input(|i| i.pointer.primary_down()) {
@@ -969,6 +984,9 @@ impl App {
         let Some(obs) = crate::dnd::observe_drag() else {
             return; // no native environment: nothing to watch.
         };
+        // An idle egui window otherwise never samples the beginning of an
+        // external drag. Poll before it arrives as well as while it is held.
+        ctx.request_repaint_after(Duration::from_millis(100));
         if !obs.button_down {
             // Any release — native or egui — ends both our own drag session
             // and a pending drag-out candidate.
@@ -1126,7 +1144,7 @@ impl App {
             return;
         }
         let target = path.with_file_name(name);
-        match std::fs::rename(path, &target) {
+        match file_ops::rename_without_replace(path, &target) {
             Ok(()) => {
                 self.notify(format!("Renamed to {name}"));
                 self.rescan();

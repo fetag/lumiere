@@ -4,7 +4,7 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{sync_channel, Receiver};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
@@ -46,7 +46,9 @@ pub struct Loader {
 impl Loader {
     pub fn new(workers: usize) -> Self {
         let queue: Queue = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
-        let (tx, rx) = channel();
+        // Backpressure prevents decoded pixel buffers accumulating without
+        // bound while the main thread is busy or a native dialog is open.
+        let (tx, rx) = sync_channel(2);
         let shutdown = Arc::new(AtomicBool::new(false));
 
         for _ in 0..workers {
@@ -195,6 +197,10 @@ impl Loader {
 }
 
 fn produce(request: &Request) -> Result<Decoded, String> {
+    // Include scaling and cache encoding in the gate: serializing only decode
+    // would still let four workers retain full-resolution buffers together.
+    static PIXEL_WORK: Mutex<()> = Mutex::new(());
+    let _pixel_work = PIXEL_WORK.lock().unwrap_or_else(|error| error.into_inner());
     match request.kind {
         Kind::Thumb => {
             if let Some(cached) = imaging::cached_thumbnail(&request.path, request.size) {

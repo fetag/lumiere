@@ -78,7 +78,7 @@ impl State {
             let Some((key, value)) = line.split_once('=') else {
                 continue;
             };
-            let value = unescape(value.trim());
+            let value = unescape(value);
             match key.trim() {
                 "last_dir" => state.last_dir = Some(PathBuf::from(&value)),
                 "width" => state.width = value.parse().unwrap_or(0.0),
@@ -109,6 +109,17 @@ impl State {
                 }
                 _ => {}
             }
+        }
+        state.width = valid_size(state.width, 640.0, 16_384.0);
+        state.height = valid_size(state.height, 420.0, 16_384.0);
+        if !state.x.is_finite() || state.x.abs() > 100_000.0 {
+            state.x = 0.0;
+        }
+        if !state.y.is_finite() || state.y.abs() > 100_000.0 {
+            state.y = 0.0;
+        }
+        if state.thumb_size != 0 {
+            state.thumb_size = state.thumb_size.clamp(32, 320);
         }
         state
     }
@@ -174,19 +185,23 @@ impl State {
         }
         // A session file is user-private history (recent folders included).
         // Write then rename so a crash cannot leave a half-written state file.
-        let tmp = path.with_extension("ini.tmp");
-        #[cfg(unix)]
-        let mut file = {
-            use std::os::unix::fs::OpenOptionsExt;
-            fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o600)
-                .open(&tmp)?
+        static NEXT_TEMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let (tmp, mut file) = loop {
+            let sequence = NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let tmp = path.with_extension(format!("ini.{}.{}.tmp", std::process::id(), sequence));
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(&tmp) {
+                Ok(file) => break (tmp, file),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
         };
-        #[cfg(not(unix))]
-        let mut file = fs::File::create(&tmp)?;
         let result = (|| {
             file.write_all(text.as_bytes())?;
             file.sync_all()?;
@@ -196,6 +211,14 @@ impl State {
             let _ = fs::remove_file(&tmp);
         }
         result
+    }
+}
+
+fn valid_size(value: f32, minimum: f32, maximum: f32) -> f32 {
+    if value.is_finite() && value > 0.0 {
+        value.clamp(minimum, maximum)
+    } else {
+        0.0
     }
 }
 
