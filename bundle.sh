@@ -7,7 +7,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 OUT="${1:-build}"
 mkdir -p "$OUT"
 
-cargo build --release
+cargo build --release -p lumiere --locked
 
 APP="$OUT/Lumiere.app"
 

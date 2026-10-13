@@ -1,0 +1,150 @@
+   Compiling lumiere-desktop v0.1.2 (/Users/james/workspace/lumiere/crates/lumiere-desktop)
+   Compiling lumiere v0.1.2 (/Users/james/workspace/lumiere/apps/lumiere)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.15s
+     Running unittests src/main.rs (target/debug/deps/lumiere-c795735258a48285)
+
+running 73 tests
+test app::tests::apply_trash_reports_the_result ... ok
+test app::tests::batch_transfer_reports_each_failure ... ok
+test app::tests::closing_the_viewer_during_a_slideshow_restores_the_window ... ok
+test app::tests::command_shortcuts_read_event_modifiers ... ok
+test app::tests::browser_toolbar_keeps_only_browser_controls ... ok
+test app::cache::tests::thumb_cache_evicts_to_stay_within_budget ... ok
+test app::tests::arrow_keys_and_enter_operate_the_focused_grid ... ok
+test app::tests::copy_rejects_a_destination_inside_the_source ... ok
+test app::tests::arrow_keys_operate_the_sidebar ... ok
+test app::tests::delete_action_targets_folders_too ... ok
+test app::tests::clicking_a_sidebar_folder_navigates_to_it ... ok
+test app::tests::dropped_paths_browse_folders_and_open_images ... ok
+test app::tests::browser_viewer_and_slideshow_frames_render ... ok
+test app::tests::context_menu_pins_a_folder_to_the_sidebar ... ok
+test app::tests::copying_a_metadata_row_puts_the_value_on_the_clipboard ... ok
+test app::tests::copy_menu_rows_put_the_name_and_path_on_the_clipboard ... ok
+test app::tests::fullscreen_canvas_is_black ... ok
+test app::tests::drag_out_gesture_carries_the_cell_file ... ok
+test app::tests::failed_transfer_offers_retry_and_reveal ... ok
+test app::tests::escape_closes_open_dialogs ... ok
+test app::tests::files_filter_applies_from_the_filter_popover ... ok
+test app::tests::menu_uses_macos_names_and_shortcuts ... ok
+test app::tests::keyboard_navigation_moves_the_selection ... ok
+test app::tests::get_info_button_toggles_the_preview_pane ... ok
+test app::tests::move_and_copy_between_folders ... ok
+test app::tests::about_and_explore_dialogs_render_their_content ... ok
+test app::tests::menu_shortcuts_open_dialogs ... ok
+test app::tests::opening_a_document_switches_folders_and_selects_it ... ok
+test app::tests::opening_a_file_selects_it ... ok
+test app::tests::menu_shortcuts_are_the_keyboard_map ... ok
+test app::tests::notice_card_is_painted_and_dismissible ... ok
+test app::tests::narrow_window_keeps_the_content_pane_usable ... ok
+test app::tests::preview_metadata_comes_from_the_file_header ... ok
+test app::tests::preview_panel_lists_exif_fields ... ok
+test app::tests::purged_thumbnail_work_clears_the_pending_marker ... ok
+test app::tests::preview_panel_lists_file_metadata ... ok
+test app::tests::preview_pane_holds_the_width_the_user_set ... ok
+test app::tests::recents_track_visits_newest_first ... ok
+test app::tests::rename_rejects_paths_and_dot_names ... ok
+test app::tests::rename_updates_disk_and_selection ... ok
+test app::tests::double_click_toggles_fit_and_actual_size ... ok
+test app::tests::a_picture_that_cannot_be_read_shows_an_error_state ... ok
+test app::tests::saved_preferences_are_restored ... ok
+test app::tests::sidebar_and_inspector_state_survive_a_restart ... ok
+test app::tests::right_click_menu_lists_the_macos_workflow_in_order ... ok
+test app::tests::grid_queues_thumbnails_wider_than_the_viewport ... ok
+test app::tests::slideshow_preserves_the_window_and_zoom_state ... ok
+test app::tests::slideshow_starts_from_first_image_when_folder_selected ... ok
+test app::tests::sort_menu_reorders_the_grid ... ok
+test app::tests::stale_generation_work_is_dropped_and_releasable ... ok
+test app::tests::sidebar_navigates_to_the_selected_place ... ok
+test app::tests::trash_confirm_covers_the_whole_selection ... ok
+test app::tests::sidebar_lights_at_most_one_row ... ok
+test app::tests::trashing_a_viewed_image_fits_the_replacement ... ok
+test app::tests::view_menu_toggles_panels_and_thumb_size ... ok
+test app::tests::thumbnails_are_readable_by_accessibility ... ok
+test browser::tests::click_modifiers_prefers_the_pointer_event ... ok
+test app::tests::viewer_prefetches_the_neighbouring_images ... ok
+test browser::tests::prefetch_range_warms_one_row_on_each_side ... ok
+test platform_ui::dnd::tests::a_replaced_payload_cancels_the_previous_drag ... ok
+test platform_ui::dnd::tests::an_idle_change_is_not_a_drag ... ok
+test platform_ui::dnd::tests::drop_is_recognized_on_release_over_the_window ... ok
+test platform_ui::dnd::tests::no_pasteboard_means_no_drop ... ok
+test platform_ui::dnd::tests::release_outside_the_window_is_a_cancel ... ok
+test browser::tests::cmd_and_shift_clicks_extend_the_selection ... ok
+test app::tests::horizontal_swipe_browses_when_the_picture_fits ... ok
+test app::tests::open_with_submenu_lists_applications ... ok
+test app::tests::pinch_gesture_zooms_about_the_pointer ... FAILED
+test app::tests::scroll_pans_an_overflowing_image ... FAILED
+test app::tests::oversized_images_are_clamped_to_the_texture_limit ... FAILED
+test app::tests::real_photo_1jpg_stays_cached ... ok
+test app::tests::real_photo_huge_image_respects_decode_budget ... ok
+test app::tests::viewer_keeps_the_current_image_when_the_full_cache_overflows ... ok
+
+failures:
+
+---- app::tests::pinch_gesture_zooms_about_the_pointer stdout ----
+
+thread 'app::tests::pinch_gesture_zooms_about_the_pointer' (2330979) panicked at apps/lumiere/src/app/tests.rs:123:5:
+the image never reached the full cache
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- app::tests::scroll_pans_an_overflowing_image stdout ----
+
+thread 'app::tests::scroll_pans_an_overflowing_image' (2331048) panicked at apps/lumiere/src/app/tests.rs:123:5:
+the image never reached the full cache
+
+---- app::tests::oversized_images_are_clamped_to_the_texture_limit stdout ----
+
+thread 'app::tests::oversized_images_are_clamped_to_the_texture_limit' (2330973) panicked at apps/lumiere/src/app/tests.rs:1107:43:
+clamped texture cached
+
+
+failures:
+    app::tests::oversized_images_are_clamped_to_the_texture_limit
+    app::tests::pinch_gesture_zooms_about_the_pointer
+    app::tests::scroll_pans_an_overflowing_image
+
+test result: FAILED. 70 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.82s
+
+error: test failed, to rerun pass `-p lumiere --bin lumiere`
+     Running unittests src/lib.rs (target/debug/deps/lumiere_core-df973721db502c45)
+
+running 1 test
+test imaging::tests::rejects_a_decode_bomb_before_allocating_pixels ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/lumiere_desktop-9aca7fc38184ed02)
+
+running 16 tests
+test imaging::tests::supported_extensions_cover_classic_formats ... ok
+test menu_model::tests::shortcuts_use_macos_glyph_order ... ok
+test fsmodel::tests::classic_wildcard_filter ... ok
+test platform::alerts::tests::trash_alert_text_counts_and_truncates_a_large_selection ... ok
+test platform::alerts::tests::trash_alert_text_names_a_single_item ... ok
+test platform::alerts::tests::trash_names_falls_back_to_the_full_path ... ok
+test fsmodel::tests::non_images_are_never_listed ... ok
+test state::tests::state_escapes_line_breaks_and_backslashes ... ok
+test imaging::tests::prune_cache_removes_oldest_first ... ok
+test fsmodel::tests::folders_come_first_and_respect_sort_key ... ok
+test imaging::tests::decodes_png_and_reports_size ... ok
+test state::tests::state_round_trips ... ok
+test imaging::tests::exif_summary_reads_a_real_jpeg_block ... ok
+test imaging::tests::thumbnail_cache_round_trip ... ok
+test imaging::tests::scaled_keeps_aspect_ratio_and_never_upscales ... ok
+test imaging::tests::imageio_decodes_heic_when_available ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+
+   Doc-tests lumiere_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests lumiere_desktop
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: 1 target failed:
+    `-p lumiere --bin lumiere`

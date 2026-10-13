@@ -17,7 +17,7 @@ use objc2_image_io::{
     kCGImageSourceThumbnailMaxPixelSize, CGImageSource,
 };
 
-use super::{check_decode_dimensions, Decoded};
+use lumiere_core::imaging::{check_decode_dimensions, Decoded};
 
 const CG_ALPHA_PREMULTIPLIED_LAST: u32 = 1;
 const CG_BITMAP_BYTE_ORDER_32_BIG: u32 = 1 << 10;

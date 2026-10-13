@@ -31,7 +31,7 @@ pub fn default_application(path: &Path) -> Option<PathBuf> {
     }
 }
 
-pub fn application_icon(path: &Path) -> Option<egui::ColorImage> {
+pub fn application_icon(path: &Path) -> Option<lumiere_core::imaging::Decoded> {
     #[cfg(target_os = "macos")]
     {
         use objc2_app_kit::NSWorkspace;
@@ -43,10 +43,7 @@ pub fn application_icon(path: &Path) -> Option<egui::ColorImage> {
             .ok()?
             .thumbnail(32, 32)
             .to_rgba8();
-        Some(egui::ColorImage::from_rgba_unmultiplied(
-            [image.width() as usize, image.height() as usize],
-            image.as_raw(),
-        ))
+        Some(lumiere_core::imaging::Decoded::from_rgba(image))
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -62,7 +59,7 @@ pub fn choose_application() -> PanelResult {
         use objc2::MainThreadMarker;
         use objc2_app_kit::{NSModalResponseOK, NSOpenPanel};
         use objc2_foundation::{NSString, NSURL};
-        if cfg!(test) {
+        if cfg!(any(test, feature = "test-support")) {
             return PanelResult::Unavailable;
         }
         let Some(mtm) = MainThreadMarker::new() else {
@@ -149,7 +146,7 @@ fn native_choose_directory(title: &str, prompt: &str, start: Option<&Path>) -> P
 
     // Never from a test build: there is no `NSApplication` run loop to host a
     // modal panel, so the built-in dialog is the correct path there.
-    if cfg!(test) {
+    if cfg!(any(test, feature = "test-support")) {
         return PanelResult::Unavailable;
     }
     let Some(mtm) = MainThreadMarker::new() else {
@@ -200,7 +197,7 @@ pub fn reveal_in_finder(path: &Path) -> bool {
     use objc2_app_kit::NSWorkspace;
     use objc2_foundation::NSString;
 
-    if cfg!(test) {
+    if cfg!(any(test, feature = "test-support")) {
         return false;
     }
     if !path.exists() {
@@ -238,7 +235,7 @@ pub fn share_paths(paths: &[PathBuf]) -> bool {
     use objc2_app_kit::{NSApplication, NSSharingServicePicker};
     use objc2_foundation::{NSArray, NSRectEdge, NSString, NSURL};
 
-    if cfg!(test) || paths.is_empty() {
+    if cfg!(any(test, feature = "test-support")) || paths.is_empty() {
         return false;
     }
     // AppKit only works on the main thread.
@@ -299,7 +296,7 @@ pub fn apps_to_open(path: &Path) -> Vec<(String, PathBuf)> {
     use objc2_app_kit::NSWorkspace;
     use objc2_foundation::{NSString, NSURL};
 
-    if cfg!(test) {
+    if cfg!(any(test, feature = "test-support")) {
         return vec![
             (
                 "Preview".to_owned(),
@@ -351,7 +348,7 @@ pub fn open_with(paths: &[PathBuf], app: &Path) -> bool {
     if paths.is_empty() {
         return false;
     }
-    if cfg!(test) {
+    if cfg!(any(test, feature = "test-support")) {
         let _ = app;
         return true;
     }

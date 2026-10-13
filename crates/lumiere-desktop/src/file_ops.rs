@@ -57,7 +57,7 @@ pub fn trash<E>(
 where
     E: std::fmt::Display,
 {
-    let names = crate::alerts::trash_names(paths);
+    let names = crate::trash_names(paths);
     let mut moved = 0;
     let mut failures = Vec::new();
     for (index, (path, name)) in paths.iter().zip(&names).enumerate() {
@@ -148,3 +148,6 @@ pub fn rename_without_replace(from: &Path, to: &Path) -> std::io::Result<()> {
         ))
     }
 }
+
+/// Native Trash service; errors retain the backend error type and wording.
+pub use trash::delete as trash_delete;

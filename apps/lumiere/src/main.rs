@@ -1,20 +1,15 @@
 //! Lumiere - a classic 3.x style image browser and viewer for macOS.
 
-mod alerts;
 mod app;
 mod browser;
-mod dnd;
-mod file_ops;
-mod fsmodel;
-mod imaging;
-mod loader;
-mod macos_open;
-mod menu;
 mod panels;
-mod state;
+mod platform_ui;
 mod theme;
 mod viewer;
-mod window;
+
+use lumiere_desktop::platform::{alerts, window};
+use lumiere_desktop::{file_ops, fsmodel, imaging, loader, state};
+use platform_ui::{dnd, macos_open, menu};
 
 use eframe::egui;
 use std::path::PathBuf;
@@ -35,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     // eframe otherwise installs its bundled black "e" icon at runtime on
     // macOS, replacing the icon that AppKit loaded from the .app bundle.
-    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/AppIcon.png"))?;
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/AppIcon.png"))?;
 
     let viewport = egui::ViewportBuilder::default()
         .with_title(app::APP_TITLE)

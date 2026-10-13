@@ -2,7 +2,7 @@
 //!
 //! On macOS the destructive confirmation is a real `NSAlert`, which runs
 //! AppKit's own event loop: the egui canvas simply waits behind it for as
-//! long as it takes, exactly like the native file panels in [`crate::panels`].
+//! long as it takes, exactly like the native file panels in [`crate::platform::panels`].
 //! Everywhere else — and in the headless test build, where there is no
 //! `NSApplication` run loop to host a modal — the caller falls back to the
 //! built-in egui dialog.
@@ -58,16 +58,7 @@ pub fn trash_alert_text(paths: &[PathBuf]) -> (String, String) {
 }
 
 /// The display names of `paths`, for the confirmation and the result toast.
-pub fn trash_names(paths: &[PathBuf]) -> Vec<String> {
-    paths
-        .iter()
-        .map(|path| {
-            path.file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| path.display().to_string())
-        })
-        .collect()
-}
+pub use crate::trash_names;
 
 /// Ask, with a native alert, whether `paths` may be moved to the Trash.
 pub fn confirm_trash(paths: &[PathBuf]) -> Confirmation {
@@ -91,7 +82,7 @@ fn native_confirm_trash(paths: &[PathBuf]) -> Confirmation {
 
     // Never from a test build: there is no `NSApplication` run loop to host a
     // modal, so the built-in dialog is the correct path there.
-    if cfg!(test) {
+    if cfg!(any(test, feature = "test-support")) {
         return Confirmation::Unavailable;
     }
     let Some(mtm) = MainThreadMarker::new() else {

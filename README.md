@@ -49,9 +49,9 @@ cargo build --release
 ### Checks
 
 ```sh
-cargo fmt --check
-cargo clippy --all-targets
-cargo test
+cargo fmt --all --check
+cargo clippy --locked --workspace --all-targets
+cargo test --locked --workspace -- --test-threads=1
 ```
 
 ### Package as a `.app`
@@ -85,7 +85,7 @@ repeatedly running bundles from `build/`, `dist/`, or `/tmp`.
 ## Format support and storage
 
 - Built-in via the `image` crate: JPEG, PNG, GIF, BMP, TIFF, WebP, TGA, PCX, ICO, …
-- HEIC / HEIF / AVIF via macOS ImageIO (`src/imaging/macos.rs`, `objc2-image-io`)
+- HEIC / HEIF / AVIF via macOS ImageIO (`crates/lumiere-desktop/src/platform/image_io.rs`, `objc2-image-io`)
 - EXIF via `kamadak-exif`
 - "Move to Trash" (`⌘⌫`) confirms with a native alert and moves items to the
   macOS Trash (`trash` crate), so they stay recoverable from Finder
@@ -130,25 +130,25 @@ same frame as the key event.
 
 | File | Purpose |
 | --- | --- |
-| `src/main.rs` | eframe entry point, CLI folder argument |
-| `src/app.rs` | app state, navigation, selection, native workflows and background jobs |
-| `src/app/cache.rs` | texture / metadata caches, decode scheduling and eviction budgets |
-| `src/app/commands.rs` | command dispatch, keyboard handling and slideshow transitions |
-| `src/app/menus.rs` | shared menu descriptions, toolbar, address row and status bar |
-| `src/app/dialogs.rs` | settings, rename, transfer, confirmations and feedback cards |
-| `src/app/view.rs` | frame composition, panels and window geometry |
-| `src/app/tests.rs` | existing headless application and interaction tests |
-| `src/file_ops.rs` | filesystem operation safety rules and injectable Trash backend |
-| `src/browser.rs` | folder tree, thumbnail grid, preview / information pane |
-| `src/viewer.rs` | full image view: zoom, pan, rotate, flip, floating toolbar |
-| `src/loader.rs` | worker pool, request queue (full/preview jump the queue), reply channel |
-| `src/imaging.rs` | format detection, decode, EXIF, thumbnail cache |
-| `src/imaging/macos.rs` | ImageIO bridge for HEIC/HEIF/AVIF |
-| `src/fsmodel.rs` | directory scan, sorting, wildcard filter, tree model |
-| `src/theme.rs` | macOS visual layer: adaptive light/dark chrome, system font, monochrome line icons |
-| `src/menu.rs` | the menu bar as one platform-neutral description |
-| `src/menu/macos.rs` | that description as `NSMenu`s in the real macOS menu bar |
-| `src/window.rs` | whether a restored window position is still on a display |
+| `apps/lumiere/src/main.rs` | eframe entry point, CLI folder argument |
+| `apps/lumiere/src/app.rs` | app state, navigation, selection, native workflows and background jobs |
+| `apps/lumiere/src/app/cache.rs` | texture / metadata caches, decode scheduling and eviction budgets |
+| `apps/lumiere/src/app/commands.rs` | command dispatch, keyboard handling and slideshow transitions |
+| `apps/lumiere/src/app/menus.rs` | shared menu descriptions, toolbar, address row and status bar |
+| `apps/lumiere/src/app/dialogs.rs` | settings, rename, transfer, confirmations and feedback cards |
+| `apps/lumiere/src/app/view.rs` | frame composition, panels and window geometry |
+| `apps/lumiere/src/app/tests.rs` | existing headless application and interaction tests |
+| `crates/lumiere-desktop/src/file_ops.rs` | filesystem operation safety rules and injectable Trash backend |
+| `apps/lumiere/src/browser.rs` | folder tree, thumbnail grid, preview / information pane |
+| `apps/lumiere/src/viewer.rs` | full image view: zoom, pan, rotate, flip, floating toolbar |
+| `crates/lumiere-desktop/src/loader.rs` | worker pool, request queue (full/preview jump the queue), reply channel |
+| `crates/lumiere-desktop/src/imaging.rs` | format detection, decode, EXIF, thumbnail cache |
+| `crates/lumiere-desktop/src/platform/image_io.rs` | ImageIO bridge for HEIC/HEIF/AVIF |
+| `crates/lumiere-desktop/src/fsmodel.rs` | directory scan, sorting, wildcard filter, tree model |
+| `apps/lumiere/src/theme.rs` | macOS visual layer: adaptive light/dark chrome, system font, monochrome line icons |
+| `crates/lumiere-desktop/src/menu_model.rs` | the menu bar as one platform-neutral description |
+| `apps/lumiere/src/platform_ui/menu/macos.rs` | that description as `NSMenu`s in the real macOS menu bar |
+| `crates/lumiere-desktop/src/platform/window.rs` | whether a restored window position is still on a display |
 
 ## Testing
 
@@ -182,3 +182,10 @@ the same license.
 
 The project includes third-party material under its own terms. See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the applicable notices.
+
+The virtual Cargo workspace has three packages: `lumiere` (egui UI and native
+window/menu glue), `lumiere-desktop` (filesystem, workers, cache and native
+services), and `lumiere-core` (commands, session codec and portable pixels).
+Dependencies flow from app to desktop to core. Root build/run still select
+`lumiere`; use `cargo test --locked --workspace -- --test-threads=1` for all packages.
+See [the structure and validation record](docs/structure.md).

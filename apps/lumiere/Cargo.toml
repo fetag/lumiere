@@ -1,0 +1,83 @@
+[package]
+name = "lumiere"
+version = "0.1.2"
+edition = "2021"
+description = "A classic 3.x style image browser / viewer for macOS, written in Rust"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/fetag/lumiere"
+
+[dependencies]
+dirs = "7.0.0"
+eframe = "0.33.3"
+image = { version = "0.25", default-features = false, features = [
+    "bmp",
+    "gif",
+    "ico",
+    "jpeg",
+    "png",
+    "pnm",
+    "qoi",
+    "tga",
+    "tiff",
+    "webp",
+] }
+egui = "0.33.3"
+egui_extras = { version = "0.33.3", features = ["svg"] }
+log = "0.4"
+
+lumiere-core = { path = "../../crates/lumiere-core" }
+lumiere-desktop = { path = "../../crates/lumiere-desktop" }
+
+[dev-dependencies]
+lumiere-desktop = { path = "../../crates/lumiere-desktop", features = ["test-support"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.5"
+objc2-core-services = "0.3.2"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "NSRunningApplication",
+    "NSAlert",
+    "NSApplication",
+    "NSButton",
+    "NSCell",
+    "NSControl",
+    "NSDocument",
+    "NSEvent",
+    "NSMenu",
+    "NSMenuItem",
+    "NSImage",
+    "NSDragging",
+    "NSDraggingItem",
+    "NSDraggingSession",
+    "NSGraphicsContext",
+    "NSOpenPanel",
+    "NSPanel",
+    "NSPasteboard",
+    "NSPasteboardItem",
+    "NSResponder",
+    "NSSharingService",
+    "NSSavePanel",
+    "NSScreen",
+    "NSView",
+    "NSWindow",
+] }
+objc2-core-graphics = { version = "0.3.2", features = [
+    "CGContext",
+    "CGEventSource",
+    "CGImage",
+    "CGColorSpace",
+] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSAppleEventDescriptor",
+    "NSAppleEventManager",
+    "objc2-core-services",
+    "NSArray",
+    "NSError",
+    "NSObjCRuntime",
+    "NSString",
+    "NSProcessInfo",
+    "NSURL",
+] }

@@ -1,12 +1,4 @@
-//! The application menu bar.
-//!
-//! The menu is described once, in [`MenuBar`], and rendered by whichever back
-//! end the platform has: a real macOS menu bar on macOS ([`macos`]) and an
-//! in-window egui menu bar everywhere else. Keeping one description means the
-//! titles, shortcuts and enabled states cannot drift apart between the two.
-
-use crate::app::Action;
-
+use lumiere_core::command::Action;
 /// A key in a menu shortcut, spelled independently of any platform key code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key {
@@ -65,7 +57,6 @@ impl Shortcut {
 
     /// The macOS glyph spelling, e.g. `⌃⌘F` or `⌘⇧L`. Used by the in-window
     /// fallback menu on platforms that have no native one.
-    #[cfg(any(test, not(target_os = "macos")))]
     pub fn display(&self) -> String {
         let mut out = String::new();
         if self.control {
@@ -174,44 +165,16 @@ pub struct MenuBar {
     pub menus: Vec<(String, Vec<Item>)>,
 }
 
-#[cfg(target_os = "macos")]
-mod macos;
-
-/// Pushes the current menu description to the platform menu bar. A no-op where
-/// there is no native menu bar to push it to.
-pub fn sync(bar: &MenuBar) {
-    #[cfg(target_os = "macos")]
-    macos::sync(bar);
-    #[cfg(not(target_os = "macos"))]
-    let _ = bar;
-}
-
-/// Menu items the user picked since the last call.
-pub fn take_events() -> Vec<Action> {
-    #[cfg(target_os = "macos")]
-    {
-        macos::take_events()
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Vec::new()
+impl Item {
+    /// Applies an enabled state to an already-built item.
+    pub fn with_enabled(self, enabled: bool) -> Self {
+        let mut item = self;
+        if let Item::Command { enabled: slot, .. } = &mut item {
+            *slot = enabled;
+        }
+        item
     }
 }
-
-/// Gives the native menu bar a way to wake the UI up.
-///
-/// A menu pick is an AppKit event; it never reaches the window, so nothing else
-/// would ask egui for the frame that drains the picks.
-pub fn attach(ctx: &egui::Context) {
-    #[cfg(target_os = "macos")]
-    macos::attach(ctx);
-    #[cfg(not(target_os = "macos"))]
-    let _ = ctx;
-}
-
-/// Whether the platform provides the menu bar, in which case the app must not
-/// draw its own.
-pub const NATIVE: bool = cfg!(target_os = "macos");
 
 #[cfg(test)]
 mod tests {

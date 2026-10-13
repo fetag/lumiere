@@ -1847,22 +1847,46 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 name = "lumiere"
 version = "0.1.2"
 dependencies = [
- "chrono",
  "dirs",
  "eframe",
  "egui",
  "egui_extras",
  "image",
+ "log",
+ "lumiere-core",
+ "lumiere-desktop",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-graphics",
+ "objc2-core-services",
+ "objc2-foundation 0.3.2",
+]
+
+[[package]]
+name = "lumiere-core"
+version = "0.1.2"
+dependencies = [
+ "image",
+ "kamadak-exif",
+ "pcx",
+]
+
+[[package]]
+name = "lumiere-desktop"
+version = "0.1.2"
+dependencies = [
+ "chrono",
+ "dirs",
+ "image",
  "kamadak-exif",
  "log",
+ "lumiere-core",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
  "objc2-core-graphics",
- "objc2-core-services",
  "objc2-foundation 0.3.2",
  "objc2-image-io",
- "pcx",
  "trash",
 ]
 

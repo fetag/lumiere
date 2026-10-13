@@ -143,7 +143,7 @@ impl Loader {
 
     /// How many requests are still waiting for a worker. Test-only seam: the
     /// queue is otherwise opaque and timing-dependent.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn queued(&self) -> usize {
         let (lock, _) = &*self.queue;
         lock.lock().unwrap().len()

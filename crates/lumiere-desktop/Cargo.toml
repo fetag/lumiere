@@ -1,0 +1,81 @@
+[package]
+name = "lumiere-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+test-support = []
+
+[dependencies]
+kamadak-exif = "0.6.1"
+chrono = "0.4.45"
+dirs = "7.0.0"
+image = { version = "0.25", default-features = false, features = [
+    "bmp",
+    "gif",
+    "ico",
+    "jpeg",
+    "png",
+    "pnm",
+    "qoi",
+    "tga",
+    "tiff",
+    "webp",
+] }
+log = "0.4"
+trash = "5"
+
+lumiere-core = { path = "../lumiere-core" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.5"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "NSRunningApplication",
+    "NSAlert",
+    "NSApplication",
+    "NSButton",
+    "NSCell",
+    "NSControl",
+    "NSDocument",
+    "NSEvent",
+    "NSMenu",
+    "NSMenuItem",
+    "NSImage",
+    "NSDragging",
+    "NSDraggingItem",
+    "NSDraggingSession",
+    "NSGraphicsContext",
+    "NSOpenPanel",
+    "NSPanel",
+    "NSPasteboard",
+    "NSPasteboardItem",
+    "NSResponder",
+    "NSSharingService",
+    "NSSavePanel",
+    "NSScreen",
+    "NSView",
+    "NSWindow",
+] }
+objc2-core-foundation = "0.3.2"
+objc2-core-graphics = { version = "0.3.2", features = [
+    "CGContext",
+    "CGEventSource",
+    "CGImage",
+    "CGColorSpace",
+] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSAppleEventDescriptor",
+    "NSAppleEventManager",
+    "objc2-core-services",
+    "NSArray",
+    "NSError",
+    "NSObjCRuntime",
+    "NSString",
+    "NSProcessInfo",
+    "NSURL",
+] }
+objc2-image-io = "0.3.2"

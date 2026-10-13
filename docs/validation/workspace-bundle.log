@@ -1,0 +1,5 @@
+   Compiling lumiere-desktop v0.1.2 (/Users/james/workspace/lumiere/crates/lumiere-desktop)
+   Compiling lumiere v0.1.2 (/Users/james/workspace/lumiere/apps/lumiere)
+    Finished `release` profile [optimized] target(s) in 11.99s
+work-refactor-bundle/Lumiere.app: replacing existing signature
+built work-refactor-bundle/Lumiere.app
