@@ -129,7 +129,14 @@ same frame as the key event.
 | File | Purpose |
 | --- | --- |
 | `src/main.rs` | eframe entry point, CLI folder argument |
-| `src/app.rs` | app state, menus, toolbar, status bar, keyboard map, dialogs, tests |
+| `src/app.rs` | app state, navigation, selection, native workflows and background jobs |
+| `src/app/cache.rs` | texture / metadata caches, decode scheduling and eviction budgets |
+| `src/app/commands.rs` | command dispatch, keyboard handling and slideshow transitions |
+| `src/app/menus.rs` | shared menu descriptions, toolbar, address row and status bar |
+| `src/app/dialogs.rs` | settings, rename, transfer, confirmations and feedback cards |
+| `src/app/view.rs` | frame composition, panels and window geometry |
+| `src/app/tests.rs` | existing headless application and interaction tests |
+| `src/file_ops.rs` | filesystem operation safety rules and injectable Trash backend |
 | `src/browser.rs` | folder tree, thumbnail grid, preview / information pane |
 | `src/viewer.rs` | full image view: zoom, pan, rotate, flip, floating toolbar |
 | `src/loader.rs` | worker pool, request queue (full/preview jump the queue), reply channel |
