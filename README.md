@@ -91,7 +91,7 @@ repeatedly running bundles from `build/`, `dist/`, or `/tmp`.
   macOS Trash (`trash` crate), so they stay recoverable from Finder
 - Thumbnail cache: `~/Library/Caches/net.fetag.lumiere/thumbs`
 - Rename, Move and Copy reject existing destination names rather than overwrite files. Copy also rejects symbolic links.
-- Image decoding is limited to 50 million pixels. Background pixel processing is serialized to limit simultaneous decode allocations; oversized images show a load failure.
+- Full-resolution decoding is limited to 50 million pixels. On macOS, larger images use an ImageIO downsampled representation (up to 6000 pixels per side) while retaining original dimensions. Background pixel processing is serialized to limit simultaneous decode allocations.
 
 ## Keyboard shortcuts
 

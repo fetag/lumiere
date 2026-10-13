@@ -23,6 +23,8 @@ pub struct Decoded {
     pub rgba: Vec<u8>,
     /// True when the RGB channels are already multiplied by alpha.
     pub premultiplied: bool,
+    /// Original file dimensions when ImageIO decodes a reduced representation.
+    pub original_size: Option<(u32, u32)>,
 }
 
 impl Decoded {
@@ -33,6 +35,7 @@ impl Decoded {
             height,
             rgba: rgba.into_raw(),
             premultiplied: false,
+            original_size: None,
         }
     }
 
@@ -43,6 +46,7 @@ impl Decoded {
                 height: 0,
                 rgba: Vec::new(),
                 premultiplied: self.premultiplied,
+                original_size: self.original_size,
             };
         }
         let scale = (max_w as f64 / self.width as f64).min(max_h as f64 / self.height as f64);
@@ -55,12 +59,15 @@ impl Decoded {
                 height: self.height,
                 rgba: self.rgba.clone(),
                 premultiplied: self.premultiplied,
+                original_size: self.original_size,
             };
         }
         let img = RgbaImage::from_raw(self.width, self.height, self.rgba.clone())
             .expect("rgba buffer size mismatch");
         let out = imageops::thumbnail(&img, w, h);
-        Decoded::from_rgba(out)
+        let mut scaled = Decoded::from_rgba(out);
+        scaled.original_size = self.original_size;
+        scaled
     }
 }
 
@@ -91,7 +98,13 @@ pub fn decode(path: &Path) -> Result<Decoded, String> {
     let ext = extension(path);
     // Reject known oversized dimensions before considering a native fallback.
     if let Some((width, height)) = pixel_size(path) {
-        check_decode_dimensions(width, height)?;
+        if let Err(error) = check_decode_dimensions(width, height) {
+            #[cfg(target_os = "macos")]
+            if width > 0 && height > 0 {
+                return macos::decode(path);
+            }
+            return Err(error);
+        }
     }
 
     if ext == "pcx" {
@@ -169,11 +182,16 @@ fn decode_pcx(path: &Path) -> Result<Decoded, String> {
         height: h,
         rgba,
         premultiplied: false,
+        original_size: None,
     })
 }
 
 /// Rotate / flip so that the stored EXIF orientation is baked into the pixels.
 fn apply_orientation(path: &Path, img: Decoded) -> Decoded {
+    // Reduced ImageIO thumbnails already include the EXIF transform.
+    if img.original_size.is_some() {
+        return img;
+    }
     let orientation = read_orientation(path).unwrap_or(1);
     if !(2..=8).contains(&orientation) {
         return img;

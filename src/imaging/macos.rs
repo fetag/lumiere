@@ -5,12 +5,17 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 use objc2_core_foundation::{
-    CFDictionary, CFIndex, CFNumber, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize, CFURL,
+    CFBoolean, CFDictionary, CFIndex, CFNumber, CFRetained, CFString, CFType, CGPoint, CGRect,
+    CGSize, CFURL,
 };
 use objc2_core_graphics::{
     CGBitmapContextCreate, CGBitmapContextGetData, CGColorSpace, CGContext, CGImage,
 };
-use objc2_image_io::{kCGImagePropertyPixelHeight, kCGImagePropertyPixelWidth, CGImageSource};
+use objc2_image_io::{
+    kCGImagePropertyOrientation, kCGImagePropertyPixelHeight, kCGImagePropertyPixelWidth,
+    kCGImageSourceCreateThumbnailFromImageAlways, kCGImageSourceCreateThumbnailWithTransform,
+    kCGImageSourceThumbnailMaxPixelSize, CGImageSource,
+};
 
 use super::{check_decode_dimensions, Decoded};
 
@@ -44,13 +49,36 @@ pub fn decode(path: &Path) -> Result<Decoded, String> {
                 .and_then(|value| u32::try_from(value).ok())
                 .ok_or_else(|| "ImageIO returned invalid image dimensions".to_owned())
         };
-        check_decode_dimensions(
-            dimension(kCGImagePropertyPixelWidth)?,
-            dimension(kCGImagePropertyPixelHeight)?,
-        )?;
-        let image = source
-            .image_at_index(0, None)
-            .ok_or("ImageIO could not decode file")?;
+        let original_width = dimension(kCGImagePropertyPixelWidth)?;
+        let original_height = dimension(kCGImagePropertyPixelHeight)?;
+        if original_width == 0 || original_height == 0 {
+            return Err("ImageIO returned invalid image dimensions".to_owned());
+        }
+        let reduced = check_decode_dimensions(original_width, original_height).is_err();
+        let original_size =
+            if (5..=8).contains(&dimension(kCGImagePropertyOrientation).unwrap_or(1)) {
+                (original_height, original_width)
+            } else {
+                (original_width, original_height)
+            };
+        let image = if reduced {
+            let limit = CFNumber::new_i64(6000);
+            let keys = [
+                kCGImageSourceCreateThumbnailFromImageAlways,
+                kCGImageSourceThumbnailMaxPixelSize,
+                kCGImageSourceCreateThumbnailWithTransform,
+            ];
+            let values: [&CFType; 3] = [
+                CFBoolean::new(true).as_ref(),
+                limit.as_ref(),
+                CFBoolean::new(true).as_ref(),
+            ];
+            let options = CFDictionary::from_slices(&keys, &values);
+            source.thumbnail_at_index(0, Some(options.as_opaque()))
+        } else {
+            source.image_at_index(0, None)
+        }
+        .ok_or("ImageIO could not decode file")?;
 
         let width = CGImage::width(Some(&image)) as u32;
         let height = CGImage::height(Some(&image)) as u32;
@@ -91,6 +119,7 @@ pub fn decode(path: &Path) -> Result<Decoded, String> {
             height,
             rgba,
             premultiplied: true,
+            original_size: reduced.then_some(original_size),
         })
     }
 }

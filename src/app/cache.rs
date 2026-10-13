@@ -192,8 +192,16 @@ impl Caches {
                         texture,
                         upload.width,
                         upload.height,
-                        decoded.width,
-                        decoded.height,
+                        if request.kind == Kind::Full {
+                            decoded.original_size.map_or(decoded.width, |size| size.0)
+                        } else {
+                            decoded.width
+                        },
+                        if request.kind == Kind::Full {
+                            decoded.original_size.map_or(decoded.height, |size| size.1)
+                        } else {
+                            decoded.height
+                        },
                     ))
                 }
                 Err(error) => {
