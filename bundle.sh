@@ -35,7 +35,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleExecutable</key>      <string>Lumiere</string>
     <key>CFBundleIdentifier</key>      <string>net.fetag.lumiere</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
-    <key>CFBundleShortVersionString</key> <string>0.1.1</string>
+    <key>CFBundleShortVersionString</key> <string>0.1.2</string>
     <key>CFBundleVersion</key>         <string>$BUILD</string>
     <key>LSMinimumSystemVersion</key>  <string>11.0</string>
     <key>NSHighResolutionCapable</key> <true/>
