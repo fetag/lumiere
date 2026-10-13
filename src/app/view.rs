@@ -14,6 +14,14 @@ impl App {
         // The text fields are re-collected as the panels are laid out; a
         // focused button or grid cell must not count as "typing".
         self.text_field_ids.clear();
+        if let Some(path) = self.current_image_path() {
+            self.open_with_cache.prefetch(&path);
+        }
+        // Warm one representative per format as soon as a folder is shown,
+        // so hovering the submenu never performs native lookup or icon decode.
+        self.open_with_cache
+            .warm_folder(&self.entries, self.loader.generation());
+        self.open_with_cache.pump(ctx);
 
         // AppKit transient UI must run after the egui context menu that
         // requested it has closed; otherwise macOS can drop the presentation.
@@ -21,6 +29,24 @@ impl App {
             match action {
                 PendingSystemAction::Share(paths) => self.share_selection(paths),
                 PendingSystemAction::Reveal(paths) => self.reveal_selection(paths),
+                PendingSystemAction::OpenWith { paths, application } => {
+                    let application = match application {
+                        Some(application) => Some(application),
+                        None => match crate::panels::choose_application() {
+                            crate::panels::PanelResult::Chose(application) => Some(application),
+                            crate::panels::PanelResult::Cancelled => None,
+                            crate::panels::PanelResult::Unavailable => {
+                                self.notify("Application chooser is unavailable");
+                                None
+                            }
+                        },
+                    };
+                    if let Some(application) = application {
+                        if !crate::panels::open_with(&paths, &application) {
+                            self.notify("Couldn't open the file in the selected application");
+                        }
+                    }
+                }
             }
         }
 
@@ -227,7 +253,6 @@ impl App {
         self.rename_window(ctx);
         self.transfer_window(ctx);
         self.confirm_trash_window(ctx);
-        self.open_with_window(ctx);
 
         // Only a real text field holding the focus withdraws the menu's key
         // equivalents; a focused button, grid cell or tree row does not.

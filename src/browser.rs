@@ -9,6 +9,18 @@ use crate::imaging;
 use crate::loader::Kind;
 use crate::theme::{self, Icon};
 
+/// Add about 3 mm (11 points at 72 points/inch) on each horizontal side.
+fn padded_menu(ui: &mut Ui, contents: impl FnOnce(&mut Ui)) {
+    egui::Frame::NONE
+        .inner_margin(egui::Margin {
+            left: 11,
+            right: 11,
+            top: 0,
+            bottom: 0,
+        })
+        .show(ui, contents);
+}
+
 /// The stable identity of a grid cell, so focus requests and focus tracking
 /// keep working even when the list re-sorts or re-scans.
 pub(crate) fn grid_cell_id(index: usize) -> egui::Id {
@@ -277,13 +289,15 @@ fn sidebar_section(
         // Pinned Locations rows can be unpinned from a right-click.
         if removable {
             response.context_menu(|ui| {
-                let resp = ui.button("Remove from Sidebar");
-                // Registered so the headless tests can find and click it.
-                theme::note_rect(ui, "Remove from Sidebar", resp.rect);
-                if resp.clicked() {
-                    app.sidebar_remove(&path);
-                    ui.close();
-                }
+                padded_menu(ui, |ui| {
+                    let resp = ui.button("Remove from Sidebar");
+                    // Registered so the headless tests can find and click it.
+                    theme::note_rect(ui, "Remove from Sidebar", resp.rect);
+                    if resp.clicked() {
+                        app.sidebar_remove(&path);
+                        ui.close();
+                    }
+                })
             });
         }
     }
@@ -682,77 +696,118 @@ fn thumbnail(
     // The macOS order: the non-destructive actions first, then Get Info,
     // and the destructive Move to Trash set apart by a separator.
     response.context_menu(|ui| {
-        // A row, registered so the headless tests can find and click it.
-        let row = |ui: &mut egui::Ui, label: &str| -> bool {
-            let resp = ui.button(label);
-            theme::note_rect(ui, label, resp.rect);
-            resp.clicked()
-        };
-        if entry.is_image {
-            if row(ui, "View") {
-                app.mode = Mode::Viewer;
-                ui.close();
-            }
-        } else if row(ui, "Explore") {
-            app.set_dir(entry.path.clone());
-            ui.close();
-        }
-        if row(ui, "Share") {
-            app.defer_share_selection(app.selection_paths(), ui.ctx());
-            ui.close();
-        }
-        if row(ui, "Reveal in Finder") {
-            app.defer_reveal_selection(app.selection_paths(), ui.ctx());
-            ui.close();
-        }
-        if entry.is_dir {
-            let pinned = app.sidebar_dirs.contains(&entry.path);
-            let label = if pinned {
-                "Remove from Sidebar"
-            } else {
-                "Add to Sidebar"
+        padded_menu(ui, |ui| {
+            // A row, registered so the headless tests can find and click it.
+            let row = |ui: &mut egui::Ui, label: &str| -> bool {
+                let resp = ui.button(label);
+                theme::note_rect(ui, label, resp.rect);
+                resp.clicked()
             };
-            if row(ui, label) {
-                if pinned {
-                    app.sidebar_remove(&entry.path);
-                } else {
-                    app.sidebar_add(entry.path.clone());
+            if entry.is_image {
+                if row(ui, "View") {
+                    app.mode = Mode::Viewer;
+                    ui.close();
                 }
+            } else if row(ui, "Explore") {
+                app.set_dir(entry.path.clone());
                 ui.close();
             }
-        }
-        if entry.is_image {
-            if row(ui, "Open with default app") {
+            if row(ui, "Share") {
+                app.defer_share_selection(app.selection_paths(), ui.ctx());
+                ui.close();
+            }
+            if row(ui, "Reveal in Finder") {
+                app.defer_reveal_selection(app.selection_paths(), ui.ctx());
+                ui.close();
+            }
+            if entry.is_dir {
+                let pinned = app.sidebar_dirs.contains(&entry.path);
+                let label = if pinned {
+                    "Remove from Sidebar"
+                } else {
+                    "Add to Sidebar"
+                };
+                if row(ui, label) {
+                    if pinned {
+                        app.sidebar_remove(&entry.path);
+                    } else {
+                        app.sidebar_add(entry.path.clone());
+                    }
+                    ui.close();
+                }
+            }
+            if entry.is_image {
+                if row(ui, "Open with default app") {
+                    app.selected = index;
+                    app.act(Action::OpenWithDefault, ui.ctx());
+                    ui.close();
+                }
+                let submenu = ui.menu_button("Open With", |ui| {
+                    padded_menu(ui, |ui| {
+                        if let Some(applications) = app.open_with_cache.applications(&entry.path) {
+                            let mut previous_default = false;
+                            for application in applications {
+                                if previous_default && !application.default {
+                                    ui.separator();
+                                }
+                                previous_default = application.default;
+                                let label = if application.default {
+                                    format!("{} (default)", application.name)
+                                } else {
+                                    application.name
+                                };
+                                let button = if let Some(icon) = &application.icon {
+                                    egui::Button::image_and_text(
+                                        egui::Image::new(icon)
+                                            .fit_to_exact_size(egui::vec2(18.0, 18.0)),
+                                        &label,
+                                    )
+                                } else {
+                                    egui::Button::new(&label)
+                                };
+                                if ui.add(button).clicked() {
+                                    app.defer_open_with(
+                                        app.selection_paths(),
+                                        Some(application.path),
+                                        ui.ctx(),
+                                    );
+                                    ui.close();
+                                }
+                            }
+                        } else {
+                            ui.add_enabled(false, egui::Button::new("Loading applications…"));
+                        }
+                        ui.separator();
+                        if ui.button("Other…").clicked() {
+                            app.defer_open_with(app.selection_paths(), None, ui.ctx());
+                            ui.close();
+                        }
+                    });
+                });
+                theme::note_rect(ui, "Open With", submenu.response.rect);
+            }
+            // The clipboard gets the name or the full path — the reading of
+            // "Copy" a picture browser can do without moving anything.
+            if row(ui, "Copy") {
+                copy_text(ui.ctx(), entry.name.clone());
+                ui.close();
+            }
+            if row(ui, "Copy Path") {
+                copy_text(ui.ctx(), entry.path.display().to_string());
+                ui.close();
+            }
+            if row(ui, "Get Info") {
                 app.selected = index;
-                app.act(Action::OpenWithDefault, ui.ctx());
+                app.show_inspector = true;
+                app.state_dirty = true;
                 ui.close();
             }
-            if row(ui, "Open With…") {
-                app.open_with_for(entry.path.clone());
+            ui.separator();
+            if row(ui, "Move to Trash") {
+                app.begin_trash(app.selection_paths());
                 ui.close();
             }
-        }
-        // The clipboard gets the name or the full path — the reading of
-        // "Copy" a picture browser can do without moving anything.
-        if row(ui, "Copy") {
-            copy_text(ui.ctx(), entry.name.clone());
-            ui.close();
-        }
-        if row(ui, "Copy Path") {
-            copy_text(ui.ctx(), entry.path.display().to_string());
-            ui.close();
-        }
-        if row(ui, "Get Info") {
-            app.selected = index;
-            app.show_inspector = true;
-            app.state_dirty = true;
-            ui.close();
-        }
-        ui.separator();
-        if row(ui, "Move to Trash") {
-            app.begin_trash(app.selection_paths());
-            ui.close();
-        }
+        })
     });
 
     if response.double_clicked() {
@@ -949,13 +1004,15 @@ pub fn preview_pane(app: &mut App, ui: &mut Ui) {
                     // Right-clicking a value copies it, so the metadata is
                     // copyable without leaving the pane.
                     click.context_menu(|ui| {
-                        let label = format!("Copy {key}");
-                        let resp = ui.button(label.clone());
-                        theme::note_rect(ui, &label, resp.rect);
-                        if resp.clicked() {
-                            copy_text(ui.ctx(), value);
-                            ui.close();
-                        }
+                        padded_menu(ui, |ui| {
+                            let label = format!("Copy {key}");
+                            let resp = ui.button(label.clone());
+                            theme::note_rect(ui, &label, resp.rect);
+                            if resp.clicked() {
+                                copy_text(ui.ctx(), value);
+                                ui.close();
+                            }
+                        })
                     });
                 });
             }

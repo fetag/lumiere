@@ -464,45 +464,4 @@ impl App {
                 });
             });
     }
-
-    /// The "Open With…" dialog: the applications LaunchServices says can open
-    /// the file, each opening it in that application.
-    pub(super) fn open_with_window(&mut self, ctx: &Context) {
-        let Some(target) = self.open_with.clone() else {
-            return;
-        };
-        egui::Window::new("Open With")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ctx, |ui| {
-                ui.label(format!("Open {} in:", file_name_of(Some(&target.path))));
-                ui.add_space(8.0);
-                if target.apps.is_empty() {
-                    ui.label("No applications can open this file.");
-                    ui.add_space(4.0);
-                }
-                for (name, app) in &target.apps {
-                    let label = format!("Open in {name}");
-                    let resp = ui.button(&label);
-                    theme::note_rect(ui, &label, resp.rect);
-                    if resp.clicked() {
-                        let opened =
-                            crate::panels::open_with(std::slice::from_ref(&target.path), app);
-                        self.open_with = None;
-                        if !opened {
-                            self.notify("Couldn't open the file");
-                        }
-                    }
-                }
-                if !target.apps.is_empty() {
-                    ui.add_space(4.0);
-                }
-                let resp = ui.button("Cancel");
-                theme::note_rect(ui, "Cancel", resp.rect);
-                if resp.clicked() {
-                    self.open_with = None;
-                }
-            });
-    }
 }

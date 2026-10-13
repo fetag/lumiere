@@ -13,6 +13,93 @@
 
 use std::path::{Path, PathBuf};
 
+pub fn default_application(path: &Path) -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::NSWorkspace;
+        use objc2_foundation::{NSString, NSURL};
+        let url = NSURL::fileURLWithPath(&NSString::from_str(path.to_string_lossy().as_ref()));
+        NSWorkspace::sharedWorkspace()
+            .URLForApplicationToOpenURL(&url)?
+            .path()
+            .map(|value| PathBuf::from(value.to_string()))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        None
+    }
+}
+
+pub fn application_icon(path: &Path) -> Option<egui::ColorImage> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::NSWorkspace;
+        use objc2_foundation::NSString;
+        let icon = NSWorkspace::sharedWorkspace()
+            .iconForFile(&NSString::from_str(path.to_string_lossy().as_ref()));
+        let data = icon.TIFFRepresentation()?;
+        let image = image::load_from_memory(&data.to_vec())
+            .ok()?
+            .thumbnail(32, 32)
+            .to_rgba8();
+        Some(egui::ColorImage::from_rgba_unmultiplied(
+            [image.width() as usize, image.height() as usize],
+            image.as_raw(),
+        ))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        None
+    }
+}
+
+/// Select a single application bundle using the native macOS open panel.
+pub fn choose_application() -> PanelResult {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::MainThreadMarker;
+        use objc2_app_kit::{NSModalResponseOK, NSOpenPanel};
+        use objc2_foundation::{NSString, NSURL};
+        if cfg!(test) {
+            return PanelResult::Unavailable;
+        }
+        let Some(mtm) = MainThreadMarker::new() else {
+            return PanelResult::Unavailable;
+        };
+        let panel = NSOpenPanel::openPanel(mtm);
+        panel.setCanChooseFiles(true);
+        panel.setCanChooseDirectories(false);
+        panel.setAllowsMultipleSelection(false);
+        panel.setTreatsFilePackagesAsDirectories(false);
+        // Compatible with the project's macOS 11 deployment target; constrain
+        // selection to application bundles rather than arbitrary documents.
+        #[allow(deprecated)]
+        panel.setAllowedFileTypes(Some(&objc2_foundation::NSArray::from_retained_slice(&[
+            NSString::from_str("app"),
+        ])));
+        panel.setTitle(Some(&NSString::from_str("Choose an Application")));
+        panel.setPrompt(Some(&NSString::from_str("Open")));
+        panel.setDirectoryURL(Some(&NSURL::fileURLWithPath(&NSString::from_str(
+            "/Applications",
+        ))));
+        if panel.runModal() != NSModalResponseOK {
+            return PanelResult::Cancelled;
+        }
+        panel
+            .URLs()
+            .firstObject()
+            .and_then(|url| url.path())
+            .map(|path| PanelResult::Chose(PathBuf::from(path.to_string())))
+            .unwrap_or(PanelResult::Cancelled)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        PanelResult::Unavailable
+    }
+}
+
 // AppKit presents a sharing picker asynchronously. Keep the picker alive on
 // the main thread after `show…` returns; otherwise its Rust `Retained` owner
 // is dropped immediately and the sheet can vanish before AppKit displays it.

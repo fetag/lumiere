@@ -19,6 +19,7 @@ mod cache;
 mod commands;
 mod dialogs;
 mod menus;
+mod open_with;
 
 use cache::*;
 mod view;
@@ -221,10 +222,8 @@ pub struct App {
     pub notice: Option<Notice>,
     /// The batch file operation on its worker thread, when one is running.
     job: Option<RunningJob>,
-    /// The "Open With…" dialog, when one is up: the file being opened and
-    /// the applications LaunchServices offered for it.
-    pub open_with: Option<OpenWithTarget>,
     pending_system_action: Option<PendingSystemAction>,
+    pub(crate) open_with_cache: open_with::OpenWithCache,
     /// The drag-in state machine: a file drag is recognized from the
     /// pasteboard and the physical button state, so the decision lives in a
     /// pure, testable watch rather than in the native glue.
@@ -288,18 +287,13 @@ pub enum FileOp {
     },
 }
 
-/// The file the "Open With…" dialog is choosing an application for, with
-/// the applications LaunchServices says can open it.
-#[derive(Clone)]
-pub struct OpenWithTarget {
-    pub path: PathBuf,
-    /// (display name, application bundle path) pairs.
-    pub apps: Vec<(String, PathBuf)>,
-}
-
 enum PendingSystemAction {
     Share(Vec<PathBuf>),
     Reveal(Vec<PathBuf>),
+    OpenWith {
+        paths: Vec<PathBuf>,
+        application: Option<PathBuf>,
+    },
 }
 
 /// A batch file operation running on its own thread, so a long copy never
@@ -450,8 +444,8 @@ impl App {
             restore_frames: 0,
             notice: None,
             job: None,
-            open_with: None,
             pending_system_action: None,
+            open_with_cache: open_with::OpenWithCache::default(),
             drop_watch: crate::dnd::DropWatch::new(),
             drag_out_active: false,
             drag_out: None,
@@ -692,6 +686,16 @@ impl App {
         }
     }
 
+    pub(crate) fn defer_open_with(
+        &mut self,
+        paths: Vec<PathBuf>,
+        application: Option<PathBuf>,
+        ctx: &Context,
+    ) {
+        self.pending_system_action = Some(PendingSystemAction::OpenWith { paths, application });
+        ctx.request_repaint();
+    }
+
     /// The "Reveal in Finder" item: open a Finder window with the file
     /// selected.
     pub fn reveal_selection(&mut self, paths: Vec<PathBuf>) {
@@ -708,13 +712,6 @@ impl App {
             self.pending_system_action = Some(PendingSystemAction::Reveal(paths));
             ctx.request_repaint();
         }
-    }
-
-    /// The "Open With…" item: ask LaunchServices which applications can open
-    /// the file and bring up the dialog with them.
-    pub fn open_with_for(&mut self, path: PathBuf) {
-        let apps = crate::panels::apps_to_open(&path);
-        self.open_with = Some(OpenWithTarget { path, apps });
     }
 
     /// Files dropped onto the window: a folder becomes the browsed

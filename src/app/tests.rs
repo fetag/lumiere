@@ -2518,7 +2518,7 @@ fn right_click_menu_lists_the_macos_workflow_in_order() {
         panic!("grid cell never laid out");
     };
     right_click_at(&ctx, &mut app, pos, &mut time);
-    let text = painted_once(&ctx, &mut app, "Open With…");
+    let text = painted_once(&ctx, &mut app, "Open With");
     let lines: Vec<&str> = text.lines().collect();
 
     // Each menu row, in order, on its own painted line.
@@ -2528,7 +2528,7 @@ fn right_click_menu_lists_the_macos_workflow_in_order() {
         "Share",
         "Reveal in Finder",
         "Open with default app",
-        "Open With…",
+        "Open With",
         "Copy",
         "Copy Path",
         "Get Info",
@@ -2689,11 +2689,9 @@ fn copying_a_metadata_row_puts_the_value_on_the_clipboard() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// The "Open With…" item brings up the dialog with the applications
-/// LaunchServices can open the file with (a fixed list in a test build);
-/// choosing one opens the file and closes the dialog.
+/// Open With lists applications in a submenu rather than a separate dialog.
 #[test]
-fn open_with_dialog_lists_apps_and_opens_in_one() {
+fn open_with_submenu_lists_applications() {
     let dir = fixture_dir("openwith");
     let ctx = egui::Context::default();
     let mut app = App::build(&ctx, Some(dir.clone()));
@@ -2703,17 +2701,13 @@ fn open_with_dialog_lists_apps_and_opens_in_one() {
         panic!("grid cell never laid out");
     };
     right_click_at(&ctx, &mut app, pos, &mut time);
-    painted_once(&ctx, &mut app, "Open With…");
-    assert!(click_label(&ctx, &mut app, "Open With…", &mut time));
+    painted_once(&ctx, &mut app, "Open With");
+    assert!(click_label(&ctx, &mut app, "Open With", &mut time));
 
-    let text = painted_once(&ctx, &mut app, "Open in Preview");
-    assert!(text.contains("Open one.png in:"));
-    assert!(text.contains("Open in Preview"));
-    assert!(text.contains("Open in Photos"));
-
-    // Choosing an application opens the file and closes the dialog.
-    assert!(click_label(&ctx, &mut app, "Open in Preview", &mut time));
-    assert!(app.open_with.is_none());
+    let text = painted_once(&ctx, &mut app, "Preview");
+    assert!(text.contains("Preview"));
+    assert!(text.contains("Photos"));
+    assert!(text.contains("Other…"));
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
