@@ -10,7 +10,7 @@ use objc2_core_graphics::{
 };
 use objc2_image_io::CGImageSource;
 
-use super::Decoded;
+use super::{check_decode_dimensions, Decoded};
 
 const CG_ALPHA_PREMULTIPLIED_LAST: u32 = 1;
 const CG_BITMAP_BYTE_ORDER_32_BIG: u32 = 1 << 10;
@@ -38,6 +38,7 @@ pub fn decode(path: &Path) -> Result<Decoded, String> {
         if width == 0 || height == 0 {
             return Err("ImageIO returned an empty image".to_string());
         }
+        check_decode_dimensions(width, height)?;
 
         let space =
             CGColorSpace::new_device_rgb().ok_or_else(|| "no RGB colorspace".to_string())?;

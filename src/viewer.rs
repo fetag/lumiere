@@ -219,7 +219,7 @@ pub fn view(app: &mut App, ui: &mut Ui) {
 
     // Holding Space is the hand tool: the grab cursor advertises that the
     // picture can be dragged while Space stays down.
-    if ui.input(|i| i.key_pressed(egui::Key::Space)) {
+    if response.hovered() && ui.input(|i| i.key_down(egui::Key::Space)) {
         ui.ctx().set_cursor_icon(if response.dragged() {
             egui::CursorIcon::Grabbing
         } else {

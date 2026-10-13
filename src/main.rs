@@ -4,6 +4,7 @@ mod alerts;
 mod app;
 mod browser;
 mod dnd;
+mod file_ops;
 mod fsmodel;
 mod imaging;
 mod loader;

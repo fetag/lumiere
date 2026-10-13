@@ -8,6 +8,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use image::imageops;
 use image::{ImageDecoder, ImageFormat, ImageReader, RgbaImage};
 
+/// Decoding happens before a texture can be downscaled. Keep untrusted images
+/// from making a worker allocate an unbounded RGBA buffer (four workers may
+/// decode concurrently).
+pub const MAX_DECODE_PIXELS: u64 = 150_000_000;
+
 #[cfg(target_os = "macos")]
 mod macos;
 
@@ -109,6 +114,15 @@ pub fn decode(path: &Path) -> Result<Decoded, String> {
 }
 
 fn decode_with_image(path: &Path) -> Result<Decoded, String> {
+    let reader = ImageReader::open(path)
+        .map_err(|e| format!("open failed: {e}"))?
+        .with_guessed_format()
+        .map_err(|e| format!("format failed: {e}"))?;
+    let (width, height) = reader
+        .into_decoder()
+        .map_err(|e| format!("header failed: {e}"))?
+        .dimensions();
+    check_decode_dimensions(width, height)?;
     let img = ImageReader::open(path)
         .map_err(|e| format!("open failed: {e}"))?
         .with_guessed_format()
@@ -118,10 +132,21 @@ fn decode_with_image(path: &Path) -> Result<Decoded, String> {
     Ok(Decoded::from_rgba(img.to_rgba8()))
 }
 
+pub fn check_decode_dimensions(width: u32, height: u32) -> Result<(), String> {
+    let pixels = u64::from(width).saturating_mul(u64::from(height));
+    if width == 0 || height == 0 || pixels > MAX_DECODE_PIXELS {
+        return Err(format!(
+            "image is too large to decode safely ({width} × {height}; limit is {MAX_DECODE_PIXELS} pixels)"
+        ));
+    }
+    Ok(())
+}
+
 fn decode_pcx(path: &Path) -> Result<Decoded, String> {
     let mut reader = pcx::Reader::from_file(path).map_err(|e| format!("pcx: {e}"))?;
     let (w, h) = reader.dimensions();
     let (w, h) = (w as u32, h as u32);
+    check_decode_dimensions(w, h)?;
     let mut rgb = vec![0u8; (w as usize) * (h as usize) * 3];
     reader
         .read_rgb_pixels(&mut rgb)
@@ -434,22 +459,30 @@ fn cache_key(path: &Path, size: u32) -> PathBuf {
     PathBuf::from(format!("{h:016x}_{size}.png"))
 }
 
+fn cached_thumbnail_in(root: &Path, path: &Path, size: u32) -> Option<PathBuf> {
+    let p = root.join(cache_key(path, size));
+    p.is_file().then_some(p)
+}
+
+fn store_thumbnail_in(root: &Path, path: &Path, size: u32, img: &Decoded) -> std::io::Result<()> {
+    fs::create_dir_all(root)?;
+    let Some(rgba) = RgbaImage::from_raw(img.width, img.height, img.rgba.clone()) else {
+        return Ok(());
+    };
+    let mut buf = Cursor::new(Vec::new());
+    rgba.write_to(&mut buf, ImageFormat::Png)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    fs::write(root.join(cache_key(path, size)), buf.into_inner())
+}
+
 pub fn cached_thumbnail(path: &Path, size: u32) -> Option<PathBuf> {
-    let p = cache_root().join(cache_key(path, size));
-    p.exists().then_some(p)
+    cached_thumbnail_in(&cache_root(), path, size)
 }
 
 pub fn store_thumbnail(path: &Path, size: u32, img: &Decoded) {
-    let dir = cache_root();
-    let _ = fs::create_dir_all(&dir);
-    let Some(rgba) = RgbaImage::from_raw(img.width, img.height, img.rgba.clone()) else {
-        return;
-    };
-    let mut buf = Cursor::new(Vec::new());
-    if rgba.write_to(&mut buf, ImageFormat::Png).is_err() {
-        return;
+    if let Err(error) = store_thumbnail_in(&cache_root(), path, size, img) {
+        log::warn!("could not store thumbnail for {}: {error}", path.display());
     }
-    let _ = fs::write(dir.join(cache_key(path, size)), buf.into_inner());
 }
 
 pub fn read_cached_thumbnail(file: &Path) -> Option<Decoded> {
@@ -469,11 +502,18 @@ pub fn prune_cache(dir: &Path, max_bytes: u64) -> std::io::Result<u64> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
+            let Ok(meta) = fs::symlink_metadata(&path) else {
+                continue;
+            };
+            // Cache contents are disposable, but must never turn a symlink
+            // into permission to walk or delete outside the cache root.
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            if meta.is_dir() {
                 stack.push(path);
                 continue;
             }
-            let Ok(meta) = entry.metadata() else { continue };
             let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
             total += meta.len();
             files.push((mtime, meta.len(), path));
@@ -510,6 +550,10 @@ pub fn clear_thumbnail_cache() -> std::io::Result<u64> {
                 .extension()
                 .map(|e| e == "png")
                 .unwrap_or(false)
+                && entry
+                    .file_type()
+                    .map(|kind| !kind.is_symlink())
+                    .unwrap_or(false)
                 && fs::remove_file(entry.path()).is_ok()
             {
                 count += 1;
@@ -614,13 +658,14 @@ mod tests {
     #[test]
     fn thumbnail_cache_round_trip() {
         let dir = temp_dir("cache");
+        let cache = dir.join("cache-root");
         let path = dir.join("cached.png");
         write_png(&path, 120, 80);
         let decoded = decode(&path).unwrap();
         let thumb = decoded.scaled(32, 32);
-        assert!(cached_thumbnail(&path, 32).is_none());
-        store_thumbnail(&path, 32, &thumb);
-        let file = cached_thumbnail(&path, 32).expect("cache entry");
+        assert!(cached_thumbnail_in(&cache, &path, 32).is_none());
+        store_thumbnail_in(&cache, &path, 32, &thumb).expect("cache write");
+        let file = cached_thumbnail_in(&cache, &path, 32).expect("cache entry");
         let reread = read_cached_thumbnail(&file).expect("cache read");
         assert_eq!((reread.width, reread.height), (32, 21));
         std::fs::remove_dir_all(&dir).unwrap();
@@ -677,5 +722,11 @@ mod tests {
         assert!(dir.join("c.png").exists());
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rejects_a_decode_bomb_before_allocating_pixels() {
+        assert!(check_decode_dimensions(15_001, 10_000).is_err());
+        assert!(check_decode_dimensions(15_000, 10_000).is_ok());
     }
 }

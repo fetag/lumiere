@@ -9,12 +9,14 @@ mod imp {
     use std::path::PathBuf;
     use std::sync::{Mutex, OnceLock};
 
-    use objc2::{define_class, msg_send, sel, ClassType, MainThreadMarker, MainThreadOnly};
     use objc2::rc::Retained;
     use objc2::runtime::{AnyObject, Imp, Sel};
+    use objc2::{define_class, msg_send, sel, ClassType, MainThreadMarker, MainThreadOnly};
     use objc2_app_kit::{NSApplication, NSApplicationDelegateReply, NSDocument};
     use objc2_core_services::{kAEOpenDocuments, kCoreEventClass, keyDirectObject};
-    use objc2_foundation::{NSArray, NSError, NSAppleEventDescriptor, NSAppleEventManager, NSURL, NSObject, NSString};
+    use objc2_foundation::{
+        NSAppleEventDescriptor, NSAppleEventManager, NSArray, NSError, NSObject, NSString, NSURL,
+    };
 
     static OPENED_FILES: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
     static EGUI_CONTEXT: OnceLock<eframe::egui::Context> = OnceLock::new();
@@ -162,7 +164,9 @@ mod imp {
         implementation: Imp,
         encoding: &std::ffi::CStr,
     ) {
-        let _ = unsafe { objc2::ffi::class_addMethod(class, selector, implementation, encoding.as_ptr()) };
+        let _ = unsafe {
+            objc2::ffi::class_addMethod(class, selector, implementation, encoding.as_ptr())
+        };
     }
 
     pub fn install() {
@@ -190,7 +194,10 @@ mod imp {
         let Some(delegate) = application.delegate() else {
             return;
         };
-        let object = <objc2::runtime::ProtocolObject<dyn objc2_app_kit::NSApplicationDelegate> as AsRef<AnyObject>>::as_ref(&delegate);
+        let object =
+            <objc2::runtime::ProtocolObject<dyn objc2_app_kit::NSApplicationDelegate> as AsRef<
+                AnyObject,
+            >>::as_ref(&delegate);
         let class = object.class() as *const _ as *mut _;
         // SAFETY: winit owns this delegate for the process lifetime. Its
         // class does not implement either optional document-opening selector,
@@ -199,19 +206,19 @@ mod imp {
             add_delegate_method(
                 class,
                 sel!(application:openFiles:),
-                std::mem::transmute(application_open_files as *const ()),
+                std::mem::transmute::<*const (), Imp>(application_open_files as *const ()),
                 c"v@:@@",
             );
             add_delegate_method(
                 class,
                 sel!(application:openFile:),
-                std::mem::transmute(application_open_file as *const ()),
+                std::mem::transmute::<*const (), Imp>(application_open_file as *const ()),
                 c"c@:@@",
             );
             add_delegate_method(
                 class,
                 sel!(application:openURLs:),
-                std::mem::transmute(application_open_urls as *const ()),
+                std::mem::transmute::<*const (), Imp>(application_open_urls as *const ()),
                 c"v@:@@",
             );
         }

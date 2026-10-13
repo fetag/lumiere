@@ -13,6 +13,16 @@
 
 use std::path::{Path, PathBuf};
 
+// AppKit presents a sharing picker asynchronously. Keep the picker alive on
+// the main thread after `show…` returns; otherwise its Rust `Retained` owner
+// is dropped immediately and the sheet can vanish before AppKit displays it.
+#[cfg(target_os = "macos")]
+thread_local! {
+    static ACTIVE_SHARE_PICKER: std::cell::RefCell<
+        Option<objc2::rc::Retained<objc2_app_kit::NSSharingServicePicker>>,
+    > = const { std::cell::RefCell::new(None) };
+}
+
 /// The outcome of asking the user to choose a directory.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PanelResult {
@@ -99,25 +109,27 @@ fn native_choose_directory(title: &str, prompt: &str, start: Option<&Path>) -> P
 /// there is no `NSApplication` to host it, the call is a no-op.
 #[cfg(target_os = "macos")]
 pub fn reveal_in_finder(path: &Path) -> bool {
-    use objc2::rc::Retained;
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSWorkspace;
-    use objc2_foundation::{NSArray, NSString, NSURL};
+    use objc2_foundation::NSString;
 
     if cfg!(test) {
         return false;
     }
-    // AppKit only works on the main thread.
+    if !path.exists() {
+        return false;
+    }
     let Some(_mtm) = MainThreadMarker::new() else {
         return false;
     };
-    let name = path.to_string_lossy();
-    let url = NSURL::fileURLWithPath(&NSString::from_str(name.as_ref()));
-    let urls: Vec<Retained<NSURL>> = vec![url];
-    let urls = NSArray::from_retained_slice(&urls);
-    let workspace = NSWorkspace::sharedWorkspace();
-    workspace.activateFileViewerSelectingURLs(&urls);
-    true
+    let full_path = NSString::from_str(path.to_string_lossy().as_ref());
+    let root_path = NSString::from_str(
+        path.parent()
+            .unwrap_or(Path::new("/"))
+            .to_string_lossy()
+            .as_ref(),
+    );
+    NSWorkspace::sharedWorkspace().selectFile_inFileViewerRootedAtPath(Some(&full_path), &root_path)
 }
 
 /// There is no Finder on other platforms for the file to be shown in.
@@ -173,8 +185,14 @@ pub fn share_paths(paths: &[PathBuf]) -> bool {
     // writing the picker requires.
     let picker =
         unsafe { NSSharingServicePicker::initWithItems(NSSharingServicePicker::alloc(), raw) };
-    let frame = view.frame();
-    picker.showRelativeToRect_ofView_preferredEdge(frame, &view, NSRectEdge::MinY);
+    // `frame` is expressed in the superview's coordinates. The picker API
+    // expects its rectangle in `view` coordinates, so use `bounds` or the
+    // picker can be positioned off-window on a titled/resized egui window.
+    picker.showRelativeToRect_ofView_preferredEdge(view.bounds(), &view, NSRectEdge::MinY);
+    // The picker is asynchronous. Retaining the current picker until the next
+    // invocation is intentionally conservative and avoids a use-after-free
+    // style lifetime bug in the bridge. AppKit owns the displayed UI itself.
+    ACTIVE_SHARE_PICKER.with(|active| *active.borrow_mut() = Some(picker));
     true
 }
 

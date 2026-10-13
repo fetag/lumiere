@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use egui::{Context, TextureHandle, TextureOptions, Vec2};
 
+use crate::file_ops::{self, Outcome as OpOutcome};
 use crate::fsmodel::{self, Entry, SortKey};
 use crate::imaging::{self, Info};
 use crate::loader::{Kind, Loader, Request};
@@ -510,6 +511,7 @@ pub struct App {
     /// The "Open With…" dialog, when one is up: the file being opened and
     /// the applications LaunchServices offered for it.
     pub open_with: Option<OpenWithTarget>,
+    pending_system_action: Option<PendingSystemAction>,
     /// The drag-in state machine: a file drag is recognized from the
     /// pasteboard and the physical button state, so the decision lives in a
     /// pure, testable watch rather than in the native glue.
@@ -582,11 +584,9 @@ pub struct OpenWithTarget {
     pub apps: Vec<(String, PathBuf)>,
 }
 
-/// What a batch file operation did: how many items moved, and — with the
-/// reason for each — which did not.
-pub struct OpOutcome {
-    pub moved: usize,
-    pub failures: Vec<(PathBuf, String)>,
+enum PendingSystemAction {
+    Share(Vec<PathBuf>),
+    Reveal(Vec<PathBuf>),
 }
 
 /// A batch file operation running on its own thread, so a long copy never
@@ -738,6 +738,7 @@ impl App {
             notice: None,
             job: None,
             open_with: None,
+            pending_system_action: None,
             drop_watch: crate::dnd::DropWatch::new(),
             drag_out_active: false,
             drag_out: None,
@@ -2031,7 +2032,7 @@ impl App {
             }
         }
         let dev = PathBuf::from("assets/AppIcon.png");
-        dev.is_file().then(|| dev)
+        dev.is_file().then_some(dev)
     }
 
     fn explore_window(&mut self, ctx: &Context) {
@@ -2128,7 +2129,7 @@ impl App {
 
     /// The files/folders a batch operation acts on: the multi-selection, in
     /// grid order, or the current entry when nothing is selected.
-    fn selection_paths(&self) -> Vec<PathBuf> {
+    pub(crate) fn selection_paths(&self) -> Vec<PathBuf> {
         let mut indices: Vec<usize> = self.multi.iter().copied().collect();
         indices.sort_unstable();
         let mut paths: Vec<PathBuf> = indices
@@ -2156,6 +2157,13 @@ impl App {
         }
     }
 
+    pub(crate) fn defer_share_selection(&mut self, paths: Vec<PathBuf>, ctx: &Context) {
+        if !paths.is_empty() {
+            self.pending_system_action = Some(PendingSystemAction::Share(paths));
+            ctx.request_repaint();
+        }
+    }
+
     /// The "Reveal in Finder" item: open a Finder window with the file
     /// selected.
     pub fn reveal_selection(&mut self, paths: Vec<PathBuf>) {
@@ -2164,6 +2172,13 @@ impl App {
         };
         if !crate::panels::reveal_in_finder(first) {
             self.notify("Reveal in Finder is unavailable");
+        }
+    }
+
+    pub(crate) fn defer_reveal_selection(&mut self, paths: Vec<PathBuf>, ctx: &Context) {
+        if !paths.is_empty() {
+            self.pending_system_action = Some(PendingSystemAction::Reveal(paths));
+            ctx.request_repaint();
         }
     }
 
@@ -2325,7 +2340,9 @@ impl App {
     /// report what happened, item by item.
     #[cfg(test)]
     pub fn apply_trash(&mut self, paths: &[PathBuf]) {
-        let outcome = run_trash(paths, None);
+        // Result reporting is unit-tested without mutating the developer's
+        // real Trash; native trash integration remains in `run_trash`.
+        let outcome = run_trash_with(paths, None, |path| std::fs::remove_file(path));
         self.report_trash(paths, outcome);
     }
 
@@ -2716,6 +2733,10 @@ impl App {
         if name.is_empty() || name == current {
             return;
         }
+        if !file_ops::is_single_file_name(name) {
+            self.notify("Rename failed: enter a single file name, not a path");
+            return;
+        }
         let target = path.with_file_name(name);
         match std::fs::rename(path, &target) {
             Ok(()) => {
@@ -2825,6 +2846,15 @@ impl App {
         // focused button or grid cell must not count as "typing".
         self.text_field_ids.clear();
 
+        // AppKit transient UI must run after the egui context menu that
+        // requested it has closed; otherwise macOS can drop the presentation.
+        if let Some(action) = self.pending_system_action.take() {
+            match action {
+                PendingSystemAction::Share(paths) => self.share_selection(paths),
+                PendingSystemAction::Reveal(paths) => self.reveal_selection(paths),
+            }
+        }
+
         // Whatever the file-operation worker finished this frame becomes
         // the result card before anything is painted.
         self.pump_job(ctx);
@@ -2923,8 +2953,10 @@ impl App {
             ctx.request_repaint_after(Duration::from_millis(150));
         }
         if let Some(notice) = &self.notice {
-            let ttl = if notice.actions.is_empty() { 4.0 } else { 10.0 };
-            if notice.born.elapsed().as_secs_f32() > ttl {
+            // A failure with Retry/Reveal is actionable information, not a
+            // toast. Keep it until dismissed so it cannot disappear while
+            // the user is reading the error details.
+            if notice.actions.is_empty() && notice.born.elapsed().as_secs_f32() > 4.0 {
                 self.notice = None;
             }
         }
@@ -2956,6 +2988,19 @@ impl App {
                 let width = i.viewport_rect().width();
                 width <= 0.0 || width >= 700.0
             });
+            if !panels_fit && (self.show_sidebar || self.show_inspector) {
+                egui::TopBottomPanel::top("compact_panel_notice")
+                    .exact_height(22.0)
+                    .show(ctx, |ui| {
+                        ui.label(
+                            egui::RichText::new(
+                                "Sidebar and Inspector are hidden until the window is wider.",
+                            )
+                            .small()
+                            .color(ui.visuals().weak_text_color()),
+                        );
+                    });
+            }
             if self.show_sidebar && panels_fit {
                 egui::SidePanel::left("sidebar")
                     .resizable(true)
@@ -3243,61 +3288,36 @@ fn run_transfer(
     copy: bool,
     progress: Option<&mpsc::Sender<JobMessage>>,
 ) -> OpOutcome {
-    if !dest.is_dir() {
-        return OpOutcome {
-            moved: 0,
-            failures: paths
-                .iter()
-                .map(|path| (path.clone(), format!("Not a folder: {}", dest.display())))
-                .collect(),
-        };
-    }
-    let mut moved = 0;
-    let mut failures = Vec::new();
-    for (index, path) in paths.iter().enumerate() {
-        let Some(name) = path.file_name() else {
-            continue;
-        };
-        let target = dest.join(name);
-        if target == *path {
-            continue;
-        }
-        let result = if copy {
-            copy_path(path, &target)
-        } else {
-            std::fs::rename(path, &target)
-        };
-        match result {
-            Ok(()) => moved += 1,
-            Err(error) => failures.push((path.clone(), error.to_string())),
-        }
+    let mut report = |index, name| {
         if let Some(tx) = progress {
-            let _ = tx.send(JobMessage::Progress(
-                index + 1,
-                name.to_string_lossy().into_owned(),
-            ));
+            let _ = tx.send(JobMessage::Progress(index, name));
         }
-    }
-    OpOutcome { moved, failures }
+    };
+    file_ops::transfer(paths, dest, copy, &mut report)
 }
 
 /// Move `paths` to the Trash with the `trash` crate — the items stay in the
 /// Finder's Trash, so the operation is recoverable. Pure filesystem work,
 /// so it is safe on the worker thread.
 fn run_trash(paths: &[PathBuf], progress: Option<&mpsc::Sender<JobMessage>>) -> OpOutcome {
-    let names = crate::alerts::trash_names(paths);
-    let mut moved = 0;
-    let mut failures = Vec::new();
-    for (index, (path, name)) in paths.iter().zip(&names).enumerate() {
-        match trash::delete(path) {
-            Ok(()) => moved += 1,
-            Err(error) => failures.push((path.clone(), error.to_string())),
-        }
+    run_trash_with(paths, progress, |path| trash::delete(path))
+}
+
+fn run_trash_with<F, E>(
+    paths: &[PathBuf],
+    progress: Option<&mpsc::Sender<JobMessage>>,
+    delete: F,
+) -> OpOutcome
+where
+    F: FnMut(&Path) -> Result<(), E>,
+    E: std::fmt::Display,
+{
+    let mut report = |index, name| {
         if let Some(tx) = progress {
-            let _ = tx.send(JobMessage::Progress(index + 1, name.clone()));
+            let _ = tx.send(JobMessage::Progress(index, name));
         }
-    }
-    OpOutcome { moved, failures }
+    };
+    file_ops::trash(paths, &mut report, delete)
 }
 
 /// The failed items, as a line the user can act on: "name: error", a few at
@@ -3334,19 +3354,6 @@ fn file_name_of(path: Option<&PathBuf>) -> String {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string()),
         None => String::new(),
-    }
-}
-
-fn copy_path(from: &Path, to: &Path) -> std::io::Result<()> {
-    if from.is_dir() {
-        std::fs::create_dir_all(to)?;
-        for entry in std::fs::read_dir(from)? {
-            let entry = entry?;
-            copy_path(&entry.path(), &to.join(entry.file_name()))?;
-        }
-        Ok(())
-    } else {
-        std::fs::copy(from, to).map(|_| ())
     }
 }
 
@@ -5097,6 +5104,25 @@ mod tests {
             "a failed trash run must offer a retry"
         );
 
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rename_rejects_paths_and_dot_names() {
+        assert!(file_ops::is_single_file_name("photo.png"));
+        assert!(!file_ops::is_single_file_name("nested/photo.png"));
+        assert!(!file_ops::is_single_file_name("../photo.png"));
+        assert!(!file_ops::is_single_file_name("."));
+        assert!(!file_ops::is_single_file_name(".."));
+    }
+
+    #[test]
+    fn copy_rejects_a_destination_inside_the_source() {
+        let dir = fixture_dir("copy_into_self");
+        let source = dir.join("nested");
+        let error =
+            file_ops::copy_path(&source, &source.join("child")).expect_err("must reject recursion");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

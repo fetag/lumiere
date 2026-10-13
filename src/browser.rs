@@ -400,8 +400,11 @@ pub fn grid(app: &mut App, ui: &mut Ui) {
         }
     }
 
-    // Take the entry list out of `app` so the cells can mutate the caches.
-    let entries = std::mem::take(&mut app.entries);
+    // Cells mutate App and context-menu actions read its selection. Keep the
+    // model available throughout layout; taking it out made every menu action
+    // resolving selected paths see an empty directory. A snapshot also allows
+    // navigation from a cell without overwriting the newly scanned directory.
+    let entries = app.entries.clone();
     let rows = entries.len().div_ceil(cols);
     let mut visible_rows = 0..0;
     if app.scroll_to_selected {
@@ -449,8 +452,6 @@ pub fn grid(app: &mut App, ui: &mut Ui) {
             }
         }
     }
-
-    app.entries = entries;
 
     let Some(hit) = click else { return };
     match hit {
@@ -655,7 +656,15 @@ fn thumbnail(
         .galley(text_pos, galley, text_color);
 
     if response.secondary_clicked() {
+        // Match Finder: right-clicking an existing selection operates on the
+        // whole selection; right-clicking elsewhere starts a new one-item
+        // selection so the highlight and the command target never disagree.
+        if !app.multi.contains(&index) {
+            app.multi.clear();
+            app.multi.insert(index);
+        }
         app.selected = index;
+        app.anchor = index;
     }
     // A held primary button is a possible drag-out. egui stops reporting the
     // press (`interact_pointer_pos`) the moment the pointer moves past the
@@ -689,11 +698,11 @@ fn thumbnail(
             ui.close();
         }
         if row(ui, "Share") {
-            app.share_selection(vec![entry.path.clone()]);
+            app.defer_share_selection(app.selection_paths(), ui.ctx());
             ui.close();
         }
         if row(ui, "Reveal in Finder") {
-            app.reveal_selection(vec![entry.path.clone()]);
+            app.defer_reveal_selection(app.selection_paths(), ui.ctx());
             ui.close();
         }
         if entry.is_dir {
@@ -741,8 +750,7 @@ fn thumbnail(
         }
         ui.separator();
         if row(ui, "Move to Trash") {
-            app.selected = index;
-            app.begin_trash(vec![entry.path.clone()]);
+            app.begin_trash(app.selection_paths());
             ui.close();
         }
     });

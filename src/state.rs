@@ -2,7 +2,7 @@
 //! plain `key=value` lines so there is no serialization dependency.
 
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -78,17 +78,17 @@ impl State {
             let Some((key, value)) = line.split_once('=') else {
                 continue;
             };
-            let value = value.trim();
+            let value = unescape(value.trim());
             match key.trim() {
-                "last_dir" => state.last_dir = Some(PathBuf::from(value)),
+                "last_dir" => state.last_dir = Some(PathBuf::from(&value)),
                 "width" => state.width = value.parse().unwrap_or(0.0),
                 "height" => state.height = value.parse().unwrap_or(0.0),
                 "x" => state.x = value.parse().unwrap_or(0.0),
                 "y" => state.y = value.parse().unwrap_or(0.0),
                 "thumb_size" => state.thumb_size = value.parse().unwrap_or(0),
-                "sort" => state.sort = value.to_owned(),
+                "sort" => state.sort = value,
                 "sort_reverse" => state.sort_reverse = value == "1",
-                "filter" => state.filter = value.to_owned(),
+                "filter" => state.filter = value,
                 "show_folders" => state.show_folders = value.parse().unwrap_or(-1),
                 "show_sidebar" => state.show_sidebar = value.parse().unwrap_or(-1),
                 "show_inspector" => state.show_inspector = value.parse().unwrap_or(-1),
@@ -119,7 +119,10 @@ impl State {
         }
         let mut text = String::new();
         if let Some(dir) = &self.last_dir {
-            text.push_str(&format!("last_dir={}\n", dir.display()));
+            text.push_str(&format!(
+                "last_dir={}\n",
+                escape(&dir.display().to_string())
+            ));
         }
         if self.width > 0.0 {
             text.push_str(&format!("width={}\n", self.width));
@@ -134,11 +137,11 @@ impl State {
             text.push_str(&format!("thumb_size={}\n", self.thumb_size));
         }
         if !self.sort.is_empty() {
-            text.push_str(&format!("sort={}\n", self.sort));
+            text.push_str(&format!("sort={}\n", escape(&self.sort)));
         }
         text.push_str(&format!("sort_reverse={}\n", self.sort_reverse as i32));
         if !self.filter.is_empty() {
-            text.push_str(&format!("filter={}\n", self.filter));
+            text.push_str(&format!("filter={}\n", escape(&self.filter)));
         }
         if self.show_folders >= 0 {
             text.push_str(&format!("show_folders={}\n", self.show_folders));
@@ -156,13 +159,73 @@ impl State {
             ));
         }
         for (i, dir) in self.sidebar_dirs.iter().enumerate() {
-            text.push_str(&format!("sidebar_dir_{}={}\n", i, dir.display()));
+            text.push_str(&format!(
+                "sidebar_dir_{}={}\n",
+                i,
+                escape(&dir.display().to_string())
+            ));
         }
         for (i, dir) in self.recent_dirs.iter().enumerate() {
-            text.push_str(&format!("recent_dir_{}={}\n", i, dir.display()));
+            text.push_str(&format!(
+                "recent_dir_{}={}\n",
+                i,
+                escape(&dir.display().to_string())
+            ));
         }
-        fs::write(path, text)
+        // A session file is user-private history (recent folders included).
+        // Write then rename so a crash cannot leave a half-written state file.
+        let tmp = path.with_extension("ini.tmp");
+        #[cfg(unix)]
+        let mut file = {
+            use std::os::unix::fs::OpenOptionsExt;
+            fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp)?
+        };
+        #[cfg(not(unix))]
+        let mut file = fs::File::create(&tmp)?;
+        let result = (|| {
+            file.write_all(text.as_bytes())?;
+            file.sync_all()?;
+            fs::rename(&tmp, path)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        result
     }
+}
+
+fn escape(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+}
+
+fn unescape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('\\') => out.push('\\'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -200,5 +263,18 @@ mod tests {
 
         fs::remove_file(&path).unwrap();
         assert_eq!(State::load_from(&path), State::default());
+    }
+
+    #[test]
+    fn state_escapes_line_breaks_and_backslashes() {
+        let path = std::env::temp_dir().join("lumiere_state_escape_test.ini");
+        let state = State {
+            filter: "line1\nline2\\pattern".to_owned(),
+            recent_dirs: vec![PathBuf::from("/tmp/line\nbreak")],
+            ..Default::default()
+        };
+        state.save_to(&path).unwrap();
+        assert_eq!(State::load_from(&path), state);
+        fs::remove_file(&path).unwrap();
     }
 }
