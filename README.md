@@ -25,6 +25,8 @@ slideshow mode for hands-off playback.
 The UI follows the macOS light/dark appearance, uses the system font, and keeps
 the chrome visually restrained with monochrome line icons.
 
+![Lumiere browse view](assets/lumiere-browse.webp)
+
 ## Highlights
 
 - **Three-pane browser**: folder tree, thumbnail grid, and preview/information pane
