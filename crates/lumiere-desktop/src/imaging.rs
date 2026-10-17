@@ -4,6 +4,7 @@ use std::fs;
 use std::io::{BufReader, Cursor};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::{error::Error, fmt};
 
 use image::{ImageDecoder, ImageFormat, ImageReader, RgbaImage};
 
@@ -12,6 +13,47 @@ use lumiere_core::imaging::{apply_orientation, decode_pcx, decode_with_image};
 /// from making a worker allocate an unbounded RGBA buffer (four workers may
 /// decode concurrently).
 pub use lumiere_core::imaging::{check_decode_dimensions, Decoded, MAX_DECODE_PIXELS};
+
+/// A decode failure with stable semantics for callers that need to decide
+/// whether retrying can help.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DecodeError {
+    ResourceLimit(String),
+    Io(String),
+    Corrupt(String),
+    Panic(String),
+}
+
+impl DecodeError {
+    pub fn from_message(message: impl Into<String>) -> Self {
+        let message = message.into();
+        if message.starts_with("resource limit:") || message.starts_with("image is too large") {
+            Self::ResourceLimit(message)
+        } else if message.starts_with("open failed:") || message.starts_with("pcx:") {
+            Self::Io(message)
+        } else {
+            Self::Corrupt(message)
+        }
+    }
+
+    pub fn is_resource_limit(&self) -> bool {
+        matches!(self, Self::ResourceLimit(_))
+    }
+}
+
+impl fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            Self::ResourceLimit(message)
+            | Self::Io(message)
+            | Self::Corrupt(message)
+            | Self::Panic(message) => message,
+        };
+        f.write_str(message)
+    }
+}
+
+impl Error for DecodeError {}
 
 #[cfg(target_os = "macos")]
 use crate::platform::image_io as macos;
@@ -26,6 +68,37 @@ pub const SUPPORTED_EXTS: &[&str] = &[
     "dng", "cr2", "cr3", "nef", "nrw", "arw", "srf", "sr2", "orf", "rw2", "raf", "pef", "raw",
 ];
 
+#[cfg(test)]
+mod bundle_tests {
+    use super::{DecodeError, SUPPORTED_EXTS};
+
+    #[test]
+    fn bundle_declares_every_supported_extension() {
+        let bundle = include_str!("../../../bundle.sh");
+        for extension in SUPPORTED_EXTS {
+            assert!(
+                bundle.contains(&format!("<string>{extension}</string>")),
+                "bundle.sh is missing the {extension} document extension"
+            );
+        }
+    }
+
+    #[test]
+    fn bundle_uses_cargo_version_metadata() {
+        let bundle = include_str!("../../../bundle.sh");
+        assert!(bundle.contains("cargo metadata --no-deps --format-version 1"));
+        assert!(bundle.contains("<string>$VERSION</string>"));
+    }
+
+    #[test]
+    fn decode_error_preserves_resource_limit_semantics() {
+        let error = DecodeError::from_message("resource limit: too many pixels");
+        assert!(error.is_resource_limit());
+        assert_eq!(error.to_string(), "resource limit: too many pixels");
+        assert!(!DecodeError::from_message("decode failed: truncated PNG").is_resource_limit());
+    }
+}
+
 pub fn extension(path: &Path) -> String {
     path.extension()
         .and_then(|e| e.to_str())
@@ -39,40 +112,44 @@ pub fn is_image(path: &Path) -> bool {
 }
 
 /// Decode an image, applying EXIF orientation when needed.
-pub fn decode(path: &Path) -> Result<Decoded, String> {
+pub fn decode(path: &Path) -> Result<Decoded, DecodeError> {
     let ext = extension(path);
     // Reject known oversized dimensions before considering a native fallback.
     if let Some((width, height)) = pixel_size(path) {
         if let Err(error) = check_decode_dimensions(width, height) {
             #[cfg(target_os = "macos")]
             if width > 0 && height > 0 {
-                return macos::decode(path);
+                return macos::decode(path).map_err(DecodeError::from_message);
             }
-            return Err(error);
+            return Err(DecodeError::ResourceLimit(error));
         }
     }
 
     if ext == "pcx" {
-        return decode_pcx(path);
+        return decode_pcx(path).map_err(DecodeError::from_message);
     }
 
     // Native ImageIO first for the formats Apple handles best (HEIC/AVIF/TIFF).
     #[cfg(target_os = "macos")]
     {
         if matches!(ext.as_str(), "heic" | "heif" | "hif" | "avif") {
-            return macos::decode(path).map(|img| apply_orientation(path, img));
+            return macos::decode(path)
+                .map(|img| apply_orientation(path, img))
+                .map_err(DecodeError::from_message);
         }
     }
 
     match decode_with_image(path) {
         Ok(img) => Ok(apply_orientation(path, img)),
-        Err(primary) if primary.starts_with("resource limit:") => Err(primary),
+        Err(primary) if DecodeError::from_message(primary.clone()).is_resource_limit() => {
+            Err(DecodeError::from_message(primary))
+        }
         #[cfg(target_os = "macos")]
         Err(primary) => macos::decode(path)
             .map(|img| apply_orientation(path, img))
-            .map_err(|fallback| format!("{primary}; {fallback}")),
+            .map_err(|fallback| DecodeError::Corrupt(format!("{primary}; {fallback}"))),
         #[cfg(not(target_os = "macos"))]
-        Err(primary) => Err(primary),
+        Err(primary) => Err(DecodeError::from_message(primary)),
     }
 }
 

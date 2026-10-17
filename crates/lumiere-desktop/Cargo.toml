@@ -58,6 +58,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSScreen",
     "NSView",
     "NSWindow",
+    "NSWorkspace",
 ] }
 objc2-core-foundation = "0.3.2"
 objc2-core-graphics = { version = "0.3.2", features = [
@@ -72,6 +73,7 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSAppleEventManager",
     "objc2-core-services",
     "NSArray",
+    "NSEnumerator",
     "NSError",
     "NSObjCRuntime",
     "NSString",

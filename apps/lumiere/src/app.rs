@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -79,6 +80,11 @@ pub struct App {
 
     pub caches: Caches,
     pub loader: Loader,
+    listing_tx: mpsc::Sender<ListingReply>,
+    listing_rx: mpsc::Receiver<ListingReply>,
+    listing_generation: u64,
+    /// File to select after the directory worker has supplied its entries.
+    pending_select: Option<(PathBuf, bool)>,
 
     pub sort: SortKey,
     pub sort_reverse: bool,
@@ -182,6 +188,15 @@ pub struct App {
     pub scroll_to_selected: bool,
 }
 
+/// A completed directory listing. The generation makes results from a folder
+/// left behind by a fast navigation harmless.
+struct ListingReply {
+    generation: u64,
+    entries: Vec<Entry>,
+}
+
+static NEXT_LISTING_GENERATION: AtomicU64 = AtomicU64::new(1);
+
 /// A short, non-modal report about something the app just did. It is shown
 /// as a floating card until it expires on its own or the user dismisses it,
 /// which is the whole of the app's standing feedback: there is no permanent
@@ -280,7 +295,7 @@ impl App {
         let saved = if cfg!(test) {
             crate::state::State::default()
         } else {
-            crate::state::State::load()
+            crate::state::load()
         };
         let restore_pos = if saved.x == 0.0 && saved.y == 0.0 {
             None
@@ -303,6 +318,7 @@ impl App {
             .or_else(dirs::home_dir)
             .unwrap_or_else(|| PathBuf::from("/"));
 
+        let (listing_tx, listing_rx) = mpsc::channel();
         let mut app = Self {
             mode: Mode::Browser,
             dir: dir.clone(),
@@ -317,6 +333,10 @@ impl App {
             recent_dirs: Vec::new(),
             caches: Caches::default(),
             loader: Loader::new(4),
+            listing_tx,
+            listing_rx,
+            listing_generation: 0,
+            pending_select: start_file.clone().map(|file| (file, false)),
             sort: SortKey::Name,
             sort_reverse: false,
             filter: "*.*".to_owned(),
@@ -381,36 +401,82 @@ impl App {
         };
         apply_preferences(&mut app, &saved);
         app.rescan();
-        if let Some(file) = start_file {
-            if let Some(index) = app.entries.iter().position(|e| e.path == file) {
-                app.selected = index;
-                app.anchor = index;
-                app.multi.insert(index);
-                app.scroll_to_selected = true;
-            }
-        }
         app
     }
 
     // -- directory handling ------------------------------------------------
 
     pub fn rescan(&mut self) {
-        self.entries = fsmodel::read_directory(&self.dir, self.show_folders, &self.filter);
-        fsmodel::sort_entries(&mut self.entries, self.sort, self.sort_reverse);
-        if self.selected >= self.entries.len() {
-            self.selected = self.entries.len().saturating_sub(1);
-        }
-        self.anchor = self.selected;
+        let generation = NEXT_LISTING_GENERATION.fetch_add(1, Ordering::Relaxed);
+        self.listing_generation = generation;
+        self.entries.clear();
+        self.selected = 0;
+        self.anchor = 0;
         self.multi.clear();
         self.path_edit = self.dir.display().to_string();
         let (_, dropped) = self.loader.bump_generation();
         self.caches.abandon(&dropped);
+
+        let dir = self.dir.clone();
+        let show_folders = self.show_folders;
+        let filter = self.filter.clone();
+        if cfg!(test) {
+            self.apply_listing(fsmodel::read_directory(&dir, show_folders, &filter));
+        } else {
+            // Listings can involve thousands of metadata calls on networked
+            // volumes. Keep that work out of egui's frame loop.
+            let tx = self.listing_tx.clone();
+            std::thread::spawn(move || {
+                let entries = fsmodel::read_directory(&dir, show_folders, &filter);
+                let _ = tx.send(ListingReply {
+                    generation,
+                    entries,
+                });
+            });
+        }
+    }
+
+    fn pump_listing(&mut self) {
+        while let Ok(reply) = self.listing_rx.try_recv() {
+            if reply.generation == self.listing_generation {
+                self.apply_listing(reply.entries);
+            }
+        }
+    }
+
+    fn apply_listing(&mut self, mut entries: Vec<Entry>) {
+        fsmodel::sort_entries(&mut entries, self.sort, self.sort_reverse);
+        self.entries = entries;
+        if self
+            .pending_select
+            .as_ref()
+            .is_some_and(|(path, _)| path.parent() == Some(self.dir.as_path()))
+        {
+            let (path, open_viewer) = self
+                .pending_select
+                .take()
+                .expect("pending selection exists");
+            if let Some(index) = self.entries.iter().position(|entry| entry.path == path) {
+                self.selected = index;
+                self.anchor = index;
+                self.multi.insert(index);
+                self.scroll_to_selected = true;
+                if open_viewer {
+                    self.mode = Mode::Viewer;
+                    let dropped = self.loader.purge_thumbs();
+                    self.caches.abandon(&dropped);
+                    self.fit = true;
+                    self.pan = Vec2::ZERO;
+                }
+            }
+        }
     }
 
     pub fn set_dir(&mut self, dir: PathBuf) {
         if !dir.is_dir() {
             return;
         }
+        self.pending_select = None;
         self.dir = dir;
         self.selected = 0;
         self.mode = Mode::Browser;
@@ -432,16 +498,11 @@ impl App {
             return;
         };
         self.set_dir(parent);
-        if let Some(index) = self.entries.iter().position(|entry| entry.path == file) {
-            self.selected = index;
-            self.anchor = index;
-            self.multi.insert(index);
-            self.scroll_to_selected = true;
-            self.mode = Mode::Viewer;
-            let dropped = self.loader.purge_thumbs();
-            self.caches.abandon(&dropped);
-            self.fit = true;
-            self.pan = Vec2::ZERO;
+        self.pending_select = Some((file, true));
+        // Tests apply listings synchronously; in the application the pending
+        // selection is resolved by `pump_listing` on the next frame.
+        if cfg!(test) {
+            self.apply_listing(self.entries.clone());
         }
     }
 
@@ -1324,9 +1385,27 @@ fn run_transfer(
 /// Finder's Trash, so the operation is recoverable. Pure filesystem work,
 /// so it is safe on the worker thread.
 fn run_trash(paths: &[PathBuf], progress: Option<&mpsc::Sender<JobMessage>>) -> OpOutcome {
-    run_trash_with(paths, progress, |path| file_ops::trash_delete(path))
+    run_trash_all_with(paths, progress, |paths| file_ops::trash_delete_all(paths))
 }
 
+fn run_trash_all_with<F, E>(
+    paths: &[PathBuf],
+    progress: Option<&mpsc::Sender<JobMessage>>,
+    delete_all: F,
+) -> OpOutcome
+where
+    F: FnOnce(&[PathBuf]) -> Result<(), E>,
+    E: std::fmt::Display,
+{
+    let mut report = |index, name| {
+        if let Some(tx) = progress {
+            let _ = tx.send(JobMessage::Progress(index, name));
+        }
+    };
+    file_ops::trash_all(paths, &mut report, delete_all)
+}
+
+#[cfg(test)]
 fn run_trash_with<F, E>(
     paths: &[PathBuf],
     progress: Option<&mpsc::Sender<JobMessage>>,

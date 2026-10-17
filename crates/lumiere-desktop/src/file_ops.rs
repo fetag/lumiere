@@ -70,6 +70,39 @@ where
     Outcome { moved, failures }
 }
 
+/// Move one selection to the system Trash in a single backend call. On macOS
+/// the Finder backend treats that as one delete action, so a multi-selection
+/// produces one Finder sound and one undoable operation.
+pub fn trash_all<E>(
+    paths: &[PathBuf],
+    progress: &mut dyn FnMut(usize, String),
+    delete_all: impl FnOnce(&[PathBuf]) -> Result<(), E>,
+) -> Outcome
+where
+    E: std::fmt::Display,
+{
+    let names = crate::trash_names(paths);
+    match delete_all(paths) {
+        Ok(()) => {
+            for (index, name) in names.into_iter().enumerate() {
+                progress(index + 1, name);
+            }
+            Outcome {
+                moved: paths.len(),
+                failures: Vec::new(),
+            }
+        }
+        Err(error) => Outcome {
+            moved: 0,
+            failures: paths
+                .iter()
+                .cloned()
+                .map(|path| (path, error.to_string()))
+                .collect(),
+        },
+    }
+}
+
 pub fn is_single_file_name(name: &str) -> bool {
     matches!(
         Path::new(name).components().next(),
@@ -150,4 +183,30 @@ pub fn rename_without_replace(from: &Path, to: &Path) -> std::io::Result<()> {
 }
 
 /// Native Trash service; errors retain the backend error type and wording.
-pub use trash::delete as trash_delete;
+pub use trash::delete_all as trash_delete_all;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trash_all_calls_the_backend_once_for_a_selection() {
+        let paths = vec![PathBuf::from("/tmp/one.jpg"), PathBuf::from("/tmp/two.jpg")];
+        let mut calls = 0;
+        let mut progress = Vec::new();
+        let outcome = trash_all(
+            &paths,
+            &mut |index, name| progress.push((index, name)),
+            |received| {
+                calls += 1;
+                assert_eq!(received, paths.as_slice());
+                Ok::<_, String>(())
+            },
+        );
+
+        assert_eq!(calls, 1);
+        assert_eq!(outcome.moved, 2);
+        assert!(outcome.failures.is_empty());
+        assert_eq!(progress.len(), 2);
+    }
+}

@@ -8,7 +8,7 @@ use std::sync::mpsc::{sync_channel, Receiver};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
-use crate::imaging::{self, Decoded};
+use crate::imaging::{self, DecodeError, Decoded};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Kind {
@@ -31,7 +31,7 @@ pub struct Request {
 
 pub struct Reply {
     pub request: Request,
-    pub result: Result<Decoded, String>,
+    pub result: Result<Decoded, DecodeError>,
 }
 
 type Queue = Arc<(Mutex<VecDeque<Request>>, Condvar)>;
@@ -81,7 +81,7 @@ impl Loader {
                                 .cloned()
                                 .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
                                 .unwrap_or_else(|| "panic".to_string());
-                            Err(format!("decoder panicked: {msg}"))
+                            Err(DecodeError::Panic(format!("decoder panicked: {msg}")))
                         });
                         let _ = tx.send(Reply { request, result });
                     }
@@ -196,7 +196,7 @@ impl Loader {
     }
 }
 
-fn produce(request: &Request) -> Result<Decoded, String> {
+fn produce(request: &Request) -> Result<Decoded, DecodeError> {
     // Include scaling and cache encoding in the gate: serializing only decode
     // would still let four workers retain full-resolution buffers together.
     static PIXEL_WORK: Mutex<()> = Mutex::new(());

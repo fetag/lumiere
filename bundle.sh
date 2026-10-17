@@ -9,6 +9,11 @@ mkdir -p "$OUT"
 
 cargo build --release -p lumiere --locked
 
+# Cargo.toml is the release-version authority. Keep the bundle metadata in
+# lockstep without asking a maintainer to edit a second value at release time.
+VERSION=$(cargo metadata --no-deps --format-version 1 | sed -n 's/.*"name":"lumiere","version":"\([^"]*\)".*/\1/p')
+[ -n "$VERSION" ]
+
 APP="$OUT/Lumiere.app"
 
 # Bump the build number: each rebuild is unambiguously newer, which is what
@@ -35,7 +40,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleExecutable</key>      <string>Lumiere</string>
     <key>CFBundleIdentifier</key>      <string>net.fetag.lumiere</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
-    <key>CFBundleShortVersionString</key> <string>0.1.2</string>
+    <key>CFBundleShortVersionString</key> <string>$VERSION</string>
     <key>CFBundleVersion</key>         <string>$BUILD</string>
     <key>LSMinimumSystemVersion</key>  <string>11.0</string>
     <key>NSHighResolutionCapable</key> <true/>
@@ -50,7 +55,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
             <key>CFBundleTypeExtensions</key>
             <array>
                 <string>jpg</string><string>jpeg</string><string>jpe</string><string>jfif</string>
-                <string>png</string><string>gif</string><string>bmp</string>
+                <string>png</string><string>gif</string><string>bmp</string><string>rle</string>
                 <string>tif</string><string>tiff</string><string>webp</string>
                 <string>ico</string><string>cur</string><string>tga</string><string>vda</string>
                 <string>icb</string><string>vst</string><string>pcx</string>

@@ -5,6 +5,7 @@ use super::*;
 impl App {
     /// One frame of UI, usable from tests as well as the eframe backend.
     pub fn draw(&mut self, ctx: &Context) {
+        self.pump_listing();
         // Finder can send this while Lumiere is already running. Drain all
         // documents so a multi-file Open With request has deterministic
         // last-document-selected behaviour.
@@ -122,7 +123,7 @@ impl App {
                 sidebar_dirs: self.sidebar_dirs.clone(),
                 recent_dirs: self.recent_dirs.clone(),
             };
-            if let Err(error) = state.save() {
+            if let Err(error) = crate::state::save(&state) {
                 log::warn!("could not save session: {error}");
                 self.notify("Couldn't save window and browsing preferences");
             }

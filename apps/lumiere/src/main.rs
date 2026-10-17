@@ -17,7 +17,7 @@ use std::path::PathBuf;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Register the document class before AppKit handles the launch document.
     macos_open::prepare();
-    let saved = state::State::load();
+    let saved = state::load();
     let width = if saved.width > 0.0 {
         saved.width
     } else {

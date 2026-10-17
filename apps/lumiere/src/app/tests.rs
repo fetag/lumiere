@@ -2066,7 +2066,7 @@ fn grid_queues_thumbnails_wider_than_the_viewport() {
 fn saved_preferences_are_restored() {
     let dir = fixture_dir("prefs");
     let path = std::env::temp_dir().join("lumiere_prefs_test.ini");
-    crate::state::State {
+    let state = crate::state::State {
         last_dir: Some(dir.clone()),
         thumb_size: 200,
         sort: "size".to_owned(),
@@ -2075,11 +2075,10 @@ fn saved_preferences_are_restored() {
         show_folders: 0,
         slideshow_fullscreen: 0,
         ..crate::state::State::default()
-    }
-    .save_to(&path)
-    .unwrap();
+    };
+    crate::state::save_to(&state, &path).unwrap();
 
-    let saved = crate::state::State::load_from(&path);
+    let saved = crate::state::load_from(&path);
     let ctx = egui::Context::default();
     let mut app = App::build(&ctx, Some(dir.clone()));
     apply_preferences(&mut app, &saved);
