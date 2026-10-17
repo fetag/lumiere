@@ -1880,6 +1880,7 @@ dependencies = [
  "dirs",
  "image",
  "kamadak-exif",
+ "libc",
  "log",
  "lumiere-core",
  "objc2 0.6.5",
@@ -1889,6 +1890,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "objc2-image-io",
  "trash",
+ "windows-sys 0.59.0",
  "x11-dl",
 ]
 

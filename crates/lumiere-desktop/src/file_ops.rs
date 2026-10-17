@@ -149,7 +149,8 @@ pub fn copy_path(from: &Path, to: &Path) -> std::io::Result<()> {
     }
 }
 
-/// macOS provides an atomic no-replace rename, including directories.
+/// Rename without replacing an existing destination, atomically where the
+/// platform provides that operation. This applies to both files and folders.
 pub fn rename_without_replace(from: &Path, to: &Path) -> std::io::Result<()> {
     #[cfg(target_os = "macos")]
     {
@@ -172,7 +173,102 @@ pub fn rename_without_replace(from: &Path, to: &Path) -> std::io::Result<()> {
             Err(std::io::Error::last_os_error())
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
+        use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::Storage::FileSystem::{
+            CreateFileW, FileRenameInfoEx, SetFileInformationByHandle, DELETE,
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FILE_SHARE_DELETE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+        };
+
+        let source: Vec<u16> = from.as_os_str().encode_wide().chain(Some(0)).collect();
+        // A null RootDirectory requires an absolute destination path.
+        let destination = std::path::absolute(to)?;
+        let destination: Vec<u16> = destination.as_os_str().encode_wide().collect();
+        let destination_len = u32::try_from(destination.len() * std::mem::size_of::<u16>())
+            .map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "path is too long")
+            })?;
+
+        // DELETE access is required for FileRenameInfoEx. BACKUP_SEMANTICS lets
+        // CreateFileW open directories too; the returned handle is owned by File.
+        let handle = unsafe {
+            CreateFileW(
+                source.as_ptr(),
+                DELETE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS,
+                std::ptr::null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(std::io::Error::last_os_error());
+        }
+        let handle = unsafe { std::fs::File::from_raw_handle(handle as RawHandle) };
+
+        // FILE_RENAME_INFO has a one-u16 trailing array. Reserve exactly enough
+        // room for the full UTF-16 destination and initialize its fixed header.
+        let header_len = std::mem::size_of::<FILE_RENAME_INFO>() - std::mem::size_of::<u16>();
+        let mut buffer = vec![0_u8; header_len + destination.len() * std::mem::size_of::<u16>()];
+        let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+        unsafe {
+            (*info).Anonymous = FILE_RENAME_INFO_0 { Flags: 0 };
+            (*info).RootDirectory = std::ptr::null_mut();
+            (*info).FileNameLength = destination_len;
+            std::ptr::copy_nonoverlapping(
+                destination.as_ptr(),
+                (*info).FileName.as_mut_ptr(),
+                destination.len(),
+            );
+        }
+
+        // Flags = 0 deliberately omits FILE_RENAME_FLAG_REPLACE_IF_EXISTS, so
+        // Windows rejects an existing destination without a check-then-rename race.
+        let result = unsafe {
+            SetFileInformationByHandle(
+                handle.as_raw_handle() as HANDLE,
+                FileRenameInfoEx,
+                info.cast(),
+                u32::try_from(buffer.len()).expect("rename buffer length fits in u32"),
+            )
+        };
+        if result == 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let source = CString::new(from.as_os_str().as_bytes())?;
+        let target = CString::new(to.as_os_str().as_bytes())?;
+        // Invoke the syscall directly rather than relying on a recent glibc
+        // export. RENAME_NOREPLACE makes this an atomic no-overwrite rename.
+        if unsafe {
+            libc::syscall(
+                libc::SYS_renameat2,
+                libc::AT_FDCWD,
+                source.as_ptr(),
+                libc::AT_FDCWD,
+                target.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        } == 0
+        {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = (from, to);
         Err(std::io::Error::new(
