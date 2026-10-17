@@ -1,6 +1,6 @@
 [package]
 name = "lumiere"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 description = "A classic 3.x style image browser / viewer for macOS, written in Rust"
 license = "GPL-3.0-or-later"
