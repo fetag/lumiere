@@ -99,8 +99,8 @@ pub fn decode_pcx(path: &Path) -> Result<Decoded, String> {
         .read_rgb_pixels(&mut rgb)
         .map_err(|e| format!("pcx: {e}"))?;
     let mut rgba = Vec::with_capacity((w as usize) * (h as usize) * 4);
-    for chunk in rgb.chunks_exact(3) {
-        rgba.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
+    for &[red, green, blue] in rgb.as_chunks::<3>().0 {
+        rgba.extend_from_slice(&[red, green, blue, 255]);
     }
     Ok(Decoded {
         width: w,

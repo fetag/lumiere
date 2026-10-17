@@ -184,7 +184,8 @@ impl App {
                     // egui samples without mipmaps, so shrinking a 512px
                     // source straight to 80px in one linear pass smears it;
                     // downsample properly to 2x display size first.
-                    img.resize(160, 160, image::imageops::FilterType::Lanczos3).to_rgba8()
+                    img.resize(160, 160, image::imageops::FilterType::Lanczos3)
+                        .to_rgba8()
                 }) {
                     let (width, height) = decoded.dimensions();
                     let img = egui::ColorImage::from_rgba_unmultiplied(

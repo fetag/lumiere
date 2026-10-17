@@ -1,9 +1,11 @@
-# Native workspace preparation (2026-10-13)
+# Native workspace preparation (2026-10-13; updated for Linux support)
 
 This change implements the structural preparation in `~/workspace/cross-platform.md`.
-It does not implement Windows, Linux or web support. The existing work was saved
-first in commit `a89ad20`; all restructuring is in the following commit, as
-requested. Revert the restructuring commit to return to that saved baseline.
+At the time of the restructuring it did not implement Windows, Linux or web
+support. Linux x86_64 support and portable packaging were added subsequently;
+Windows and web support remain future work. The existing work was saved first in
+commit `a89ad20`; all restructuring is in the following commit, as requested.
+Revert the restructuring commit to return to that saved baseline.
 
 ## Responsibility and movement
 
@@ -41,11 +43,12 @@ boundary. Production builds retain the original native paths. Menu glyph display
 is now available independently of the target, for model tests and future adapters.
 
 The root is a virtual workspace with app as default member, a single lockfile and
-the original release profile. Package/binary `lumiere`, version 0.1.2, bundle ID,
-assets, bundle output, scripts and persistence paths are retained. Bundle builds
-explicitly select `-p lumiere --locked`. Third-party lockfile versions are unchanged.
-The desktop package rejects wasm32 explicitly; web work must select a future web
-package rather than compile native desktop as web.
+the original release profile. Package/binary `lumiere`, currently version 0.1.3,
+retains its bundle ID and persistence paths. macOS uses `bundle.sh`; Linux x86_64
+uses `bundle-linux.sh` to produce a portable archive with a per-user installer,
+desktop launcher and icon-theme assets. Bundle builds explicitly select
+`-p lumiere --locked`. The desktop package rejects wasm32 explicitly; web work
+must select a future web package rather than compile native desktop as web.
 
 ## Validation
 
@@ -89,8 +92,10 @@ interactive macOS pass. HEIC/AVIF/RAW, orientation, alpha and reduced-image pixe
 comparisons across identical files also require the full format fixture matrix.
 Headless tests and a signed bundle do not certify those native interactions.
 
-Windows/Linux remain phase two: native services and UX, atomic no-replace rename,
-codec capabilities, native runners and packaging. Existing non-macOS Unsupported
-and empty/fallback results are preserved and do not imply platform support.
-WASM remains phase three only after an explicit browser requirement, including
-byte-based APIs, browser storage and worker/cancellation design.
+Linux x86_64 now has a native runner, portable packaging, a desktop launcher and
+fallback UI paths. Some macOS-only integrations remain intentionally platform
+specific, including ImageIO codecs, Finder/LaunchServices, AppKit panels and the
+native menu bar. Windows remains the next desktop-platform phase; it needs its
+own native services, packaging and validation. WASM remains future work after an
+explicit browser requirement, including byte-based APIs, browser storage and
+worker/cancellation design.

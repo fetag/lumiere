@@ -1,4 +1,4 @@
-//! Lumiere - a classic 3.x style image browser and viewer for macOS.
+//! Lumiere - a classic 3.x style image browser and viewer for macOS and Linux.
 
 mod app;
 mod browser;

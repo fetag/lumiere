@@ -1,5 +1,5 @@
-//! The macOS visual layer: adaptive light/dark chrome that follows the OS,
-//! the system font, native-style toolbar controls, and monochrome line icons.
+//! The platform-adaptive visual layer: light/dark chrome that follows the OS,
+//! installed system fonts, compact native-inspired controls, and monochrome line icons.
 //!
 //! Everything that needs a colour asks the current [`egui::Visuals`] instead
 //! of a fixed palette, so switching the system appearance repaints the whole
@@ -42,8 +42,8 @@ pub fn apply_theme(ctx: &egui::Context) {
     });
 }
 
-/// Use the macOS system font for UI text when it is available, with the
-/// bundled fonts and a CJK font as fallbacks, so Chinese file names render
+/// Prefer available system fonts for UI text, with bundled fonts and a CJK
+/// fallback so Chinese file names render
 /// instead of turning into boxes.
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();

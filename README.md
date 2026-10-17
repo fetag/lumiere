@@ -5,25 +5,26 @@
 <h1 align="center">Lumiere</h1>
 
 <p align="center">
-  A native-feeling image browser and viewer for macOS, built in Rust with
+  A native-feeling image browser and viewer for macOS and Linux, built in Rust with
   <a href="https://github.com/emilk/egui">egui</a>/<a href="https://github.com/emilk/egui/tree/master/crates/eframe">eframe</a>.
 </p>
 
 <p align="center">
-  Three-pane browsing, full-screen viewing, slideshow, HEIC/AVIF support, and a macOS-adaptive UI.
+  Three-pane browsing, full-screen viewing, slideshow, and platform-adaptive UI.
 </p>
 
 ---
 
 ## Why Lumiere?
 
-Lumiere is an image browser/viewer for macOS that aims to feel at home on the
-platform while staying lightweight and fast. It uses a three-pane layout for
-everyday browsing, a dedicated full-screen viewer for focused viewing, and a
-slideshow mode for hands-off playback.
+Lumiere is a cross-platform image browser/viewer for macOS and Linux that aims
+to feel at home on each supported desktop while staying lightweight and fast. It
+uses a three-pane layout for everyday browsing, a dedicated full-screen viewer
+for focused viewing, and a slideshow mode for hands-off playback.
 
-The UI follows the macOS light/dark appearance, uses the system font, and keeps
-the chrome visually restrained with monochrome line icons.
+The UI follows the system light/dark appearance where available, uses installed
+system fonts when available, and keeps the chrome visually restrained with
+monochrome line icons. Windows support is planned.
 
 ![Lumiere browse view](assets/lumiere-browse.webp)
 
@@ -32,9 +33,9 @@ the chrome visually restrained with monochrome line icons.
 - **Three-pane browser**: folder tree, thumbnail grid, and preview/information pane
 - **Dedicated viewer**: zoom, pan, rotate, flip, actual size, and fit-to-window
 - **Slideshow mode**: quick start/stop from the keyboard or menu bar
-- **macOS-aware UI**: adaptive light/dark styling, native-looking chrome, system font
-- **Wide format support**: common formats via `image`, plus HEIC/HEIF/AVIF via macOS ImageIO
-- **Recoverable delete**: `⌘⌫` moves items to the macOS Trash after confirmation
+- **Platform-adaptive UI**: adaptive light/dark styling, native integrations where available, system fonts
+- **Wide format support**: common formats via `image`; macOS additionally uses ImageIO for HEIC/HEIF/AVIF
+- **Recoverable delete**: moves items to the system Trash after confirmation
 - **Persistent session state**: restores the last folder and window geometry
 - **Real menu bar integration**: keyboard shortcuts are defined once and reflected consistently in menus and app handling
 
@@ -53,10 +54,20 @@ cargo build --release
 ```sh
 cargo fmt --all --check
 cargo clippy --locked --workspace --all-targets
+```
+
+The current headless UI suite contains macOS-native assertions, so CI runs its
+full serial test command on macOS:
+
+```sh
 cargo test --locked --workspace -- --test-threads=1
 ```
 
-### Package as a `.app`
+Linux CI currently validates formatting, Clippy with warnings denied, a release
+build and the portable package. Porting the remaining macOS-specific UI tests is
+ongoing.
+
+### Package for macOS
 
 Build a macOS app bundle with icon, `Info.plist`, and ad-hoc signature:
 
@@ -64,7 +75,7 @@ Build a macOS app bundle with icon, `Info.plist`, and ad-hoc signature:
 ./bundle.sh          # -> build/Lumiere.app
 ```
 
-### Install to `~/Applications`
+### Install the macOS app to `~/Applications`
 
 Install the bundle to a stable user-facing path. This is the recommended path
 on macOS because it is more reliable for Dock icon cache behavior:
@@ -84,14 +95,34 @@ is usually a Dock / IconServices cache issue; installing to one stable path
 (`~/Applications/Lumiere.app`) and launching that copy is more reliable than
 repeatedly running bundles from `build/`, `dist/`, or `/tmp`.
 
+### Package and install on Linux
+
+Build the portable x86_64 Linux archive on a Linux build host:
+
+```sh
+./bundle-linux.sh       # -> dist/lumiere-v<version>-linux-x86_64.tar.gz
+```
+
+Extract the archive and run its per-user installer; no `sudo` is required:
+
+```sh
+tar -xzf lumiere-v<version>-linux-x86_64.tar.gz
+cd lumiere-v<version>-linux-x86_64
+./install.sh
+```
+
+The installer creates a desktop launcher and hicolor icon-theme entries. Launch
+Lumiere from the application menu so the desktop shell can associate the running
+window with its correctly sized application icon.
+
 ## Format support and storage
 
 - Built-in via the `image` crate: JPEG, PNG, GIF, BMP, TIFF, WebP, TGA, PCX, ICO, …
 - HEIC / HEIF / AVIF via macOS ImageIO (`crates/lumiere-desktop/src/platform/image_io.rs`, `objc2-image-io`)
 - EXIF via `kamadak-exif`
-- "Move to Trash" (`⌘⌫`) confirms with a native alert and moves items to the
-  macOS Trash (`trash` crate), so they stay recoverable from Finder
-- Thumbnail cache: `~/Library/Caches/net.fetag.lumiere/thumbs`
+- "Move to Trash" confirms before using the platform Trash (`trash` crate), so
+  items stay recoverable through the desktop environment
+- Thumbnail cache: the platform cache directory (`~/Library/Caches/net.fetag.lumiere/thumbs` on macOS)
 - Rename, Move and Copy reject existing destination names rather than overwrite files. Copy also rejects symbolic links.
 - Full-resolution decoding is limited to 50 million pixels. On macOS, larger images use an ImageIO downsampled representation (up to 6000 pixels per side) while retaining original dimensions. Background pixel processing is serialized to limit simultaneous decode allocations.
 
@@ -147,7 +178,7 @@ same frame as the key event.
 | `crates/lumiere-desktop/src/imaging.rs` | format detection, decode, EXIF, thumbnail cache |
 | `crates/lumiere-desktop/src/platform/image_io.rs` | ImageIO bridge for HEIC/HEIF/AVIF |
 | `crates/lumiere-desktop/src/fsmodel.rs` | directory scan, sorting, wildcard filter, tree model |
-| `apps/lumiere/src/theme.rs` | macOS visual layer: adaptive light/dark chrome, system font, monochrome line icons |
+| `apps/lumiere/src/theme.rs` | platform-adaptive visual layer: light/dark chrome, system fonts, monochrome line icons |
 | `crates/lumiere-desktop/src/menu_model.rs` | the menu bar as one platform-neutral description |
 | `apps/lumiere/src/platform_ui/menu/macos.rs` | that description as `NSMenu`s in the real macOS menu bar |
 | `crates/lumiere-desktop/src/platform/window.rs` | whether a restored window position is still on a display |
@@ -161,8 +192,8 @@ navigation, the information tab, and command-modifier shortcuts. They also
 assert the menu description itself: its titles and `⌘` spellings, and that the
 shortcut a menu advertises is the same one the keyboard map handles.
 
-The native menu bar cannot be exercised headlessly. Check it against the real
-thing:
+The macOS native menu bar cannot be exercised headlessly. Check it against the
+real thing:
 
 ```sh
 ./target/debug/lumiere &

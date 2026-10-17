@@ -15,11 +15,10 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, ProtocolObject};
 use objc2::{define_class, msg_send, sel, ClassType, MainThreadMarker};
 use objc2_app_kit::{
-    NSAboutPanelOptionApplicationIcon, NSApplication, NSControlStateValue,
-    NSControlStateValueOff, NSControlStateValueOn, NSEventModifierFlags, NSImage, NSMenu,
-    NSMenuItem,
+    NSAboutPanelOptionApplicationIcon, NSApplication, NSControlStateValue, NSControlStateValueOff,
+    NSControlStateValueOn, NSEventModifierFlags, NSImage, NSMenu, NSMenuItem,
 };
-use objc2_foundation::{NSInteger, NSBundle, NSCopying, NSDictionary, NSString};
+use objc2_foundation::{NSBundle, NSCopying, NSDictionary, NSInteger, NSString};
 
 use crate::app::{Action, APP_TITLE};
 use crate::menu::{Item, Key, MenuBar, Shortcut};
@@ -213,9 +212,8 @@ fn add_items(
                         NSEventModifierFlags::empty(),
                         mtm,
                     );
-                    let target_ref: &AnyObject = unsafe {
-                        &*Retained::as_ptr(target).cast::<AnyObject>()
-                    };
+                    let target_ref: &AnyObject =
+                        unsafe { &*Retained::as_ptr(target).cast::<AnyObject>() };
                     unsafe { item.setTarget(Some(target_ref)) };
                     item.setEnabled(*enabled);
                     menu.addItem(&item);
@@ -357,12 +355,9 @@ fn show_about_panel(mtm: MainThreadMarker) {
         return;
     };
     let icon_object: &AnyObject = unsafe { &*Retained::as_ptr(&icon).cast::<AnyObject>() };
-    let key: &ProtocolObject<dyn NSCopying> = unsafe {
-        ProtocolObject::from_ref(NSAboutPanelOptionApplicationIcon)
-    };
-    let options = unsafe {
-        NSDictionary::dictionaryWithObject_forKey(icon_object, key)
-    };
+    let key: &ProtocolObject<dyn NSCopying> =
+        unsafe { ProtocolObject::from_ref(NSAboutPanelOptionApplicationIcon) };
+    let options = unsafe { NSDictionary::dictionaryWithObject_forKey(icon_object, key) };
     unsafe { app.orderFrontStandardAboutPanelWithOptions(&options) };
 }
 

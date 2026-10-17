@@ -7,7 +7,6 @@
 /// with a ladder of properly downsampled sizes fixes the blur.
 #[cfg(target_os = "linux")]
 pub fn set_taskbar_icon(window_id: u32, png: &[u8]) {
-    use std::ffi::CStr;
     use std::os::raw::{c_int, c_uchar, c_ulong};
     use std::ptr;
     use x11_dl::xlib::Xlib;
@@ -59,16 +58,8 @@ pub fn set_taskbar_icon(window_id: u32, png: &[u8]) {
         if display.is_null() {
             return;
         }
-        let net_wm_icon = (xlib.XInternAtom)(
-            display,
-            CStr::from_bytes_with_nul(b"_NET_WM_ICON\0").unwrap().as_ptr(),
-            0,
-        );
-        let cardinal = (xlib.XInternAtom)(
-            display,
-            CStr::from_bytes_with_nul(b"CARDINAL\0").unwrap().as_ptr(),
-            0,
-        );
+        let net_wm_icon = (xlib.XInternAtom)(display, c"_NET_WM_ICON".as_ptr(), 0);
+        let cardinal = (xlib.XInternAtom)(display, c"CARDINAL".as_ptr(), 0);
         (xlib.XChangeProperty)(
             display,
             window_id as c_ulong,
