@@ -239,6 +239,9 @@ pub use imp::prepare;
 pub fn install() {}
 
 #[cfg(not(target_os = "macos"))]
+use std::path::PathBuf;
+
+#[cfg(not(target_os = "macos"))]
 pub fn attach_context(_ctx: eframe::egui::Context) {}
 
 #[cfg(not(target_os = "macos"))]

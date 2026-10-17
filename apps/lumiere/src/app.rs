@@ -270,6 +270,22 @@ enum JobMessage {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, start: Option<PathBuf>) -> Self {
+        // X11 panels read `_NET_WM_ICON`; winit wrote only the single 512px
+        // size, which they smear down to ~48px. Hand them a size ladder.
+        #[cfg(target_os = "linux")]
+        {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(handle) = cc.window_handle() {
+                if let RawWindowHandle::Xlib(xlib) = handle.as_raw() {
+                    // X11 window ids are 32-bit; the handle just widens them.
+                    let window_id = (xlib.window & 0xFFFF_FFFF) as u32;
+                    lumiere_desktop::platform::icon::set_taskbar_icon(
+                        window_id,
+                        include_bytes!("../../../assets/AppIcon.png"),
+                    );
+                }
+            }
+        }
         // eframe creates the AppKit application and its delegate immediately
         // before calling the app factory. Register after that setup: doing it
         // earlier lets AppKit replace the Apple-event handler while starting.
@@ -1328,7 +1344,9 @@ fn top_menu(ui: &mut egui::Ui, label: &str, contents: impl FnOnce(&mut egui::Ui)
 fn menu_items(ui: &mut egui::Ui, items: &[Item], actions: &mut Vec<Action>) {
     for item in items {
         match item {
-            Item::Separator => ui.separator(),
+            Item::Separator => {
+                ui.separator();
+            }
             Item::Submenu { label, items } => {
                 top_menu(ui, label, |ui| menu_items(ui, items, actions));
             }
@@ -1348,7 +1366,7 @@ fn menu_items(ui: &mut egui::Ui, items: &[Item], actions: &mut Vec<Action>) {
                 // the shortcut glyphs, which is noise for VoiceOver. Say just
                 // the command, and offer the shortcut as its own property.
                 ui.ctx().accesskit_node_builder(response.id, |node| {
-                    node.set_label(label);
+                    node.set_label(label.as_str());
                     if let Some(shortcut) = shortcut {
                         node.set_keyboard_shortcut(shortcut.display());
                     }

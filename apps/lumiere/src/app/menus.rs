@@ -262,7 +262,16 @@ impl App {
             top_menu(ui, APP_TITLE, |ui| {
                 menu_items(ui, &spec.app, &mut actions);
                 ui.separator();
-                menu(ui, &mut actions, Action::Quit, "Quit Lumiere", "\u{2318}Q");
+                let quit = Shortcut::cmd(Key::Char('q'));
+                let response = ui.add_enabled(
+                    true,
+                    egui::Button::new(menu_row(ui, "Quit Lumiere", Some(&quit), None))
+                        .min_size(egui::vec2(240.0, 0.0)),
+                );
+                if response.clicked() {
+                    actions.push(Action::Quit);
+                    ui.close();
+                }
             });
             for (title, items) in &spec.menus {
                 top_menu(ui, title, |ui| menu_items(ui, items, &mut actions));

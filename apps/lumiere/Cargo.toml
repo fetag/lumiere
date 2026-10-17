@@ -81,3 +81,6 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSProcessInfo",
     "NSURL",
 ] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+raw-window-handle = "0.6"

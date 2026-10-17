@@ -1015,7 +1015,9 @@ fn about_and_explore_dialogs_render_their_content() {
     app.act(Action::About, &ctx);
     let text = painted_once(&ctx, &mut app, "Version");
     assert!(text.contains("Lumiere"));
-    assert!(text.contains("written in Rust"));
+    assert!(text.contains(env!("CARGO_PKG_VERSION")));
+    assert!(!text.contains("written in Rust"));
+    assert!(!text.contains("Apple ImageIO"));
 
     app.about_open = false;
     app.act(Action::OpenFolder, &ctx);

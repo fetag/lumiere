@@ -133,41 +133,43 @@ impl App {
             .resizable(false)
             .default_pos([360.0, 220.0])
             .show(ctx, |ui| {
+                // The window's default 8px margin is a touch cramped at this
+                // size; pad each side by another 8 so the text has room.
                 ui.horizontal(|ui| {
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
-                    match icon.as_ref() {
-                        Some(icon) => {
-                            ui.painter().image(
-                                icon.id(),
-                                rect,
-                                egui::Rect::from_min_max(
-                                    egui::pos2(0.0, 0.0),
-                                    egui::pos2(1.0, 1.0),
-                                ),
-                                egui::Color32::WHITE,
-                            );
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(80.0, 80.0), egui::Sense::hover());
+                        match icon.as_ref() {
+                            Some(icon) => {
+                                ui.painter().image(
+                                    icon.id(),
+                                    rect,
+                                    egui::Rect::from_min_max(
+                                        egui::pos2(0.0, 0.0),
+                                        egui::pos2(1.0, 1.0),
+                                    ),
+                                    egui::Color32::WHITE,
+                                );
+                            }
+                            // The png is only there with the bundle or in the source
+                            // tree; a drawn glyph keeps the panel intact elsewhere.
+                            None => {
+                                theme::draw_icon(
+                                    ui,
+                                    rect.center(),
+                                    72.0,
+                                    Icon::Image,
+                                    ui.visuals().text_color(),
+                                );
+                            }
                         }
-                        // The png is only there with the bundle or in the source
-                        // tree; a drawn glyph keeps the panel intact elsewhere.
-                        None => {
-                            theme::draw_icon(
-                                ui,
-                                rect.center(),
-                                36.0,
-                                Icon::Image,
-                                ui.visuals().text_color(),
-                            );
-                        }
-                    }
-                    ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("Lumiere").strong());
-                        ui.label("An image browser and viewer for macOS, written in Rust");
-                        ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-                        ui.label(
-                            egui::RichText::new("egui + image + Apple ImageIO (HEIC/AVIF)").small(),
-                        );
+                        ui.vertical(|ui| {
+                            ui.label(egui::RichText::new("Lumiere").strong());
+                            ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                        });
                     });
+                    ui.add_space(8.0);
                 });
             });
         self.about_open = open;
@@ -178,7 +180,12 @@ impl App {
     pub(super) fn about_icon(&mut self, ctx: &Context) -> Option<TextureHandle> {
         if self.app_icon.is_none() {
             if let Some(path) = Self::about_icon_path() {
-                if let Ok(decoded) = image::open(&path).map(|img| img.to_rgba8()) {
+                if let Ok(decoded) = image::open(&path).map(|img| {
+                    // egui samples without mipmaps, so shrinking a 512px
+                    // source straight to 80px in one linear pass smears it;
+                    // downsample properly to 2x display size first.
+                    img.resize(160, 160, image::imageops::FilterType::Lanczos3).to_rgba8()
+                }) {
                     let (width, height) = decoded.dimensions();
                     let img = egui::ColorImage::from_rgba_unmultiplied(
                         [width as usize, height as usize],
@@ -192,13 +199,19 @@ impl App {
     }
 
     /// Where the icon png lives: `Contents/Resources` when running from the
-    /// bundled app, `assets/` when run straight from the source tree.
+    /// bundled macOS app, next to the executable on a Linux install,
+    /// `assets/` when run straight from the source tree.
     pub(super) fn about_icon_path() -> Option<PathBuf> {
         if let Ok(exe) = std::env::current_exe() {
             if let Some(contents) = exe.parent().and_then(Path::parent) {
                 let bundled = contents.join("Resources/AppIcon.png");
                 if bundled.is_file() {
                     return Some(bundled);
+                }
+            }
+            if let Some(next_to_exe) = exe.parent().map(|p| p.join("AppIcon.png")) {
+                if next_to_exe.is_file() {
+                    return Some(next_to_exe);
                 }
             }
         }
