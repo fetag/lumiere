@@ -210,7 +210,7 @@ pub fn focus_ring(ui: &Ui, rect: Rect, radius: f32) {
     ui.painter().rect_stroke(
         rect.expand(2.0),
         radius + 2.0,
-        Stroke::new(2.0, ui.visuals().hyperlink_color),
+        Stroke::new(2.0_f32, ui.visuals().hyperlink_color),
         egui::StrokeKind::Outside,
     );
 }
@@ -400,7 +400,7 @@ fn draw_icon_legacy(p: &egui::Painter, center: Pos2, size: f32, glyph: Icon, col
         p.add(Shape::convex_polygon(
             points.to_vec(),
             color,
-            Stroke::new(0.0, color),
+            Stroke::new(0.0_f32, color),
         ));
     };
 
