@@ -91,6 +91,10 @@ cp assets/Lumiere.icns "$APP/Contents/Resources/AppIcon.icns"
 # The same artwork for the fallback (non-mac) about panel.
 cp assets/AppIcon.png "$APP/Contents/Resources/AppIcon.png"
 
+# The native macOS About panel uses a close-cropped variant in its fixed icon
+# view; this intentionally does not affect the Dock/Finder .icns artwork.
+cp assets/AboutIcon.png "$APP/Contents/Resources/AboutIcon.png"
+
 # Ad-hoc signature so Gatekeeper lets a locally built app run.
 # For distribution replace "-" with a Developer ID identity and notarize:
 #   codesign --force --options runtime --sign "Developer ID Application: ..." "$APP"

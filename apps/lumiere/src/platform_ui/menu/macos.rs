@@ -8,16 +8,18 @@
 //! [`App::menu_spec`].
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, NSObject};
+use objc2::runtime::{AnyObject, NSObject, ProtocolObject};
 use objc2::{define_class, msg_send, sel, ClassType, MainThreadMarker};
 use objc2_app_kit::{
-    NSApplication, NSControlStateValue, NSControlStateValueOff, NSControlStateValueOn,
-    NSEventModifierFlags, NSMenu, NSMenuItem,
+    NSAboutPanelOptionApplicationIcon, NSApplication, NSControlStateValue,
+    NSControlStateValueOff, NSControlStateValueOn, NSEventModifierFlags, NSImage, NSMenu,
+    NSMenuItem,
 };
-use objc2_foundation::{NSInteger, NSString};
+use objc2_foundation::{NSInteger, NSBundle, NSCopying, NSDictionary, NSString};
 
 use crate::app::{Action, APP_TITLE};
 use crate::menu::{Item, Key, MenuBar, Shortcut};
@@ -41,6 +43,13 @@ define_class!(
                 if let Some(ctx) = CONTEXT.lock().expect("menu context").as_ref() {
                     ctx.request_repaint();
                 }
+            }
+        }
+
+        #[unsafe(method(aboutItemInvoked:))]
+        fn about_item_invoked(&self, _item: &NSMenuItem) {
+            if let Some(mtm) = MainThreadMarker::new() {
+                show_about_panel(mtm);
             }
         }
     }
@@ -194,15 +203,20 @@ fn add_items(
                 marked,
             } => {
                 if *action == Action::About {
-                    // Keep the platform About panel: it uses the bundle icon,
-                    // name, version and copyright from Info.plist.
+                    // Keep the platform About panel, but provide a dedicated
+                    // close-cropped image for its fixed-size icon view. The
+                    // Dock/Finder bundle icon remains untouched.
                     let item = standard_item(
                         &NSString::from_str(label),
-                        sel!(orderFrontStandardAboutPanel:),
+                        sel!(aboutItemInvoked:),
                         "",
                         NSEventModifierFlags::empty(),
                         mtm,
                     );
+                    let target_ref: &AnyObject = unsafe {
+                        &*Retained::as_ptr(target).cast::<AnyObject>()
+                    };
+                    unsafe { item.setTarget(Some(target_ref)) };
                     item.setEnabled(*enabled);
                     menu.addItem(&item);
                     continue;
@@ -326,6 +340,42 @@ fn add_standard_app_items(
         Shortcut::cmd(Key::Char('q')),
     );
     add_items(menu, &[quit], mtm, target, tags);
+}
+
+/// Opens the standard macOS About panel with a larger, About-only artwork.
+/// The normal application icon is deliberately left to Info.plist so Dock and
+/// Finder continue using the existing, separately tuned `.icns` asset.
+fn show_about_panel(mtm: MainThreadMarker) {
+    let app = NSApplication::sharedApplication(mtm);
+    let Some(path) = about_icon_path() else {
+        app.orderFrontStandardAboutPanel(None);
+        return;
+    };
+    let path = NSString::from_str(&path.to_string_lossy());
+    let Some(icon) = NSImage::initWithContentsOfFile(mtm.alloc(), &path) else {
+        app.orderFrontStandardAboutPanel(None);
+        return;
+    };
+    let icon_object: &AnyObject = unsafe { &*Retained::as_ptr(&icon).cast::<AnyObject>() };
+    let key: &ProtocolObject<dyn NSCopying> = unsafe {
+        ProtocolObject::from_ref(NSAboutPanelOptionApplicationIcon)
+    };
+    let options = unsafe {
+        NSDictionary::dictionaryWithObject_forKey(icon_object, key)
+    };
+    unsafe { app.orderFrontStandardAboutPanelWithOptions(&options) };
+}
+
+/// The bundle resource is available in releases; the source-tree path keeps
+/// `cargo run` usable during development.
+fn about_icon_path() -> Option<PathBuf> {
+    let name = NSString::from_str("AboutIcon");
+    let ext = NSString::from_str("png");
+    if let Some(path) = NSBundle::mainBundle().pathForResource_ofType(Some(&name), Some(&ext)) {
+        return Some(PathBuf::from(path.to_string()));
+    }
+    let dev = PathBuf::from("assets/AboutIcon.png");
+    dev.is_file().then_some(dev)
 }
 
 fn standard_item(
