@@ -5,3 +5,4 @@ dist/
 .DS_Store
 work-baseline-bundle/
 work-refactor-bundle/
+.codegraph/
