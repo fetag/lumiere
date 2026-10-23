@@ -64,6 +64,29 @@ fn path_label(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
+/// The volume-root sidebar row: the top of the filesystem, named after each
+/// platform's own convention — the macOS system volume, the Windows system
+/// drive, or the Unix root.
+pub(crate) fn volume_root() -> SideRow {
+    if cfg!(windows) {
+        let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_owned());
+        SideRow {
+            label: format!("Local Disk ({drive})"),
+            path: PathBuf::from(format!("{drive}\\")),
+        }
+    } else if cfg!(target_os = "macos") {
+        SideRow {
+            label: "Macintosh HD".to_owned(),
+            path: PathBuf::from("/"),
+        }
+    } else {
+        SideRow {
+            label: "/".to_owned(),
+            path: PathBuf::from("/"),
+        }
+    }
+}
+
 /// The sidebar's rows in section order: the standard favorite places, the
 /// volume root plus the folders the user pinned, then the folders visited
 /// most recently.
@@ -90,10 +113,7 @@ fn sidebar_rows(app: &App) -> (Vec<SideRow>, Vec<SideRow>, Vec<SideRow>) {
         }
     }
 
-    let mut locations: Vec<SideRow> = vec![SideRow {
-        label: "Macintosh HD".to_owned(),
-        path: PathBuf::from("/"),
-    }];
+    let mut locations: Vec<SideRow> = vec![volume_root()];
     for path in &app.sidebar_dirs {
         locations.push(SideRow {
             label: path_label(path),

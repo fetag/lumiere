@@ -8,7 +8,7 @@ repository = "https://github.com/fetag/lumiere"
 
 [dependencies]
 dirs = "7.0.0"
-eframe = "0.33.3"
+eframe = { version = "0.33.3", features = ["wgpu"] }
 image = { version = "0.25", default-features = false, features = [
     "bmp",
     "gif",

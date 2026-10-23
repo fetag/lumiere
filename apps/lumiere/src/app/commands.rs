@@ -2,6 +2,23 @@
 
 use super::*;
 
+/// Open `path` with the OS default application (the "Open with default app"
+/// menu item). Each OS launches the default handler differently, so the
+/// mechanism is per-platform.
+fn open_with_default_app(path: &std::path::Path) {
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(path).spawn();
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("cmd")
+        .arg("/c")
+        .arg("start")
+        .arg("")
+        .arg(path)
+        .spawn();
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+}
+
 impl App {
     // -- command dispatch --------------------------------------------------
 
@@ -37,7 +54,7 @@ impl App {
             }
             Action::OpenWithDefault => {
                 if let Some(path) = self.current_image_path() {
-                    let _ = std::process::Command::new("open").arg(&path).spawn();
+                    open_with_default_app(&path);
                 }
             }
             Action::UpFolder => {

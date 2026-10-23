@@ -689,13 +689,15 @@ fn sidebar_navigates_to_the_selected_place() {
     let mut time = 1.0;
 
     settle(&ctx, &mut app, &mut time);
+    // The volume-root row is named per platform; navigate to whichever it is.
+    let root = crate::browser::volume_root();
     assert!(click_label(
         &ctx,
         &mut app,
-        "sidebar:Macintosh HD",
+        &format!("sidebar:{}", root.label),
         &mut time
     ));
-    assert_eq!(app.dir, PathBuf::from("/"));
+    assert_eq!(app.dir, root.path);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

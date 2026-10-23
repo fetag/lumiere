@@ -1,4 +1,8 @@
-//! Lumiere - a classic 3.x style image browser and viewer for macOS and Linux.
+//! Lumiere - a classic 3.x style image browser and viewer for macOS, Linux, and Windows.
+
+// A GUI app has no console; on Windows this keeps the black terminal window
+// from appearing alongside the eframe window.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
 mod browser;
@@ -41,6 +45,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = eframe::NativeOptions {
         viewport,
         multisampling: 0,
+        // WGPU (D3D12) on Windows, where the default glow (OpenGL) backend may
+        // fail to find an OpenGL implementation in VM / RDP / headless
+        // sessions; the default glow backend elsewhere.
+        renderer: if cfg!(windows) {
+            eframe::Renderer::Wgpu
+        } else {
+            eframe::Renderer::Glow
+        },
         ..Default::default()
     };
 

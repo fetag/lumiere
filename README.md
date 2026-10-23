@@ -5,7 +5,7 @@
 <h1 align="center">Lumiere</h1>
 
 <p align="center">
-  A native-feeling image browser and viewer for macOS and Linux, built in Rust with
+  A native-feeling image browser and viewer for macOS, Linux, and Windows, built in Rust with
   <a href="https://github.com/emilk/egui">egui</a>/<a href="https://github.com/emilk/egui/tree/master/crates/eframe">eframe</a>.
 </p>
 
@@ -17,14 +17,15 @@
 
 ## Why Lumiere?
 
-Lumiere is a cross-platform image browser/viewer for macOS and Linux that aims
+Lumiere is a cross-platform image browser/viewer for macOS, Linux, and Windows that aims
 to feel at home on each supported desktop while staying lightweight and fast. It
 uses a three-pane layout for everyday browsing, a dedicated full-screen viewer
 for focused viewing, and a slideshow mode for hands-off playback.
 
 The UI follows the system light/dark appearance where available, uses installed
 system fonts when available, and keeps the chrome visually restrained with
-monochrome line icons. Windows support is planned.
+monochrome line icons. Windows runs on the same in-window menu bar and built-in
+dialogs as Linux; the native macOS menu bar and AppKit panels are macOS-only for now.
 
 ![Lumiere browse view](assets/lumiere-browse.webp)
 
@@ -114,6 +115,23 @@ cd lumiere-v<version>-linux-x86_64
 The installer creates a desktop launcher and hicolor icon-theme entries. Launch
 Lumiere from the application menu so the desktop shell can associate the running
 window with its correctly sized application icon.
+
+### Package for Windows
+
+Build a portable Windows archive on a Windows host (PowerShell):
+
+```powershell
+.\bundle-windows.ps1        # -> dist\lumiere-v<version>-windows-x86_64.zip
+```
+
+Extract the archive and run `lumiere.exe` directly, or pass it a folder to open:
+
+```powershell
+.\lumiere.exe C:\path\to\folder
+```
+
+No installation is required. The window icon is compiled into the executable; the
+`AppIcon.png` kept beside it feeds the in-window About panel.
 
 ## Format support and storage
 
