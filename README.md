@@ -70,10 +70,12 @@ ongoing.
 
 ### Package for macOS
 
-Build a macOS app bundle with icon, `Info.plist`, and ad-hoc signature:
+Build a macOS app bundle with icon, `Info.plist`, and ad-hoc signature, plus a
+distributable zip named like the Linux and Windows bundles:
 
 ```sh
-./bundle.sh          # -> build/Lumiere.app
+./bundle.sh          # -> dist/Lumiere.app
+                     # -> dist/lumiere-v<version>-macos-<arch>.zip
 ```
 
 ### Install the macOS app to `~/Applications`

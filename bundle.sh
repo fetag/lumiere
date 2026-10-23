@@ -1,10 +1,15 @@
 #!/bin/sh
 # Build a minimal .app bundle for macOS.
-# Usage: ./bundle.sh [output dir]     (default: ./build)
+# Usage: ./bundle.sh [output dir]     (default: ./dist)
 set -eu
 
 export PATH="$HOME/.cargo/bin:$PATH"
-OUT="${1:-build}"
+OUT="${1:-dist}"
+ARCH="$(uname -m)"
+case "$ARCH" in
+    arm64|x86_64) ;;
+    *) echo "Unsupported macOS architecture: $ARCH" >&2; exit 1 ;;
+esac
 mkdir -p "$OUT"
 
 cargo build --release -p lumiere --locked
@@ -101,4 +106,12 @@ cp assets/AboutIcon.png "$APP/Contents/Resources/AboutIcon.png"
 #   xcrun notarytool submit --wait "$APP.zip"
 codesign --force --deep --sign - "$APP"
 
+# Package the .app into a distributable zip, named like the Linux and
+# Windows bundles: lumiere-v<version>-macos-<arch>.zip
+NAME="lumiere-v${VERSION}-macos-${ARCH}"
+ARCHIVE="$OUT/${NAME}.zip"
+rm -f "$ARCHIVE"
+ditto -c -k --keepParent "$APP" "$ARCHIVE"
+
 echo "built $APP"
+echo "built $ARCHIVE"
