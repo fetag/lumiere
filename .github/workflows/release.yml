@@ -1,0 +1,91 @@
+name: Release
+
+# Tagging vX.Y.Z (after bumping `version` in the root Cargo.toml) builds all
+# three platform bundles on native runners and publishes them as a GitHub
+# release with SHA-256 checksums. No cross-compilation is involved: each job
+# builds for its own architecture.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the tag matches the Cargo.toml version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          [ -n "$VERSION" ]
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "::error::tag v${TAG} does not match Cargo.toml version ${VERSION}"
+            exit 1
+          fi
+
+  build-macos:
+    needs: check-version
+    runs-on: macos-latest   # arm64; the release archive is Apple Silicon only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: ./bundle.sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*.zip
+
+  build-linux:
+    needs: check-version
+    runs-on: ubuntu-latest  # x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: ./bundle-linux.sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*.tar.gz
+
+  build-windows:
+    needs: check-version
+    runs-on: windows-latest # x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: .\bundle-windows.ps1 dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*.zip
+
+  publish:
+    needs: [check-version, build-macos, build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: SHA-256 checksums
+        run: |
+          cd artifacts
+          find . -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print0 \
+            | xargs -0 sha256sum \
+            | sed 's|  \./[^/]*/|  |' \
+            | sort -k2 > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/**/*.zip
+            artifacts/**/*.tar.gz
+            artifacts/SHA256SUMS.txt
+          generate_release_notes: true

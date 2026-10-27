@@ -57,12 +57,13 @@ full serial test command on macOS:
 cargo test --locked --workspace -- --test-threads=1
 ```
 
-Linux CI currently validates formatting, Clippy with warnings denied, a release
-build and the portable package. Porting the remaining macOS-specific UI tests is
-ongoing.
+Linux and Windows CI currently validate formatting, Clippy with warnings
+denied, a release build and the portable package. Porting the remaining
+macOS-specific UI tests is ongoing.
 
 ### Package for macOS
 
+Release archives target Apple Silicon (arm64); Intel Macs are not covered yet.
 Build a macOS app bundle with icon, `Info.plist`, and ad-hoc signature, plus a
 distributable zip named like the Linux and Windows bundles:
 
@@ -93,7 +94,8 @@ repeatedly running bundles from `build/`, `dist/`, or `/tmp`.
 
 ### Package and install on Linux
 
-Build the portable x86_64 Linux archive on a Linux build host:
+ARM Linux is not covered yet. Build the portable x86_64 Linux archive on a
+Linux build host:
 
 ```sh
 ./bundle-linux.sh       # -> dist/lumiere-v<version>-linux-x86_64.tar.gz

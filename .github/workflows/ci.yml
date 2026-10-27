@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -20,8 +20,9 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       # The current UI suite includes macOS-native assertions (Preview, AppKit
-      # menus and gestures). Linux is validated through strict linting, a
-      # release build and packaging until those assertions are made portable.
+      # menus and gestures). Linux and Windows are validated through strict
+      # linting, a release build and packaging until those assertions are made
+      # portable.
       - if: runner.os == 'macOS'
         run: cargo test --locked --workspace -- --test-threads=1
       - run: cargo build --locked --release -p lumiere
@@ -29,3 +30,5 @@ jobs:
         run: ./bundle.sh dist
       - if: runner.os == 'Linux'
         run: ./bundle-linux.sh dist
+      - if: runner.os == 'Windows'
+        run: .\bundle-windows.ps1 dist

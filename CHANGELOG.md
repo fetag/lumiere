@@ -12,13 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Portable Windows x86_64 build via `bundle-windows.ps1`: the window icon is
   compiled into the executable, and the `AppIcon.png` beside it feeds the
   in-window About panel.
+- Automated GitHub Releases: pushing a version tag now publishes macOS (arm64),
+  Linux (x86_64) and Windows (x86_64) archives with SHA-256 checksums, built on
+  native runners without cross-compilation.
 
 ### Changed
 
 - macOS bundles are packaged as a consistently named distributable zip
   (`lumiere-v<version>-macos-<arch>.zip`), matching the Linux and Windows
   naming scheme.
-- Documented macOS and Linux support in the README.
+- Documented macOS and Linux support in the README, including that macOS
+  releases target Apple Silicon only and Linux archives are x86_64 only for
+  now.
+- CI now validates Windows builds and packaging alongside macOS and Linux.
 
 ### Fixed
 
