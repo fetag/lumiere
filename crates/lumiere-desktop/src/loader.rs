@@ -50,11 +50,19 @@ impl Loader {
         // bound while the main thread is busy or a native dialog is open.
         let (tx, rx) = sync_channel(2);
         let shutdown = Arc::new(AtomicBool::new(false));
+        // Serializes the pixel work of this loader's workers so that at most
+        // one full-resolution buffer is alive at a time. The production app
+        // runs a single loader; test suites run many in parallel, so the gate
+        // must be per-loader rather than a process-wide static or unrelated
+        // tests would queue behind each other's decodes and time out. The
+        // workers' clones keep it alive for as long as they run.
+        let pixel_work = Arc::new(Mutex::new(()));
 
         for _ in 0..workers {
             let queue = Arc::clone(&queue);
             let tx = tx.clone();
             let shutdown = Arc::clone(&shutdown);
+            let pixel_work = Arc::clone(&pixel_work);
             let _ = thread::Builder::new()
                 .name("lumiere-decode".into())
                 .spawn(move || {
@@ -72,17 +80,26 @@ impl Loader {
                         };
                         drop(pending);
 
-                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            produce(&request)
-                        }))
-                        .unwrap_or_else(|panic| {
-                            let msg = panic
-                                .downcast_ref::<String>()
-                                .cloned()
-                                .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
-                                .unwrap_or_else(|| "panic".to_string());
-                            Err(DecodeError::Panic(format!("decoder panicked: {msg}")))
-                        });
+                        // Include scaling and cache encoding in the gate:
+                        // serializing only decode would still let all workers
+                        // retain full-resolution buffers together. The guard
+                        // is dropped before the (possibly blocking) send so a
+                        // busy UI does not also stall the other workers.
+                        let result = {
+                            let _pixel_work =
+                                pixel_work.lock().unwrap_or_else(|error| error.into_inner());
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                produce(&request)
+                            }))
+                            .unwrap_or_else(|panic| {
+                                let msg = panic
+                                    .downcast_ref::<String>()
+                                    .cloned()
+                                    .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                                    .unwrap_or_else(|| "panic".to_string());
+                                Err(DecodeError::Panic(format!("decoder panicked: {msg}")))
+                            })
+                        };
                         let _ = tx.send(Reply { request, result });
                     }
                 });
@@ -197,10 +214,6 @@ impl Loader {
 }
 
 fn produce(request: &Request) -> Result<Decoded, DecodeError> {
-    // Include scaling and cache encoding in the gate: serializing only decode
-    // would still let four workers retain full-resolution buffers together.
-    static PIXEL_WORK: Mutex<()> = Mutex::new(());
-    let _pixel_work = PIXEL_WORK.lock().unwrap_or_else(|error| error.into_inner());
     match request.kind {
         Kind::Thumb => {
             if let Some(cached) = imaging::cached_thumbnail(&request.path, request.size) {

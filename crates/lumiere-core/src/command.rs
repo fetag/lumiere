@@ -64,3 +64,18 @@ pub enum Action {
     Settings,
     About,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Command dispatch passes these around by value; keep them plain data.
+    use std::fmt::Debug;
+    fn assert_plain_data<T: Clone + Copy + PartialEq + Eq + Debug>() {}
+
+    #[test]
+    fn enums_are_plain_data() {
+        assert_plain_data::<Mode>();
+        assert_plain_data::<Action>();
+    }
+}

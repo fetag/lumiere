@@ -60,21 +60,25 @@ Commands ran with `$HOME/.cargo/bin` on PATH. Logs are in [validation](validatio
 | --- | --- | --- |
 | fmt | pass | `cargo fmt --all --check`: pass |
 | clippy, all targets, warnings denied | pass | `--locked --workspace --all-targets`: pass |
-| default parallel tests | 88 pass, 2 fail | 87 pass, 3 fail |
-| serial tests (`-- --test-threads=1`) | 90 pass | 90 pass: app 73, core 1, desktop 16 |
+| default parallel tests | 88 pass, 2 fail | pass: app 73, core 29, desktop 20 |
+| serial tests (`-- --test-threads=1`) | 90 pass | 122 pass: app 73, core 29, desktop 20 |
 | release + signed bundle | pass | pass |
 | locked metadata | original single package | three local packages, pass |
 | core / desktop dependency trees | coupled binary | no prohibited dependencies, pass |
 
-Parallel baseline failures: `open_with_submenu_lists_applications`,
-`scroll_pans_an_overflowing_image`. Parallel workspace failures:
-`oversized_images_are_clamped_to_the_texture_limit`,
-`pinch_gesture_zooms_about_the_pointer`, `scroll_pans_an_overflowing_image`.
-The latter failures time out waiting for background image decoding. Serial
-workspace execution passes all original tests without changing test assertions
-or worker scheduling. CI and the documented test command use one test thread to
-avoid contention on the process-wide pixel-work gate. This records the parallel
-suite limitation rather than claiming the default parallel suite passed.
+The refactored workspace initially failed more tests under default parallelism
+(`oversized_images_are_clamped_to_the_texture_limit`,
+`pinch_gesture_zooms_about_the_pointer`, `scroll_pans_an_overflowing_image`)
+than the single-package baseline (`open_with_submenu_lists_applications`,
+`scroll_pans_an_overflowing_image`). Both failure groups were timing issues,
+now fixed: the decode pipeline serialized every loader's pixel work behind a
+process-wide gate, so parallel tests queued behind each other's decodes and
+timed out; and the Open With prefetch thread performed real LaunchServices and
+icon lookups even in test builds. The pixel-work gate is now per-loader (the
+production app runs a single loader, so its behavior is unchanged) and test
+builds skip native Open With lookups. The default parallel workspace suite
+passes on macOS without changing test assertions or worker scheduling, and CI
+runs it with the default parallelism.
 
 Baseline and refactored bundles are retained at
 `work-baseline-bundle/Lumiere.app` and `work-refactor-bundle/Lumiere.app` (ignored

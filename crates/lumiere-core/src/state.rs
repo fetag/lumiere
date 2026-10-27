@@ -191,3 +191,103 @@ fn unescape(value: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_state_serializes_to_only_the_sort_flag() {
+        assert_eq!(serialize(&State::default()), "sort_reverse=0\n");
+    }
+
+    #[test]
+    fn round_trip_preserves_every_field() {
+        let state = State {
+            last_dir: Some("/tmp/pics".into()),
+            width: 1280.0,
+            height: 800.0,
+            x: 10.0,
+            y: 20.0,
+            thumb_size: 96,
+            sort: "name".into(),
+            sort_reverse: true,
+            filter: "*.png".into(),
+            show_folders: 1,
+            show_sidebar: 0,
+            show_inspector: 1,
+            slideshow_fullscreen: 0,
+            sidebar_dirs: vec!["/a".into(), "/b".into()],
+            recent_dirs: vec!["/c".into()],
+        };
+        assert_eq!(parse(&serialize(&state)), state);
+    }
+
+    #[test]
+    fn round_trip_escapes_special_characters() {
+        let state = State {
+            last_dir: Some("/tmp/a\nb\\c".into()),
+            filter: "x=y=z".into(),
+            ..State::default()
+        };
+        assert_eq!(parse(&serialize(&state)), state);
+    }
+
+    #[test]
+    fn parse_ignores_unknown_keys_and_malformed_lines() {
+        let text = "foo=bar\nno-equals-line\nwidth=800\n";
+        let state = parse(text);
+        assert_eq!(state.width, 800.0);
+        assert_eq!(state.sort, String::new());
+    }
+
+    #[test]
+    fn parse_clamps_window_size() {
+        assert_eq!(parse("width=10\n").width, 640.0);
+        assert_eq!(parse("height=100000\n").height, 16_384.0);
+        assert_eq!(parse("width=abc\n").width, 0.0);
+        assert_eq!(parse("width=nan\n").width, 0.0);
+    }
+
+    #[test]
+    fn parse_resets_out_of_range_positions() {
+        assert_eq!(parse("x=200000\n").x, 0.0);
+        assert_eq!(parse("y=-200000\n").y, 0.0);
+        assert_eq!(parse("x=nan\n").x, 0.0);
+        assert_eq!(parse("x=100000\n").x, 100_000.0);
+    }
+
+    #[test]
+    fn parse_clamps_thumb_size() {
+        assert_eq!(parse("thumb_size=10\n").thumb_size, 32);
+        assert_eq!(parse("thumb_size=999\n").thumb_size, 320);
+        assert_eq!(parse("thumb_size=160\n").thumb_size, 160);
+        assert_eq!(parse("thumb_size=0\n").thumb_size, 0);
+    }
+
+    #[test]
+    fn parse_sort_reverse_is_true_only_for_one() {
+        assert!(parse("sort_reverse=1\n").sort_reverse);
+        assert!(!parse("sort_reverse=0\n").sort_reverse);
+        assert!(!parse("sort_reverse=true\n").sort_reverse);
+    }
+
+    #[test]
+    fn parse_indexed_dir_entries_with_a_64_cap() {
+        let text = "sidebar_dir_0=/a\nsidebar_dir_1=/b\nsidebar_dir_64=/over\
+                   \nsidebar_dir_x=/not-a-number\nrecent_dir_0=/c\n";
+        let state = parse(text);
+        assert_eq!(
+            state.sidebar_dirs,
+            vec![PathBuf::from("/a"), PathBuf::from("/b")]
+        );
+        assert_eq!(state.recent_dirs, vec![PathBuf::from("/c")]);
+    }
+
+    #[test]
+    fn parse_trichotomy_flags_fall_back_to_not_stored() {
+        assert_eq!(parse("show_folders=1\n").show_folders, 1);
+        assert_eq!(parse("show_folders=0\n").show_folders, 0);
+        assert_eq!(parse("show_folders=garbage\n").show_folders, -1);
+    }
+}

@@ -50,11 +50,11 @@ cargo fmt --all --check
 cargo clippy --locked --workspace --all-targets
 ```
 
-The current headless UI suite contains macOS-native assertions, so CI runs its
-full serial test command on macOS:
+The current headless UI suite contains macOS-native assertions, so CI runs the
+full test command (with the default parallelism) on macOS:
 
 ```sh
-cargo test --locked --workspace -- --test-threads=1
+cargo test --locked --workspace
 ```
 
 Linux and Windows CI currently validate formatting, Clippy with warnings
@@ -246,5 +246,5 @@ The virtual Cargo workspace has three packages: `lumiere` (egui UI and native
 window/menu glue), `lumiere-desktop` (filesystem, workers, cache and native
 services), and `lumiere-core` (commands, session codec and portable pixels).
 Dependencies flow from app to desktop to core. Root build/run still select
-`lumiere`; use `cargo test --locked --workspace -- --test-threads=1` for all packages.
+`lumiere`; use `cargo test --locked --workspace` for all packages.
 See [the structure and validation record](docs/structure.md).

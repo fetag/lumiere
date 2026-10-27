@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Automated GitHub Releases: pushing a version tag now publishes macOS (arm64),
   Linux (x86_64) and Windows (x86_64) archives with SHA-256 checksums, built on
   native runners without cross-compilation.
+- Declared the minimum supported Rust version (1.91) in the workspace manifest
+  and added a CI job that checks the whole workspace against it on every push.
 
 ### Changed
 
@@ -29,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Atomic rename on Windows and Linux.
+- EXIF orientation corrections 2, 4, 5 and 7 were applied incorrectly: the
+  horizontal and vertical flips returned the untransformed image, and the two
+  transpose orientations used the wrong flip axis. Photos stored with those
+  orientations now display upright.
+- The test suite no longer times out under the default parallel execution: the
+  decode pipeline's pixel-work gate is now per-loader instead of process-wide,
+  and test builds skip native Open With lookups. CI runs the macOS suite with
+  the default parallelism again.
 
 ## [0.1.3] - 2026-10-17
 

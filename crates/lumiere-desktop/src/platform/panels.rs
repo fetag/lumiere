@@ -16,6 +16,11 @@ use std::path::{Path, PathBuf};
 pub fn default_application(path: &Path) -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
+        // Match the fixed list in `apps_to_open` so test builds never reach
+        // LaunchServices from the prefetch thread.
+        if cfg!(any(test, feature = "test-support")) {
+            return Some(PathBuf::from("/System/Applications/Preview.app"));
+        }
         use objc2_app_kit::NSWorkspace;
         use objc2_foundation::{NSString, NSURL};
         let url = NSURL::fileURLWithPath(&NSString::from_str(path.to_string_lossy().as_ref()));
@@ -34,6 +39,12 @@ pub fn default_application(path: &Path) -> Option<PathBuf> {
 pub fn application_icon(path: &Path) -> Option<lumiere_core::imaging::Decoded> {
     #[cfg(target_os = "macos")]
     {
+        // Icon decoding is real AppKit work; tests only exercise the text of
+        // the submenu, so skip it there.
+        if cfg!(any(test, feature = "test-support")) {
+            let _ = path;
+            return None;
+        }
         use objc2_app_kit::NSWorkspace;
         use objc2_foundation::NSString;
         let icon = NSWorkspace::sharedWorkspace()

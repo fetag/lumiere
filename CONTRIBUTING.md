@@ -27,18 +27,19 @@ See [README.md](README.md#project-layout) for the file-level layout and
 ### macOS (full suite)
 
 The headless UI suite contains macOS-native assertions (AppKit menus, Preview,
-gestures), so the full serial test command runs on macOS:
+gestures), so the full test command runs on macOS:
 
 ```sh
 cargo fmt --all --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo test --locked --workspace -- --test-threads=1
+cargo test --locked --workspace
 cargo build --locked --release -p lumiere
 ./bundle.sh              # optional: dist/Lumiere.app + distributable zip
 ```
 
-Note the `--test-threads=1`: background pixel decoding is serialized on a
-process-wide gate, and the current suite is only stable when run serially.
+The suite is stable under the default test parallelism: the decode pipeline's
+pixel-work gate is per-loader, so parallel tests no longer queue behind each
+other's background decodes.
 
 ### Linux (x86_64)
 
@@ -78,7 +79,7 @@ Before opening a PR, make sure:
 
 - [ ] `cargo fmt --all --check` passes
 - [ ] `cargo clippy --locked --workspace --all-targets -- -D warnings` passes
-- [ ] `cargo test --locked --workspace -- --test-threads=1` passes on macOS
+- [ ] `cargo test --locked --workspace` passes on macOS
       (or the platform-specific checks above where the full suite cannot run)
 - [ ] The affected platform builds its release bundle
 - [ ] README / docs are updated for user-visible changes

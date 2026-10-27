@@ -22,9 +22,11 @@ jobs:
       # The current UI suite includes macOS-native assertions (Preview, AppKit
       # menus and gestures). Linux and Windows are validated through strict
       # linting, a release build and packaging until those assertions are made
-      # portable.
+      # portable. Default parallelism is safe: the decode pipeline's pixel-work
+      # gate is per-loader, so parallel tests no longer queue behind each
+      # other's decodes.
       - if: runner.os == 'macOS'
-        run: cargo test --locked --workspace -- --test-threads=1
+        run: cargo test --locked --workspace
       - run: cargo build --locked --release -p lumiere
       - if: runner.os == 'macOS'
         run: ./bundle.sh dist
@@ -32,3 +34,14 @@ jobs:
         run: ./bundle-linux.sh dist
       - if: runner.os == 'Windows'
         run: .\bundle-windows.ps1 dist
+
+  # The workspace must keep compiling on the declared minimum supported Rust
+  # version (see rust-version in Cargo.toml). Check only, so the job stays
+  # fast; full validation happens on stable above.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.91
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --locked --workspace --all-targets
