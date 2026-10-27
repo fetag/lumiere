@@ -1,17 +1,10 @@
-<p align="center">
-  <img src="assets/AppIcon.png" alt="Lumiere icon" width="128" height="128">
-</p>
+# Lumiere
 
-<h1 align="center">Lumiere</h1>
+[![CI](https://github.com/fetag/lumiere/actions/workflows/ci.yml/badge.svg)](https://github.com/fetag/lumiere/actions/workflows/ci.yml)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/fetag/lumiere?label=latest)](https://github.com/fetag/lumiere/releases/latest)
 
-<p align="center">
-  A native-feeling image browser and viewer for macOS, Linux, and Windows, built in Rust with
-  <a href="https://github.com/emilk/egui">egui</a>/<a href="https://github.com/emilk/egui/tree/master/crates/eframe">eframe</a>.
-</p>
-
-<p align="center">
-  Three-pane browsing, full-screen viewing, slideshow, and platform-adaptive UI.
-</p>
+A native-feeling image browser and viewer for macOS, Linux, and Windows, built in Rust with [egui](https://github.com/emilk/egui)/[eframe](https://github.com/emilk/egui/tree/master/crates/eframe). Three-pane browsing, full-screen viewing, slideshow, and platform-adaptive UI.
 
 ---
 
@@ -225,6 +218,17 @@ osascript -e 'tell application "System Events" to tell process "lumiere" to perf
 checks of the canvas go through key codes; the menu bar, by contrast, is real
 AppKit and fully scriptable.
 Full screen uses a native macOS Space, which `screencapture` may not capture.
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for build and
+test instructions per platform, commit conventions, and the pull request
+checklist. Report bugs and request features through
+[GitHub issues](https://github.com/fetag/lumiere/issues); security concerns go
+through [SECURITY.md](SECURITY.md).
+
+The project follows a [Code of Conduct](CODE_OF_CONDUCT.md), and notable
+changes are tracked in the [changelog](CHANGELOG.md).
 
 ## License
 

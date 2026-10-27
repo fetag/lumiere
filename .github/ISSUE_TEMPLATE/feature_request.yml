@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest an idea or improvement for Lumiere
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or motivation
+      description: What would you like to see and why?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: A clear description of what you want to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative solutions or features you have considered.
+  - type: dropdown
+    id: platforms
+    attributes:
+      label: Platform(s) this affects
+      multiple: true
+      options:
+        - macOS
+        - Linux
+        - Windows
