@@ -21,6 +21,7 @@ mod commands;
 mod dialogs;
 mod menus;
 mod open_with;
+mod watch;
 
 use cache::*;
 mod view;
@@ -83,6 +84,7 @@ pub struct App {
     listing_tx: mpsc::Sender<ListingReply>,
     listing_rx: mpsc::Receiver<ListingReply>,
     listing_generation: u64,
+    dir_watch: watch::DirWatcher,
     /// File to select after the directory worker has supplied its entries.
     pending_select: Option<(PathBuf, bool)>,
 
@@ -193,6 +195,8 @@ pub struct App {
 struct ListingReply {
     generation: u64,
     entries: Vec<Entry>,
+    /// A refresh of the folder already on screen: selection is kept.
+    soft: bool,
 }
 
 static NEXT_LISTING_GENERATION: AtomicU64 = AtomicU64::new(1);
@@ -352,6 +356,7 @@ impl App {
             listing_tx,
             listing_rx,
             listing_generation: 0,
+            dir_watch: watch::DirWatcher::new(),
             pending_select: start_file.clone().map(|file| (file, false)),
             sort: SortKey::Name,
             sort_reverse: false,
@@ -437,7 +442,7 @@ impl App {
         let show_folders = self.show_folders;
         let filter = self.filter.clone();
         if cfg!(test) {
-            self.apply_listing(fsmodel::read_directory(&dir, show_folders, &filter));
+            self.apply_listing(fsmodel::read_directory(&dir, show_folders, &filter), false);
         } else {
             // Listings can involve thousands of metadata calls on networked
             // volumes. Keep that work out of egui's frame loop.
@@ -447,6 +452,30 @@ impl App {
                 let _ = tx.send(ListingReply {
                     generation,
                     entries,
+                    soft: false,
+                });
+            });
+        }
+    }
+
+    /// List the folder again after it changed on disk, keeping the selection
+    /// and the cached thumbnails (unlike `rescan`, which starts over).
+    fn refresh_listing(&mut self) {
+        let generation = NEXT_LISTING_GENERATION.fetch_add(1, Ordering::Relaxed);
+        self.listing_generation = generation;
+        let dir = self.dir.clone();
+        let show_folders = self.show_folders;
+        let filter = self.filter.clone();
+        if cfg!(test) {
+            self.apply_listing(fsmodel::read_directory(&dir, show_folders, &filter), true);
+        } else {
+            let tx = self.listing_tx.clone();
+            std::thread::spawn(move || {
+                let entries = fsmodel::read_directory(&dir, show_folders, &filter);
+                let _ = tx.send(ListingReply {
+                    generation,
+                    entries,
+                    soft: true,
                 });
             });
         }
@@ -455,14 +484,35 @@ impl App {
     fn pump_listing(&mut self) {
         while let Ok(reply) = self.listing_rx.try_recv() {
             if reply.generation == self.listing_generation {
-                self.apply_listing(reply.entries);
+                self.apply_listing(reply.entries, reply.soft);
             }
         }
     }
 
-    fn apply_listing(&mut self, mut entries: Vec<Entry>) {
+    fn apply_listing(&mut self, mut entries: Vec<Entry>, soft: bool) {
         fsmodel::sort_entries(&mut entries, self.sort, self.sort_reverse);
+        // A refresh keeps what the user has selected, found again by path
+        // since additions and removals shift the indices.
+        let kept = soft.then(|| {
+            let path_at = |i: usize| self.entries.get(i).map(|e| e.path.clone());
+            let multi: Vec<PathBuf> = self.multi.iter().filter_map(|&i| path_at(i)).collect();
+            (path_at(self.selected), multi)
+        });
         self.entries = entries;
+        if let Some((selected, multi)) = kept {
+            let find = |path: &PathBuf| self.entries.iter().position(|e| &e.path == path);
+            let found = selected.as_ref().and_then(find);
+            self.multi = multi.iter().filter_map(find).collect();
+            self.selected =
+                found.unwrap_or(self.selected.min(self.entries.len().saturating_sub(1)));
+            self.anchor = self.selected;
+            if found.is_none() && self.mode == Mode::Viewer {
+                // The picture on screen vanished: this is a different image.
+                self.fit = true;
+                self.zoom = 1.0;
+                self.pan = Vec2::ZERO;
+            }
+        }
         if self
             .pending_select
             .as_ref()
@@ -482,6 +532,7 @@ impl App {
                     let dropped = self.loader.purge_thumbs();
                     self.caches.abandon(&dropped);
                     self.fit = true;
+                    self.zoom = 1.0;
                     self.pan = Vec2::ZERO;
                 }
             }
@@ -518,7 +569,7 @@ impl App {
         // Tests apply listings synchronously; in the application the pending
         // selection is resolved by `pump_listing` on the next frame.
         if cfg!(test) {
-            self.apply_listing(self.entries.clone());
+            self.apply_listing(self.entries.clone(), false);
         }
     }
 
@@ -859,6 +910,18 @@ impl App {
         }
     }
 
+    /// The image to select once `paths` are gone: the first image after the
+    /// last trashed entry, falling back to the nearest one before it.
+    fn image_after_trash(&self, paths: &[PathBuf]) -> Option<PathBuf> {
+        let last = self.entries.iter().rposition(|e| paths.contains(&e.path))?;
+        let survivor = |e: &&Entry| e.is_image && !paths.contains(&e.path);
+        self.entries[last + 1..]
+            .iter()
+            .find(survivor)
+            .or_else(|| self.entries[..last].iter().rev().find(survivor))
+            .map(|e| e.path.clone())
+    }
+
     /// Move `paths` to the Trash right here (see `apply_transfer`) and
     /// report what happened, item by item.
     #[cfg(test)]
@@ -1063,20 +1126,17 @@ impl App {
     fn report_trash(&mut self, paths: &[PathBuf], outcome: OpOutcome) {
         if outcome.moved > 0 {
             let was_viewing = self.mode == Mode::Viewer;
+            // Pick the survivor to land on before the listing is rebuilt: the
+            // next image after the trashed ones, else the one before them.
+            let next = self.image_after_trash(paths);
             self.multi.clear();
+            self.pending_select = next.clone().map(|path| (path, was_viewing));
             self.rescan();
-            // A deletion in the viewer selects the item that moved into the
-            // old slot (or the next available picture). It is a new image,
-            // so carrying over a zoom/pan from the deleted one is surprising.
-            if was_viewing {
-                self.ensure_image_selected();
-                if self.current_image_path().is_some() {
-                    self.fit = true;
-                    self.zoom = 1.0;
-                    self.pan = Vec2::ZERO;
-                } else {
-                    self.mode = Mode::Browser;
-                }
+            // A deletion in the viewer shows the next picture. It is a new
+            // image, so a zoom/pan carried over from the deleted one would
+            // be surprising; `apply_listing` resets them when it lands.
+            if was_viewing && next.is_none() {
+                self.mode = Mode::Browser;
             }
         }
         let total = outcome.moved + outcome.failures.len();
