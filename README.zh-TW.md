@@ -52,7 +52,7 @@ cargo clippy --locked --workspace --all-targets
 cargo test --locked --workspace
 ```
 
-Linux 與 Windows 的 CI 目前驗證格式、以 warning 即失敗標準跑的 Clippy、release 建置與 portable 套件。其餘 macOS 特有的 UI 測試移植進行中。
+Linux 與 Windows 的 CI 驗證格式、以 warning 即失敗標準跑的 Clippy、release 建置與 portable 套件。Linux CI 也會在 Ubuntu 22.04 建置並檢查三種套件。其餘 macOS 特有的 UI 測試移植進行中。
 
 ### 打包 macOS
 
@@ -89,7 +89,7 @@ release bundle 是 **ad-hoc 簽章**：有簽章，但沒有開發者身分，�
 
 ### 在 Linux 上打包與安裝
 
-ARM Linux 尚未涵蓋；三種套件都只支援 x86_64。release 提供三種格式，可依你的發行版挑選：
+ARM Linux 尚未涵蓋；三種套件都只支援 x86_64，並在最低支援版本 Ubuntu 22.04 上建置。執行時仍需要相容的系統圖形函式庫與驅動程式；其他發行版未經測試。release 提供三種格式，可依需求挑選：
 
 **`.deb`**（Debian、Ubuntu、Linux Mint 等）會系統級安裝並加入選單啟動器：
 
@@ -114,7 +114,7 @@ cd lumiere-v<version>-linux-x86_64
 ./install.sh
 ```
 
-三者都會建立桌面啟動器與 hicolor 圖示主題項目。請從應用程式選單啟動 Lumiere，讓桌面環境能把執行中的視窗與大小正確的應用程式圖示對應起來。
+`.deb` 與 portable 安裝程式會建立桌面啟動器與 hicolor 圖示主題項目。AppImage 可直接執行，不會自行加入應用程式選單；如有需要，可使用 AppImage 整合工具或自行建立啟動器。
 
 若要自己在 Linux 主機上建置，可分別使用 `./bundle-linux-deb.sh`、`./bundle-linux-appimage.sh` 或 `./bundle-linux.sh`（portable）。
 

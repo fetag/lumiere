@@ -98,13 +98,31 @@ chmod 755 "$PKGROOT/DEBIAN/postinst" "$PKGROOT/DEBIAN/postrm"
 INSTALLED_SIZE=$(du -sk \
     "$PKGROOT/opt" "$PKGROOT/usr" 2>/dev/null | awk '{s+=$1} END {print s}')
 
+# 由 ELF 符號推導實際版本限制；動態載入的圖形函式庫另外列出。
+mkdir -p "$PKGROOT/debian"
+cat > "$PKGROOT/debian/control" <<'SOURCE_CONTROL'
+Source: lumiere
+Section: graphics
+Priority: optional
+Maintainer: Lumiere Maintainers <james.cl.lin@gmail.com>
+Standards-Version: 4.6.0
+
+Package: lumiere
+Architecture: any
+Description: Image browser and viewer
+SOURCE_CONTROL
+SHLIB_DEPENDS=$(cd "$PKGROOT" && dpkg-shlibdeps -O -eopt/lumiere/lumiere)
+SHLIB_DEPENDS=${SHLIB_DEPENDS#shlibs:Depends=}
+[ -n "$SHLIB_DEPENDS" ]
+rm -rf "$PKGROOT/debian"
+
 cat > "$PKGROOT/DEBIAN/control" <<CONTROL
 Package: lumiere
 Version: $VERSION
 Architecture: $DPKG_ARCH
 Maintainer: $MAINTAINER
 Installed-Size: $INSTALLED_SIZE
-Depends: libc6, libgcc-s1
+Depends: $SHLIB_DEPENDS, libx11-6, libx11-xcb1, libxcb1, libxcursor1, libxi6, libxrandr2, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libegl1, libgl1
 Section: graphics
 Priority: optional
 Homepage: $HOME_URL
@@ -117,7 +135,7 @@ Description: Native-feeling image browser and viewer
 CONTROL
 
 # --root-owner-group stamps files as root:root without needing fakeroot, so a
-# plain `dpkg-deb` (as on CI's ubuntu-latest) is all that is required.
+# dpkg-dev 提供 dpkg-deb 與 dpkg-shlibdeps。
 dpkg-deb --build --root-owner-group "$PKGROOT" "$DEB" >/dev/null
 rm -rf "$PKGROOT"
 printf '%s\n' "built $DEB"

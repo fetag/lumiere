@@ -45,12 +45,24 @@ try {
     if (Test-Path $Archive) { Remove-Item $Archive -Force }
     New-Item -ItemType Directory -Path $Stage | Out-Null
 
-    # The window icon is embedded in the binary at compile time; keep the
+    Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+public static class LumiereIconCheck {
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern uint ExtractIconEx(string file, int index, System.IntPtr large, System.IntPtr small, uint count);
+}
+'@
+
+    # The executable icon is embedded at compile time; keep the
     # About-panel artwork beside the executable, the way the Linux bundle
     # does.
     $exe  = Join-Path $PSScriptRoot "target\release\lumiere.exe"
     $icon = Join-Path $PSScriptRoot "assets\AppIcon.png"
     if (-not (Test-Path $exe)) { throw "release executable not found: $exe" }
+    $iconCount = [LumiereIconCheck]::ExtractIconEx($exe, -1, [IntPtr]::Zero, [IntPtr]::Zero, 0)
+    if ($iconCount -eq 0 -or $iconCount -eq [uint32]::MaxValue) {
+        throw "release executable has no application icon resource: $exe"
+    }
     Copy-Item $exe  (Join-Path $Stage "lumiere.exe") -Force
     Copy-Item $icon (Join-Path $Stage "AppIcon.png") -Force
 

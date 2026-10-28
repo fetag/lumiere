@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-28
+
 ### Added
 
 - Portable Windows x86_64 build via `bundle-windows.ps1`: the window icon is
@@ -35,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Windows executables include a multi-size application icon for File Explorer.
+- Linux release packages are built and smoke-tested on Ubuntu 22.04, the
+  minimum supported Ubuntu version; the `.deb` declares runtime dependencies.
+- AppImage tooling and runtime downloads use pinned versions and verified
+  SHA-256 hashes. The AppImage includes the About panel artwork.
+- All workspace packages inherit the release version; release checks verify
+  the app version and lockfile before building.
 - The README's Linux section now documents all three distribution formats
   (`.deb`, AppImage, and the portable archive).
 - macOS bundles are packaged as a consistently named distributable zip
@@ -115,7 +124,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ImageIO on macOS), recoverable delete to the system Trash, and persistent
   session state.
 
-[Unreleased]: https://github.com/fetag/lumiere/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/fetag/lumiere/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/fetag/lumiere/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/fetag/lumiere/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/fetag/lumiere/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/fetag/lumiere/compare/v0.1.0...v0.1.1

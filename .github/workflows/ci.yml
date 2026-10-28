@@ -35,6 +35,23 @@ jobs:
       - if: runner.os == 'Windows'
         run: .\bundle-windows.ps1 dist
 
+  linux-packages:
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04
+    steps:
+      - run: apt-get update && apt-get install -y build-essential ca-certificates curl git pkg-config dpkg-dev file
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: ./bundle-linux.sh dist
+      - run: ./bundle-linux-deb.sh dist
+      - run: ./bundle-linux-appimage.sh dist
+      - name: Check package contents and launch on Ubuntu 22.04
+        run: |
+          apt-get install -y xvfb xauth x11-utils libgl1-mesa-dri
+          apt-get install -y ./dist/*.deb
+          ./test-linux-packages.sh dist
+
   # The workspace must keep compiling on the declared minimum supported Rust
   # version (see rust-version in Cargo.toml). Check only, so the job stays
   # fast; full validation happens on stable above.

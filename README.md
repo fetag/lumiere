@@ -57,9 +57,9 @@ full test command (with the default parallelism) on macOS:
 cargo test --locked --workspace
 ```
 
-Linux and Windows CI currently validate formatting, Clippy with warnings
-denied, a release build and the portable package. Porting the remaining
-macOS-specific UI tests is ongoing.
+Linux and Windows CI validate formatting, Clippy with warnings denied, a release
+build and the portable package. Linux CI also builds and checks all three
+packages on Ubuntu 22.04. Porting the remaining macOS-specific UI tests is ongoing.
 
 ### Package for macOS
 
@@ -111,8 +111,10 @@ the step entirely — see [docs/release.md](docs/release.md) for the status.
 
 ### Package and install on Linux
 
-ARM Linux is not covered yet; all three packages target x86_64. Releases ship
-three formats — pick whichever fits your distribution:
+ARM Linux is not covered yet; all three packages target x86_64 and are built
+on Ubuntu 22.04, the oldest supported Ubuntu release. They require compatible
+system graphics libraries and drivers; other distributions are not tested.
+Releases ship three formats — pick whichever fits your distribution:
 
 **`.deb`** (Debian, Ubuntu, Linux Mint, …) installs system-wide and adds a menu
 launcher:
@@ -139,9 +141,9 @@ cd lumiere-v<version>-linux-x86_64
 ./install.sh
 ```
 
-All three create a desktop launcher and hicolor icon-theme entries. Launch
-Lumiere from the application menu so the desktop shell can associate the running
-window with its correctly sized application icon.
+The `.deb` and portable installer create a desktop launcher and hicolor icon
+entries. The AppImage runs directly and does not install a menu entry; use an
+AppImage integration tool or create a launcher yourself if desired.
 
 To build these yourself on a Linux host, use `./bundle-linux-deb.sh`,
 `./bundle-linux-appimage.sh`, or `./bundle-linux.sh` (portable).

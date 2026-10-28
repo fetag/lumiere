@@ -13,18 +13,20 @@ export PATH="$HOME/.cargo/bin:$PATH"
 OUT="${1:-dist}"
 ARCH="$(uname -m)"
 case "$ARCH" in
-    x86_64|aarch64) ;;
+    x86_64)
+        TOOL_SHA256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
+        RUNTIME_SHA256="2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d"
+        ;;
+    aarch64)
+        TOOL_SHA256="f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158"
+        RUNTIME_SHA256="00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444"
+        ;;
     *) echo "Unsupported Linux architecture: $ARCH" >&2; exit 1 ;;
 esac
 
-# Tooling, downloaded on demand into a scratch dir. appimagetool assembles the
-# AppImage; the type 2 runtime is embedded as its loader. The tool is pinned to
-# a release tag for a stable assembler; the runtime uses the project's
-# maintained "continuous" build — the loader AppImage tooling expects. Set
-# RUNTIME_TAG to a dated build from the AppImage/type2-runtime releases if you
-# want a byte-for-byte reproducible loader.
+# 固定上游版本和 SHA-256，更新版本時須一併核對官方發行資產的雜湊。
 TOOL_VERSION="1.9.1"
-RUNTIME_TAG="continuous"
+RUNTIME_TAG="20251108"
 APPIMAGE_TOOL_URL="https://github.com/AppImage/appimagetool/releases/download/${TOOL_VERSION}/appimagetool-${ARCH}.AppImage"
 RUNTIME_URL="https://github.com/AppImage/type2-runtime/releases/download/${RUNTIME_TAG}/runtime-${ARCH}"
 
@@ -49,15 +51,17 @@ mkdir -p "$WORK"
 # keeps the build working on minimal CI runners and headless hosts alike.
 echo "downloading appimagetool ${TOOL_VERSION}..."
 curl -fsSL "$APPIMAGE_TOOL_URL" -o "$WORK/appimagetool.AppImage"
-chmod +x "$WORK/appimagetool.AppImage"
 echo "downloading type 2 runtime (${RUNTIME_TAG})..."
 curl -fsSL "$RUNTIME_URL" -o "$WORK/runtime"
+printf '%s  %s\n' "$TOOL_SHA256" "$WORK/appimagetool.AppImage" "$RUNTIME_SHA256" "$WORK/runtime" | sha256sum -c -
+chmod +x "$WORK/appimagetool.AppImage"
 
 # Stage the AppDir: an AppRun, the desktop entry, the binary under usr/bin and
 # hicolor icon entries — the layout appimagetool expects.
 APPDIR="$WORK/AppDir"
 mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/icons/hicolor"
 install -m 755 target/release/lumiere "$APPDIR/usr/bin/lumiere"
+install -m 644 assets/AppIcon.png "$APPDIR/usr/bin/AppIcon.png"
 cp -R assets/linux-icons/* "$APPDIR/usr/share/icons/hicolor/"
 
 # appimagetool embeds a top-level icon named after the desktop entry's Icon=

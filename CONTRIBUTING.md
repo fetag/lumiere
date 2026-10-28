@@ -50,11 +50,17 @@ cargo fmt --all --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo build --locked --release -p lumiere
 ./bundle-linux.sh        # optional: portable x86_64 archive + per-user installer
+./bundle-linux-deb.sh
+./bundle-linux-appimage.sh
+./test-linux-packages.sh dist  # requires Xvfb, xauth, x11-utils and graphics libraries
 ```
 
-Linux CI currently validates formatting, Clippy with warnings denied, a release
-build and the portable package; the full test suite runs on macOS until the
-remaining macOS-specific UI assertions are made portable.
+Linux CI also builds all three packages on Ubuntu 22.04, installs the `.deb`
+dependencies and checks their contents and X11 startup. Release builds must use
+Ubuntu 22.04 to preserve the minimum supported glibc baseline. Building the
+`.deb` requires `dpkg-dev`; building the AppImage requires `curl`, `file` and
+`sha256sum`. The full test suite runs on macOS until the remaining
+macOS-specific UI assertions are made portable.
 
 ### Windows (x86_64)
 
