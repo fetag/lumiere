@@ -17,9 +17,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   native runners without cross-compilation.
 - Declared the minimum supported Rust version (1.91) in the workspace manifest
   and added a CI job that checks the whole workspace against it on every push.
+- A contributor architecture guide (`docs/architecture.md`): what each crate
+  owns, how an image flows from disk to screen, and step-by-step checklists for
+  adding an image format or a menu command.
+- A release maintainer's guide (`docs/release.md`): the tag-driven pipeline,
+  the asset naming scheme, post-release verification, and the current signing
+  status.
+- A Traditional Chinese README (`README.zh-TW.md`).
+- Linux `.deb` and AppImage packages: `bundle-linux-deb.sh` builds a system
+  package (installs to `/opt/lumiere` with a `/usr/bin` symlink, a desktop
+  launcher and hicolor icons) and `bundle-linux-appimage.sh` builds a portable
+  AppImage. The release workflow now publishes both alongside the portable
+  archive, all sharing the `lumiere-v<version>-linux-x86_64` filename prefix.
+- First-launch Gatekeeper instructions for macOS in the README (the ad-hoc-signed
+  bundle needs a one-time exception), with a Developer ID / notarization
+  assessment in the release guide.
 
 ### Changed
 
+- The README's Linux section now documents all three distribution formats
+  (`.deb`, AppImage, and the portable archive).
 - macOS bundles are packaged as a consistently named distributable zip
   (`lumiere-v<version>-macos-<arch>.zip`), matching the Linux and Windows
   naming scheme.

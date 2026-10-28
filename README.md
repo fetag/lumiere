@@ -92,16 +92,46 @@ is usually a Dock / IconServices cache issue; installing to one stable path
 (`~/Applications/Lumiere.app`) and launching that copy is more reliable than
 repeatedly running bundles from `build/`, `dist/`, or `/tmp`.
 
+### First launch on macOS: Gatekeeper
+
+The release bundle is **ad-hoc signed**: it carries a signature, but no
+developer identity, so macOS cannot verify who built it. The first time you
+open `Lumiere.app` you will see "cannot be opened because the developer
+cannot be verified". One of these unblocks it:
+
+- right-click (or control-click) `Lumiere.app` in Finder → **Open** → confirm
+  with **Open** in the dialog; or
+- System Settings → Privacy & Security, open the "Lumiere.app was blocked"
+  banner → **Open Anyway**.
+
+Only the first launch asks; afterwards the app opens normally. (Advanced:
+`xattr -d com.apple.quarantine Lumiere.app` removes the quarantine flag that
+triggers the check.) A Developer ID signature plus notarization would remove
+the step entirely — see [docs/release.md](docs/release.md) for the status.
+
 ### Package and install on Linux
 
-ARM Linux is not covered yet. Build the portable x86_64 Linux archive on a
-Linux build host:
+ARM Linux is not covered yet; all three packages target x86_64. Releases ship
+three formats — pick whichever fits your distribution:
+
+**`.deb`** (Debian, Ubuntu, Linux Mint, …) installs system-wide and adds a menu
+launcher:
 
 ```sh
-./bundle-linux.sh       # -> dist/lumiere-v<version>-linux-x86_64.tar.gz
+sudo dpkg -i lumiere-v<version>-linux-x86_64.deb
+# or let apt resolve dependencies:
+sudo apt install ./lumiere-v<version>-linux-x86_64.deb
 ```
 
-Extract the archive and run its per-user installer; no `sudo` is required:
+**AppImage** needs no installation — make it executable and run it (it requires
+FUSE, present on most desktops; use `--appimage-extract-and-run` if you lack it):
+
+```sh
+chmod +x lumiere-v<version>-linux-x86_64.AppImage
+./lumiere-v<version>-linux-x86_64.AppImage /path/to/folder
+```
+
+**Portable archive** installs for the current user with no `sudo`:
 
 ```sh
 tar -xzf lumiere-v<version>-linux-x86_64.tar.gz
@@ -109,9 +139,12 @@ cd lumiere-v<version>-linux-x86_64
 ./install.sh
 ```
 
-The installer creates a desktop launcher and hicolor icon-theme entries. Launch
+All three create a desktop launcher and hicolor icon-theme entries. Launch
 Lumiere from the application menu so the desktop shell can associate the running
 window with its correctly sized application icon.
+
+To build these yourself on a Linux host, use `./bundle-linux-deb.sh`,
+`./bundle-linux-appimage.sh`, or `./bundle-linux.sh` (portable).
 
 ### Package for Windows
 
@@ -247,4 +280,5 @@ window/menu glue), `lumiere-desktop` (filesystem, workers, cache and native
 services), and `lumiere-core` (commands, session codec and portable pixels).
 Dependencies flow from app to desktop to core. Root build/run still select
 `lumiere`; use `cargo test --locked --workspace` for all packages.
-See [the structure and validation record](docs/structure.md).
+Contributors: [docs/architecture.md](docs/architecture.md) maps the layers and
+the decode pipeline; see also [the structure and validation record](docs/structure.md).

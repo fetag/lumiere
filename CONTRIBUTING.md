@@ -86,6 +86,10 @@ Before opening a PR, make sure:
 
 ## Where to start
 
+Read [docs/architecture.md](docs/architecture.md) first — it maps the three
+crates, how an image gets from disk to screen, and where new work belongs
+(adding a format or a menu command is a short checklist).
+
 Good first areas: `lumiere-core` unit tests, documentation, and making the
 macOS-specific UI assertions portable so Linux CI can run the full suite.
 
