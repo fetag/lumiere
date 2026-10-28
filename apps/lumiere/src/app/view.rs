@@ -158,7 +158,7 @@ impl App {
             // A failure with Retry/Reveal is actionable information, not a
             // toast. Keep it until dismissed so it cannot disappear while
             // the user is reading the error details.
-            if notice.actions.is_empty() && notice.born.elapsed().as_secs_f32() > 4.0 {
+            if notice.actions.is_empty() && notice.born.elapsed().as_secs_f32() > 2.0 {
                 self.notice = None;
             }
         }

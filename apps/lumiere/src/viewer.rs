@@ -10,6 +10,7 @@ use egui::{
 
 use crate::app::{Action, App};
 use crate::loader::Kind;
+use crate::menu::{Key, Shortcut};
 use crate::theme::{self, Icon};
 
 /// The zoom the viewer allows, shared by the HUD buttons, the keyboard and
@@ -361,7 +362,7 @@ fn paint_rotated(
 /// translucent panel that matches the current light/dark appearance (like a
 /// native media HUD), built from the same buttons as the rest of the chrome.
 fn draw_toolbar(app: &mut App, ui: &mut Ui, canvas: Rect) {
-    let buttons: [(Icon, &str, Action, bool); 12] = [
+    let buttons: [(Icon, &str, Action, bool); 13] = [
         (Icon::First, "First", Action::FirstImage, true),
         (Icon::Prev, "Previous", Action::PrevImage, true),
         (Icon::Next, "Next", Action::NextImage, true),
@@ -378,8 +379,10 @@ fn draw_toolbar(app: &mut App, ui: &mut Ui, canvas: Rect) {
             Action::StopSlideshow,
             app.slideshow,
         ),
+        (Icon::Delete, "Move to Trash", Action::MoveToTrash, true),
         (Icon::Browser, "Back to browser", Action::CloseViewer, true),
     ];
+    let trash_key = Shortcut::plain(Key::Delete).display();
 
     let width = buttons.len() as f32 * 34.0 + 12.0;
     let rect = Rect::from_min_size(
@@ -407,7 +410,12 @@ fn draw_toolbar(app: &mut App, ui: &mut Ui, canvas: Rect) {
     let ctx = ui.ctx().clone();
     let mut actions: Vec<Action> = Vec::new();
     for (glyph, title, action, enabled) in buttons {
-        if theme::tool_button(&mut child, glyph, title, enabled).clicked() {
+        let response = if action == Action::MoveToTrash {
+            theme::tool_button_with_shortcut(&mut child, glyph, title, &trash_key, enabled)
+        } else {
+            theme::tool_button(&mut child, glyph, title, enabled)
+        };
+        if response.clicked() {
             actions.push(action);
         }
     }

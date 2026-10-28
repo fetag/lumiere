@@ -163,6 +163,11 @@ pub struct App {
     pub notice: Option<Notice>,
     /// The batch file operation on its worker thread, when one is running.
     job: Option<RunningJob>,
+    /// File operations waiting for the running one to finish, in order.
+    job_queue: VecDeque<FileOp>,
+    /// Files handed to the Trash worker but not gone yet: hidden from the
+    /// listing so the next delete can start before the worker is done.
+    trashing: HashSet<PathBuf>,
     pending_system_action: Option<PendingSystemAction>,
     pub(crate) open_with_cache: open_with::OpenWithCache,
     /// The drag-in state machine: a file drag is recognized from the
@@ -407,6 +412,8 @@ impl App {
             restore_frames: 0,
             notice: None,
             job: None,
+            job_queue: VecDeque::new(),
+            trashing: HashSet::new(),
             pending_system_action: None,
             open_with_cache: open_with::OpenWithCache::default(),
             drop_watch: crate::dnd::DropWatch::new(),
@@ -490,6 +497,7 @@ impl App {
     }
 
     fn apply_listing(&mut self, mut entries: Vec<Entry>, soft: bool) {
+        entries.retain(|e| !self.trashing.contains(&e.path));
         fsmodel::sort_entries(&mut entries, self.sort, self.sort_reverse);
         // A refresh keeps what the user has selected, found again by path
         // since additions and removals shift the indices.
@@ -902,12 +910,46 @@ impl App {
             return;
         }
         match crate::alerts::confirm_trash(&paths) {
-            crate::alerts::Confirmation::Confirmed => self.start_job(FileOp::Trash { paths }),
+            crate::alerts::Confirmation::Confirmed => self.trash_now(paths),
             crate::alerts::Confirmation::Cancelled => {}
             crate::alerts::Confirmation::Unavailable => {
                 self.confirm_trash = Some(paths);
             }
         }
+    }
+
+    /// Start moving `paths` to the Trash without making the user wait for it:
+    /// they vanish from the listing and the selection moves on at once, so
+    /// the next delete can follow immediately. The worker runs in the
+    /// background (queued behind any earlier one) and `report_trash` settles
+    /// the listing when it finishes.
+    pub fn trash_now(&mut self, paths: Vec<PathBuf>) {
+        let was_viewing = self.mode == Mode::Viewer;
+        let next = self.image_after_trash(&paths);
+        self.trashing.extend(paths.iter().cloned());
+        self.entries.retain(|e| !paths.contains(&e.path));
+        self.multi.clear();
+        let landed = next.and_then(|path| self.entries.iter().position(|e| e.path == path));
+        match landed {
+            Some(index) => {
+                self.selected = index;
+                self.multi.insert(index);
+                self.scroll_to_selected = true;
+                if was_viewing {
+                    self.fit = true;
+                    self.zoom = 1.0;
+                    self.pan = Vec2::ZERO;
+                }
+            }
+            None => {
+                self.selected = self.selected.min(self.entries.len().saturating_sub(1));
+                if was_viewing {
+                    self.mode = Mode::Browser;
+                }
+            }
+        }
+        self.anchor = self.selected;
+        self.start_job(FileOp::Trash { paths });
     }
 
     /// The image to select once `paths` are gone: the first image after the
@@ -936,6 +978,11 @@ impl App {
     /// the files move, the floating card reports the progress ("Moving 2 of
     /// 4 — sunset.jpg"), and the finished outcome becomes the result card.
     pub fn start_job(&mut self, op: FileOp) {
+        if self.job.is_some() {
+            self.job_queue.push_back(op);
+            self.notice = None;
+            return;
+        }
         let (prefix, tail) = match &op {
             FileOp::Transfer { copy, .. } => (if *copy { "Copying" } else { "Moving" }, ""),
             FileOp::Trash { .. } => ("Moving", " to the Trash"),
@@ -1003,6 +1050,9 @@ impl App {
             };
             ctx.request_repaint();
             self.finish_op(job.op, outcome);
+            if let Some(next) = self.job_queue.pop_front() {
+                self.start_job(next);
+            }
         }
     }
 
@@ -1124,7 +1174,15 @@ impl App {
     /// The floating-card report of a finished trash run, keeping the
     /// friendly single-file wording.
     fn report_trash(&mut self, paths: &[PathBuf], outcome: OpOutcome) {
-        if outcome.moved > 0 {
+        let still_listed = self.entries.iter().any(|e| paths.contains(&e.path));
+        for path in paths {
+            self.trashing.remove(path);
+        }
+        if outcome.moved > 0 && !still_listed {
+            // `trash_now` already moved the selection on; just re-list, which
+            // also brings back anything that failed to move.
+            self.refresh_listing();
+        } else if outcome.moved > 0 {
             let was_viewing = self.mode == Mode::Viewer;
             // Pick the survivor to land on before the listing is rebuilt: the
             // next image after the trashed ones, else the one before them.
@@ -1463,9 +1521,15 @@ fn run_transfer(
 /// Finder's Trash, so the operation is recoverable. Pure filesystem work,
 /// so it is safe on the worker thread.
 fn run_trash(paths: &[PathBuf], progress: Option<&mpsc::Sender<JobMessage>>) -> OpOutcome {
+    // Tests must never move fixtures into the developer's real Trash.
+    #[cfg(test)]
+    return run_trash_with(paths, progress, |path| std::fs::remove_file(path));
+    #[cfg(not(test))]
     run_trash_all_with(paths, progress, |paths| file_ops::trash_delete_all(paths))
 }
 
+// Tests trash through `run_trash_with` so they never touch the real Trash.
+#[cfg_attr(test, allow(dead_code))]
 fn run_trash_all_with<F, E>(
     paths: &[PathBuf],
     progress: Option<&mpsc::Sender<JobMessage>>,

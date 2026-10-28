@@ -1829,6 +1829,42 @@ fn refreshing_after_a_new_file_keeps_the_selection() {
 }
 
 #[test]
+fn a_second_delete_does_not_wait_for_the_first() {
+    let dir = fixture_dir("trash_twice");
+    let ctx = egui::Context::default();
+    let mut app = App::build(&ctx, Some(dir.clone()));
+    let images = app.image_indices();
+    assert!(images.len() >= 3, "fixture has several images");
+    app.selected = images[0];
+    let first = app.entries[images[0]].path.clone();
+    let second = app.entries[images[1]].path.clone();
+    let third = app.entries[images[2]].path.clone();
+
+    app.trash_now(vec![first.clone()]);
+    // No waiting: the picture is already gone from the list and the next one
+    // is selected, before the worker has reported anything.
+    assert!(app.entries.iter().all(|e| e.path != first));
+    assert_eq!(app.current_image_path(), Some(second.clone()));
+
+    app.trash_now(vec![second.clone()]);
+    assert_eq!(app.current_image_path(), Some(third));
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while (app.job.is_some() || !app.job_queue.is_empty()) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+        app.pump_job(&ctx);
+    }
+    assert!(!first.exists() && !second.exists());
+    assert!(app
+        .entries
+        .iter()
+        .all(|e| e.path != first && e.path != second));
+    assert!(app.trashing.is_empty());
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn menu_shortcuts_open_dialogs() {
     let dir = fixture_dir("menukeys");
     let ctx = egui::Context::default();
