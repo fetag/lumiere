@@ -165,6 +165,8 @@ impl App {
 
         if self.mode != Mode::Viewer {
             self.gif_player.clear();
+            #[cfg(feature = "video")]
+            self.video_player.clear();
         }
         let chrome = !self.fullscreen && self.mode == Mode::Browser;
 

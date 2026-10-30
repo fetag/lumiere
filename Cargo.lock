@@ -1962,7 +1962,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lumiere"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "dirs",
  "eframe",
@@ -1973,6 +1973,7 @@ dependencies = [
  "log",
  "lumiere-core",
  "lumiere-desktop",
+ "mpv-engine",
  "notify",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
@@ -1986,7 +1987,7 @@ dependencies = [
 
 [[package]]
 name = "lumiere-core"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "image",
  "kamadak-exif",
@@ -1995,7 +1996,7 @@ dependencies = [
 
 [[package]]
 name = "lumiere-desktop"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "chrono",
  "dirs",
@@ -2124,6 +2125,19 @@ checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
 dependencies = [
  "num-traits",
  "pxfm",
+]
+
+[[package]]
+name = "mpv-engine"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab8b31b8a3e9c33ea806dca00998d9be4d31c574e06df71fb90a3e5e23db5ebb"
+dependencies = [
+ "libc",
+ "parking_lot",
+ "rsmpv",
+ "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]
@@ -3105,6 +3119,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9da7f59328b09405b181fee1018925fad50f157afb43c0c0f5c522c256dd5907"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "rsmpv"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c43d845c72fe35aba06906f130c10e96665295b7fc948b8246c851c6f5811fec"
+dependencies = [
+ "rsmpv-sys",
+]
+
+[[package]]
+name = "rsmpv-sys"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd7d3d6bf8c3f290a357ef8782b7fd9ce6aa841ceb8a63da239f49e4dc5efc37"
+dependencies = [
+ "pkg-config",
 ]
 
 [[package]]

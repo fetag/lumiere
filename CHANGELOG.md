@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-31
+
+### Added
+
+- View SVG images, with resolution-aware rendering when zooming.
+- Play animated GIFs in the viewer, including pause/resume and bounded streaming decoding.
+- Add an experimental `video` build feature for MP4 and AVI playback with audio, play/pause and seeking via libmpv. The feature requires native libmpv and is **not included in standard release bundles**; video thumbnails are placeholders.
+
+### Fixed
+
+- Preserve fractional SVG dimensions to avoid clipping the right and bottom edges.
+- Keep video Play/Pause buttons at a fixed width and restart playback from the beginning at end of file.
+
 ## [0.1.5] - 2026-10-30
 
 ### Added
@@ -144,7 +157,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ImageIO on macOS), recoverable delete to the system Trash, and persistent
   session state.
 
-[Unreleased]: https://github.com/fetag/lumiere/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/fetag/lumiere/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/fetag/lumiere/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/fetag/lumiere/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/fetag/lumiere/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/fetag/lumiere/compare/v0.1.2...v0.1.3

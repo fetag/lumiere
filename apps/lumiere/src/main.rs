@@ -10,6 +10,8 @@ mod browser;
 mod panels;
 mod platform_ui;
 mod theme;
+#[cfg(feature = "video")]
+mod video;
 mod viewer;
 
 use lumiere_desktop::platform::{alerts, window};

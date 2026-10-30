@@ -82,6 +82,8 @@ pub struct App {
     pub caches: Caches,
     pub loader: Loader,
     pub gif_player: crate::animation::GifPlayer,
+    #[cfg(feature = "video")]
+    pub video_player: crate::video::VideoPlayer,
     listing_tx: mpsc::Sender<ListingReply>,
     listing_rx: mpsc::Receiver<ListingReply>,
     listing_generation: u64,
@@ -360,6 +362,8 @@ impl App {
             caches: Caches::default(),
             loader: Loader::new(4),
             gif_player: crate::animation::GifPlayer::default(),
+            #[cfg(feature = "video")]
+            video_player: crate::video::VideoPlayer::default(),
             listing_tx,
             listing_rx,
             listing_generation: 0,
@@ -640,6 +644,9 @@ impl App {
             neighbours.push(self.entries[indices[next]].path.clone());
         }
         for path in neighbours {
+            if imaging::is_video(&path) {
+                continue;
+            }
             if self.caches.full(&path).is_none() && !self.caches.full_failed(&path) {
                 let info = self.caches.info(&path);
                 if (info.width as u64) * (info.height as u64) > MAX_PREFETCH_PIXELS {

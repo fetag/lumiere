@@ -106,9 +106,14 @@ pub fn extension(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// 影片支援僅在啟用實驗性 video feature 時開放。
+pub fn is_video(path: &Path) -> bool {
+    cfg!(feature = "video") && matches!(extension(path).as_str(), "mp4" | "avi")
+}
+
 pub fn is_image(path: &Path) -> bool {
     let ext = extension(path);
-    !ext.is_empty() && SUPPORTED_EXTS.contains(&ext.as_str())
+    (!ext.is_empty() && SUPPORTED_EXTS.contains(&ext.as_str())) || is_video(path)
 }
 
 /// Decode an image, applying EXIF orientation when needed.
@@ -795,6 +800,15 @@ mod tests {
         let reread = read_cached_thumbnail(&file).expect("cache read");
         assert_eq!((reread.width, reread.height), (32, 21));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn video_extensions_are_feature_gated() {
+        for path in ["/tmp/video.mp4", "/tmp/video.AVI"] {
+            assert_eq!(is_video(Path::new(path)), cfg!(feature = "video"));
+            assert_eq!(is_image(Path::new(path)), cfg!(feature = "video"));
+        }
+        assert!(!is_video(Path::new("/tmp/image.gif")));
     }
 
     #[test]

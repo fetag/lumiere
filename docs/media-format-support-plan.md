@@ -1,6 +1,6 @@
 # 媒體格式支援規劃（SVG / ICO / GIF 動畫 / 影片）
 
-更新：2026-10-30（基於 v0.1.5 代碼與使用者測試）
+更新：2026-10-31（基於 v0.1.6 代碼與使用者測試）
 
 ## 現況盤點
 
@@ -9,7 +9,7 @@
 | `.ico` / `.cur` | **已支援**（v0.1.4+，使用者實測確認） | `crates/lumiere-desktop/src/imaging.rs` 的 `SUPPORTED_EXTS` 含 `"ico","cur"`；`image` crate 的 `ico` feature 在 `crates/lumiere-core/Cargo.toml` 與 `apps/lumiere/Cargo.toml` 均已啟用；`bundle.sh` 已宣告 `ico` document extension |
 | `.svg` | **已支援靜態顯示** | 使用 `resvg` / `usvg` 渲染；縮圖、預覽與檢視器依顯示尺寸產生 texture，放大時背景重渲染；使用者已確認清晰度與裁切修正 |
 | `.gif` | **檢視器支援動畫（三平台使用者測試通過）** | `apps/lumiere/src/animation.rs` 使用 `zengif` 背景逐幀解碼，依影格延遲與循環次數播放；縮圖與右側預覽仍是靜態畫面 |
-| `.mp4` / `.avi` | 不支援，屬架構級新增 | 現有管線假設「一個檔 = 一張 RGBA 圖」：decode worker（4 threads、`MAX_DECODE_PIXELS` 50MP）→ `Decoded{rgba}` → 單一 `TextureHandle`（Full/Thumb/Preview 三種 cache，見 `apps/lumiere/src/app/cache.rs`）→ 靜態 mesh（`apps/lumiere/src/viewer.rs`） |
+| `.mp4` / `.avi` | **實驗性測試版，未納入預設建置** | `video` feature 啟用 mpv-engine；Windows `.120`、Linux `.123` 已建置供使用者測試。正常發行版的三平台原生依賴與打包尚未完成。 |
 
 架構要點（影響所有新增格式）：
 
@@ -47,21 +47,23 @@
 - slideshow 仍依既有固定間隔切換，不等待動畫播放完畢。
 - 回歸測試涵蓋影格延遲、透明與局部更新、disposal、循環次數、暫停及 101 幀串流；macOS GUI 已用使用者的 `test.gif` 確認畫面變化。Windows 與 Linux 原生建置和 GIF 測試通過；使用者回報 macOS、Windows、Linux 的 GIF 動畫功能測試均通過。
 
-## Phase 3：影片 mp4 / avi（大，約 1–2 週；最大不確定項是打包）
+## Phase 3：影片 mp4 / avi（實驗性測試版，尚未完成）
 
-- **解碼器**：ffmpeg-next（libav），mp4/h264/hevc/avi/xvid 一次覆蓋；
-  AVI 只是容器，有 ffmpeg 即白送。
+- `video` feature 串接 `mpv-engine`：影片分類、背景播放、音訊、暫停／繼續、seek 及播畢重播已實作；Play／Pause 按鈕固定寬度。目前影片縮圖與預覽僅顯示播放圖示，影像最長邊限制為 1280 pixels。feature 預設關閉，避免未驗證的原生依賴破壞既有正式建置。
+- 使用者回報 Windows、Linux 影片畫面及聲音播放正常，並確認目前 Video Player 功能可用。Linux `.123` Xvfb 另驗證播放、暫停、seek，以及播畢後按 Play 可從頭重播；Xvfb 測試未啟用聲音。
+- Windows 測試版以第三方 `libmpv-2.dll` 與測試機現有 Codex 的 Vulkan loader 隔離執行，僅供本機驗證，不是可重新散布的發行方案；Linux 測試版使用 `.123` 已安裝的 `libmpv.so.2`，不是獨立可攜包。
+
+- **套件選型尚未定案**：`experiments/video-spike/` 驗證 `ffmpeg-next` 解碼；`experiments/mpv-spike/` 評估現成的 `mpv-engine`／libmpv 播放引擎。三平台的獨立 spike 已驗證 MP4/H.264 和 AVI/MPEG-4 的軟體畫面、暫停／繼續與 seek；音訊設備、正式 GUI 及自帶 runtime 的發行方式仍待驗證。MP4、AVI 是容器，codec 支援依後端建置而異。
 - **跨平台打包**（最大成本）：
   - macOS：`bundle.sh` 處理 libav dylib。
   - Linux：`bundle-linux-appimage.sh` / `bundle-linux-deb.sh`。
   - Windows：`bundle-windows.ps1` 處理 DLL。
-  - 建議先做 **macOS-only spike** 驗證打包路線再全面開工。
+  - macOS 解碼 spike 已完成，但仍動態連結 Homebrew 的 libraries，**打包路線尚未驗證**；Linux `.123` 缺少開發 headers，Windows `.120` 的 PATH 未找到 FFmpeg。
 - **架構新增**：
   - `Entry` 引入 media kind 概念（image / video），影片不走現有單 texture cache。
   - 播放管線：解碼 thread → frame ring buffer → texture update；
     v1 播放/暫停，seek bar 可放 v1.1。
-  - **音訊是獨立子專案**（ffmpeg 音軌 + rodio/cpal）；建議 v1 靜音播放，
-    音訊標 v1.1——否則工期約 +40%。
+  - 使用者已確認第一版包含聲音及 seek；選擇現成播放器引擎時須同時評估音畫同步與三平台打包。
   - 縮圖：ffmpeg 抓首幀 → 餵進現有 thumbnail 管線。
   - info 欄位加 duration / 解析度；沿用 pixel cap。
 
@@ -69,10 +71,7 @@
 
 1. Phase 1（SVG）已完成；後續可補 Linux / Windows 實機驗證。
 2. Phase 2（GIF 動畫）已改用 zengif 串流，使用者已完成三平台測試。
-3. Phase 3 開工前拍板：
-   - v1 要不要音訊（建議不要）。
-   - v1 要不要 seek（建議要基本 seek bar，v1.1 再強化）。
-   - ffmpeg 打包 spike 結果。
+3. Phase 3 已啟動：v1 包含音訊與 seek；尚須確認播放器引擎和三平台可發行的打包方案。
 
 ## 驗收清單（各 phase 收尾前確認）
 

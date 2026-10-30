@@ -50,6 +50,15 @@ pub fn view(app: &mut App, ui: &mut Ui) {
         return;
     };
 
+    #[cfg(feature = "video")]
+    {
+        if crate::imaging::is_video(&path) {
+            crate::video::view(app, ui, &path);
+            return;
+        }
+        app.video_player.clear();
+    }
+
     let cached = app.caches.full(&path).map(|entry| {
         (
             entry.texture.id(),
