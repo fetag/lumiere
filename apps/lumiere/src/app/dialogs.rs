@@ -470,7 +470,7 @@ impl App {
                 ui.horizontal(|ui| {
                     if ui.button("Move to Trash").clicked() {
                         self.confirm_trash = None;
-                        self.start_job(FileOp::Trash { paths });
+                        self.trash_now(paths);
                     }
                     if ui.button("Cancel").clicked() {
                         self.confirm_trash = None;

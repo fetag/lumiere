@@ -124,6 +124,19 @@ pub fn tool_button(ui: &mut Ui, glyph: Icon, title: &str, enabled: bool) -> Resp
     tool_button_toggle(ui, glyph, title, enabled, false)
 }
 
+/// [`tool_button`] whose hover tooltip also shows the keyboard shortcut, e.g.
+/// "Move to Trash (⌫)". The button keeps `title` as its name.
+pub fn tool_button_with_shortcut(
+    ui: &mut Ui,
+    glyph: Icon,
+    title: &str,
+    shortcut: &str,
+    enabled: bool,
+) -> Response {
+    let response = tool_button_toggle(ui, glyph, title, enabled, false);
+    response.on_hover_text(format!("{title} ({shortcut})"))
+}
+
 /// [`tool_button`] for toggle controls: while `active` the button keeps a
 /// filled, selection-tinted background, so the user can see that what it
 /// toggles (e.g. the inspector pane) is currently shown.

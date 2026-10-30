@@ -6,6 +6,9 @@ impl App {
     /// One frame of UI, usable from tests as well as the eframe backend.
     pub fn draw(&mut self, ctx: &Context) {
         self.pump_listing();
+        if !cfg!(test) && self.dir_watch.poll(ctx, &self.dir) {
+            self.refresh_listing();
+        }
         // Finder can send this while Lumiere is already running. Drain all
         // documents so a multi-file Open With request has deterministic
         // last-document-selected behaviour.
@@ -155,7 +158,7 @@ impl App {
             // A failure with Retry/Reveal is actionable information, not a
             // toast. Keep it until dismissed so it cannot disappear while
             // the user is reading the error details.
-            if notice.actions.is_empty() && notice.born.elapsed().as_secs_f32() > 4.0 {
+            if notice.actions.is_empty() && notice.born.elapsed().as_secs_f32() > 2.0 {
                 self.notice = None;
             }
         }

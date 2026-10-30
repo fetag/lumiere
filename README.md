@@ -82,6 +82,9 @@ on macOS because it is more reliable for Dock icon cache behavior:
 ./install.sh /path/to/folder # same, but launches that folder immediately
 ```
 
+Set `LUMIERE_INSTALL_DIR` to install somewhere else, for example
+`LUMIERE_INSTALL_DIR=/Applications ./install.sh`.
+
 Session state is stored in:
 
 - `~/Library/Application Support/Lumiere/state.ini`

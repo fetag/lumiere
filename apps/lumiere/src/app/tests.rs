@@ -314,7 +314,7 @@ fn menu_uses_macos_names_and_shortcuts() {
     assert_eq!(named(&["App", "Settings\u{2026}"]), "\u{2318},");
     assert_eq!(named(&["File", "Open\u{2026}"]), "\u{2318}O");
     assert_eq!(named(&["File", "Get Info"]), "\u{2318}I");
-    assert_eq!(named(&["File", "Move to Trash"]), "\u{2318}\u{232B}");
+    assert_eq!(named(&["File", "Move to Trash"]), "\u{232B}");
     assert_eq!(named(&["View", "Reload"]), "\u{2318}R");
     assert_eq!(named(&["View", "Enter Full Screen"]), "\u{2303}\u{2318}F");
     assert_eq!(named(&["Go", "Up One Level"]), "\u{21E7}\u{2318}U");
@@ -377,7 +377,7 @@ fn menu_shortcuts_are_the_keyboard_map() {
         (
             &["File", "Move to Trash"],
             egui::Key::Backspace,
-            egui::Modifiers::COMMAND,
+            egui::Modifiers::NONE,
         ),
         (
             &["View", "Show Sidebar"],
@@ -1713,7 +1713,7 @@ fn apply_trash_reports_the_result() {
         message.contains(&crate::alerts::trash_names(std::slice::from_ref(&path))[0]),
         "{message}"
     );
-    assert!(app.multi.is_empty());
+    assert_ne!(app.current_image_path().as_deref(), Some(path.as_path()));
 
     // A file that is already gone cannot be moved: that is reported —
     // with the reason and a retry — not silently swallowed.
@@ -1777,6 +1777,89 @@ fn trashing_a_viewed_image_fits_the_replacement() {
     assert!(app.fit);
     assert_eq!(app.zoom, 1.0);
     assert_eq!(app.pan, Vec2::ZERO);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn trashing_in_the_browser_selects_the_next_image() {
+    let dir = fixture_dir("trash_next");
+    let ctx = egui::Context::default();
+    let mut app = App::build(&ctx, Some(dir.clone()));
+    let images = app.image_indices();
+    assert!(images.len() >= 2, "fixture has several images");
+    app.selected = images[0];
+    let deleted = app.entries[images[0]].path.clone();
+    let expected = app.entries[images[1]].path.clone();
+
+    std::fs::remove_file(&deleted).unwrap();
+    app.report_trash(
+        std::slice::from_ref(&deleted),
+        OpOutcome {
+            moved: 1,
+            failures: Vec::new(),
+        },
+    );
+
+    assert_eq!(app.mode, Mode::Browser);
+    assert_eq!(app.current_image_path(), Some(expected));
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn refreshing_after_a_new_file_keeps_the_selection() {
+    let dir = fixture_dir("refresh_keep");
+    let ctx = egui::Context::default();
+    let mut app = App::build(&ctx, Some(dir.clone()));
+    let images = app.image_indices();
+    let last = *images.last().unwrap();
+    app.selected = last;
+    let kept = app.entries[last].path.clone();
+    let count = app.image_indices().len();
+
+    // Sorts before every other name, so every index shifts by one.
+    std::fs::copy(&kept, dir.join("0-new.png")).unwrap();
+    app.refresh_listing();
+
+    assert_eq!(app.image_indices().len(), count + 1);
+    assert_eq!(app.current().map(|e| e.path.clone()), Some(kept));
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_second_delete_does_not_wait_for_the_first() {
+    let dir = fixture_dir("trash_twice");
+    let ctx = egui::Context::default();
+    let mut app = App::build(&ctx, Some(dir.clone()));
+    let images = app.image_indices();
+    assert!(images.len() >= 3, "fixture has several images");
+    app.selected = images[0];
+    let first = app.entries[images[0]].path.clone();
+    let second = app.entries[images[1]].path.clone();
+    let third = app.entries[images[2]].path.clone();
+
+    app.trash_now(vec![first.clone()]);
+    // No waiting: the picture is already gone from the list and the next one
+    // is selected, before the worker has reported anything.
+    assert!(app.entries.iter().all(|e| e.path != first));
+    assert_eq!(app.current_image_path(), Some(second.clone()));
+
+    app.trash_now(vec![second.clone()]);
+    assert_eq!(app.current_image_path(), Some(third));
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while (app.job.is_some() || !app.job_queue.is_empty()) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+        app.pump_job(&ctx);
+    }
+    assert!(!first.exists() && !second.exists());
+    assert!(app
+        .entries
+        .iter()
+        .all(|e| e.path != first && e.path != second));
+    assert!(app.trashing.is_empty());
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

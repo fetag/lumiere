@@ -269,11 +269,8 @@ impl App {
                         actions.push(Action::NextImage);
                     }
                 }
-                for key in [
-                    egui::Key::Backspace,
-                    egui::Key::ArrowLeft,
-                    egui::Key::ArrowUp,
-                ] {
+                // Backspace is Move to Trash (the menu shortcut), not "previous".
+                for key in [egui::Key::ArrowLeft, egui::Key::ArrowUp] {
                     if i.consume_key(egui::Modifiers::NONE, key) {
                         actions.push(Action::PrevImage);
                     }
@@ -312,6 +309,13 @@ impl App {
                     actions.push(Action::ToggleFullscreen);
                 } else if self.mode == Mode::Viewer {
                     actions.push(Action::CloseViewer);
+                }
+            }
+
+            // `⌘⌫` still moves to the Trash, as before the bare key did.
+            for key in [egui::Key::Backspace, egui::Key::Delete] {
+                if i.consume_key(egui::Modifiers::COMMAND, key) {
+                    actions.push(Action::MoveToTrash);
                 }
             }
 

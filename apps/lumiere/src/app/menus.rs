@@ -37,7 +37,7 @@ impl App {
             self.key_item(
                 "Move to Trash",
                 Action::MoveToTrash,
-                Shortcut::cmd(Key::Delete),
+                Shortcut::plain(Key::Delete),
             )
             .with_enabled(has_entry),
             Item::Separator,
@@ -353,8 +353,15 @@ impl App {
             }
             theme::vtool_separator(ui);
             // Enabled exactly like the File ▸ Move to Trash menu item.
-            if theme::tool_button(ui, Icon::Delete, "Move to Trash", self.current().is_some())
-                .clicked()
+            let trash_key = Shortcut::plain(Key::Delete).display();
+            if theme::tool_button_with_shortcut(
+                ui,
+                Icon::Delete,
+                "Move to Trash",
+                &trash_key,
+                self.current().is_some(),
+            )
+            .clicked()
             {
                 pending.push(Action::MoveToTrash);
             }
