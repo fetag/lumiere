@@ -50,10 +50,14 @@ pub fn view(app: &mut App, ui: &mut Ui) {
         return;
     };
 
-    let cached = app
-        .caches
-        .full(&path)
-        .map(|entry| (entry.texture.id(), entry.width, entry.height));
+    let cached = app.caches.full(&path).map(|entry| {
+        (
+            entry.texture.id(),
+            entry.width,
+            entry.height,
+            entry.texture_side,
+        )
+    });
     if cached.is_some() {
         app.caches.protect_full(&path);
     }
@@ -73,7 +77,7 @@ pub fn view(app: &mut App, ui: &mut Ui) {
         .unwrap_or("")
         .to_owned();
 
-    let Some((texture, width, height)) = cached else {
+    let Some((texture, width, height, texture_side)) = cached else {
         // Name the picture: "what is being processed" is only useful when
         // it says which one.
         let status = if app.caches.full_failed(&path) {
@@ -108,6 +112,24 @@ pub fn view(app: &mut App, ui: &mut Ui) {
         .max(0.001);
     let effective_zoom = if app.fit { fit_zoom } else { app.zoom };
     let drawn = vec2(base_w * effective_zoom, base_h * effective_zoom);
+    if crate::imaging::extension(&path) == "svg" && !app.caches.full_failed(&path) {
+        let cap = (ui.ctx().input(|i| i.max_texture_side) as u32)
+            .clamp(512, crate::app::cache::MAX_FULL_TEXTURE_SIDE);
+        let needed = (drawn.x.max(drawn.y) * ui.ctx().pixels_per_point()).ceil() as u32;
+        let target = needed
+            .max(512)
+            .checked_next_power_of_two()
+            .unwrap_or(cap)
+            .min(cap);
+        let pending = app
+            .caches
+            .pending
+            .iter()
+            .any(|(kind, pending_path, _)| *kind == Kind::Full && pending_path == &path);
+        if target > texture_side.saturating_add(1) && !pending {
+            app.caches.request(&app.loader, Kind::Full, &path, target);
+        }
+    }
     // When the picture overflows the canvas there is room to pan, so a
     // two-finger scroll pans it. While it fits, a horizontal swipe browses
     // to the neighbouring image instead.

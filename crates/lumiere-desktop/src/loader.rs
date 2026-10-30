@@ -214,6 +214,13 @@ impl Loader {
 }
 
 fn produce(request: &Request) -> Result<Decoded, DecodeError> {
+    if imaging::extension(&request.path) == "svg" {
+        let size = match request.kind {
+            Kind::Full if request.size == 0 => 1024,
+            _ => request.size,
+        };
+        return imaging::decode_svg_at_size(&request.path, size).map_err(DecodeError::from_message);
+    }
     match request.kind {
         Kind::Thumb => {
             if let Some(cached) = imaging::cached_thumbnail(&request.path, request.size) {
@@ -231,5 +238,29 @@ fn produce(request: &Request) -> Result<Decoded, DecodeError> {
             Ok(full.scaled(request.size, request.size))
         }
         Kind::Full => imaging::decode(&request.path),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn svg_requests_render_at_requested_size() {
+        let path =
+            std::env::temp_dir().join(format!("lumiere-svg-loader-{}.svg", std::process::id()));
+        std::fs::write(&path, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"12\"><rect width=\"24\" height=\"12\" fill=\"red\"/></svg>").unwrap();
+        for (kind, size) in [(Kind::Thumb, 200), (Kind::Preview, 800), (Kind::Full, 2048)] {
+            let request = Request {
+                kind,
+                path: path.clone(),
+                size,
+                generation: 0,
+            };
+            let decoded = produce(&request).unwrap();
+            assert_eq!((decoded.width, decoded.height), (size, size / 2));
+            assert_eq!(decoded.original_size, Some((24, 12)));
+        }
+        std::fs::remove_file(path).unwrap();
     }
 }

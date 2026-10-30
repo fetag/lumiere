@@ -14,6 +14,8 @@ pub struct FullEntry {
     pub height: u32,
     /// Bytes of the uploaded texture (clamped), not of the decoded original.
     pub bytes: usize,
+    /// 已上傳 texture 的最長邊，供 SVG 放大時判斷是否需要重新渲染。
+    pub texture_side: u32,
 }
 
 #[derive(Default)]
@@ -41,7 +43,7 @@ pub(super) const MAX_FULLS: usize = 6;
 pub(super) const MAX_THUMB_BYTES: usize = 96 * 1024 * 1024;
 pub(super) const MAX_FULL_BYTES: usize = 192 * 1024 * 1024;
 /// Longest side of an uploaded full-size texture (~144 MB RGBA at the limit).
-pub(super) const MAX_FULL_TEXTURE_SIDE: u32 = 6000;
+pub(crate) const MAX_FULL_TEXTURE_SIDE: u32 = 6000;
 /// Neighbour prefetch skips pictures whose decode would dwarf the budget.
 pub(super) const MAX_PREFETCH_PIXELS: u64 = 50_000_000;
 
@@ -243,6 +245,15 @@ impl Caches {
                 }
                 Kind::Full => {
                     let key = request.path.clone();
+                    // 背景工作可能亂序完成；較小的 SVG 結果不可覆蓋較清晰的 texture。
+                    if imaging::extension(&key) == "svg"
+                        && self
+                            .fulls
+                            .get(&key)
+                            .is_some_and(|old| old.texture_side > tex_w.max(tex_h))
+                    {
+                        continue;
+                    }
                     self.failed_fulls.remove(&key);
                     if let Some(old) = self.fulls.remove(&key) {
                         self.full_bytes -= old.bytes;
@@ -260,6 +271,7 @@ impl Caches {
                             width,
                             height,
                             bytes,
+                            texture_side: tex_w.max(tex_h),
                         },
                     );
                 }

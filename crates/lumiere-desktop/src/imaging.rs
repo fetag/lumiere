@@ -172,33 +172,45 @@ pub fn decode(path: &Path) -> Result<Decoded, DecodeError> {
 /// can be drawn at any scale, so the pixel budget becomes a render target.
 /// Animated (SMIL) documents render their first frame only.
 pub fn decode_svg(path: &Path) -> Result<Decoded, String> {
+    decode_svg_at_size(path, 0)
+}
+
+/// 依最長邊的目標像素數渲染 SVG；0 表示使用原始尺寸。
+pub fn decode_svg_at_size(path: &Path, max_side: u32) -> Result<Decoded, String> {
     let data = fs::read(path).map_err(|e| format!("open failed: {e}"))?;
     let tree = usvg::Tree::from_data(&data, &usvg::Options::default())
         .map_err(|e| format!("decode failed: {e}"))?;
     let size = tree.size();
-    let (width, height) = (size.width() as u32, size.height() as u32);
-    if width == 0 || height == 0 {
-        return Err("decode failed: SVG has no renderable size".to_owned());
-    }
+    // SVG 可使用小數尺寸或英吋等單位；必須保留小數計算畫布，
+    // 否則截斷後的 pixmap 會裁掉右側與底部。
+    let (width, height) = (f64::from(size.width()), f64::from(size.height()));
+    let intrinsic = (
+        width.round().max(1.0) as u32,
+        height.round().max(1.0) as u32,
+    );
     // Oversized documents are shrunk to fit the pixel budget instead of being
     // rejected; `original_size` then carries the true document dimensions.
-    let pixels = u64::from(width).saturating_mul(u64::from(height));
-    let scale = if pixels > MAX_DECODE_PIXELS {
-        (MAX_DECODE_PIXELS as f64 / pixels as f64).sqrt()
-    } else {
+    let requested_scale = if max_side == 0 {
         1.0
-    };
-    // Render one output pixel per source unit at the scaled size so the
-    // surface stays inside MAX_DECODE_PIXELS even after rounding.
-    let target_w = ((f64::from(width) * scale).round() as u32).max(1);
-    let target_h = ((f64::from(height) * scale).round() as u32).max(1);
-    check_decode_dimensions(target_w, target_h)?;
-    let transform = if scale < 1.0 {
-        let factor = scale as f32;
-        resvg::tiny_skia::Transform::from_scale(factor, factor)
     } else {
-        resvg::tiny_skia::Transform::identity()
+        f64::from(max_side) / width.max(height)
     };
+    let budget_scale = (MAX_DECODE_PIXELS as f64 / (width * height)).sqrt();
+    let scale = requested_scale.min(budget_scale);
+    let mut target_w = ((width * scale).round() as u32).max(1);
+    let mut target_h = ((height * scale).round() as u32).max(1);
+    if u64::from(target_w) * u64::from(target_h) > MAX_DECODE_PIXELS {
+        if target_w >= target_h {
+            target_w -= 1;
+        } else {
+            target_h -= 1;
+        }
+    }
+    check_decode_dimensions(target_w, target_h)?;
+    let transform = resvg::tiny_skia::Transform::from_scale(
+        (f64::from(target_w) / width) as f32,
+        (f64::from(target_h) / height) as f32,
+    );
     let mut pixmap = resvg::tiny_skia::Pixmap::new(target_w, target_h)
         .ok_or_else(|| format!("resource limit: SVG render surface {target_w} × {target_h}"))?;
     {
@@ -213,7 +225,7 @@ pub fn decode_svg(path: &Path) -> Result<Decoded, String> {
         height: target_h,
         rgba,
         premultiplied: false,
-        original_size: (scale < 1.0).then_some((width, height)),
+        original_size: Some(intrinsic),
     })
 }
 
@@ -677,6 +689,30 @@ mod tests {
         let centre = (12 * 40 + 19) as usize * 4;
         assert_eq!(&decoded.rgba[centre..centre + 4], &[255, 0, 0, 255]);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn svg_renders_at_requested_resolution_without_losing_intrinsic_size() {
+        let dir = temp_dir("svg_target");
+        let path = dir.join("icon.svg");
+        write_svg(&path, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"12\"><circle cx=\"12\" cy=\"6\" r=\"5\" fill=\"red\"/></svg>");
+        let image = decode_svg_at_size(&path, 600).unwrap();
+        assert_eq!((image.width, image.height), (600, 300));
+        assert_eq!(image.original_size, Some((24, 12)));
+        assert_eq!(&image.rgba[(150 * 600 + 300) * 4..][..4], &[255, 0, 0, 255]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn svg_fractional_dimensions_preserve_right_and_bottom_edges() {
+        let dir = temp_dir("svg_fractional");
+        let path = dir.join("fractional.svg");
+        write_svg(&path, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10.8\" height=\"8.8\" viewBox=\"0 0 10.8 8.8\"><rect width=\"10.8\" height=\"8.8\" fill=\"red\"/></svg>");
+        let image = decode_svg_at_size(&path, 108).unwrap();
+        assert_eq!((image.width, image.height), (108, 88));
+        let pixel = ((87 * 108 + 107) * 4) as usize;
+        assert_eq!(&image.rgba[pixel..pixel + 4], &[255, 0, 0, 255]);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

@@ -480,9 +480,10 @@ pub fn grid(app: &mut App, ui: &mut Ui) {
     let warm = prefetch_range(visible_rows, cols, entries.len());
     if !warm.is_empty() {
         for entry in entries[warm].iter().filter(|e| e.is_image) {
-            if app.caches.thumb(&entry.path, cell.thumb).is_none() {
+            let size = svg_render_size(&entry.path, cell.thumb, ui.ctx().pixels_per_point());
+            if app.caches.thumb(&entry.path, size).is_none() {
                 app.caches
-                    .request(&app.loader, Kind::Thumb, &entry.path, cell.thumb);
+                    .request(&app.loader, Kind::Thumb, &entry.path, size);
             }
         }
     }
@@ -542,6 +543,14 @@ fn prefetch_range(
     let from = visible.start.saturating_sub(1) * cols;
     let to = (visible.end + 1) * cols;
     from..to.min(total)
+}
+
+fn svg_render_size(path: &std::path::Path, logical: u32, pixels_per_point: f32) -> u32 {
+    if imaging::extension(path) == "svg" {
+        ((logical as f32 * pixels_per_point).ceil() as u32).max(1)
+    } else {
+        logical
+    }
 }
 
 fn thumbnail(
@@ -608,6 +617,7 @@ fn thumbnail(
     }
 
     let box_size = size as f32;
+    let size = svg_render_size(&entry.path, size, ui.ctx().pixels_per_point());
     let box_rect = Rect::from_min_size(
         pos2(rect.center().x - box_size / 2.0, rect.top() + 4.0),
         vec2(box_size, box_size),
@@ -887,7 +897,7 @@ pub fn preview_pane(app: &mut App, ui: &mut Ui) {
     };
 
     if entry.is_image {
-        let request_size = width as u32;
+        let request_size = svg_render_size(&entry.path, width as u32, ui.ctx().pixels_per_point());
         if let Some(preview) = app.caches.thumb(&entry.path, request_size) {
             let scale = (width / preview.width as f32)
                 .min(width / preview.height as f32)

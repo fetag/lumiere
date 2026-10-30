@@ -16,7 +16,7 @@ use crate::loader::{Kind, Loader, Request};
 use crate::menu::{Item, Key, Shortcut};
 use crate::theme::{self, Icon};
 
-mod cache;
+pub(crate) mod cache;
 mod commands;
 mod dialogs;
 mod menus;
