@@ -383,7 +383,10 @@ impl App {
                                         NoticeAction::Reveal(path) => {
                                             crate::panels::reveal_in_finder(&path);
                                         }
-                                        NoticeAction::Retry(op) => self.start_job(op),
+                                        NoticeAction::Retry(op) => {
+                                            self.notice = None;
+                                            self.start_job(op);
+                                        }
                                     }
                                     self.notice = None;
                                 }

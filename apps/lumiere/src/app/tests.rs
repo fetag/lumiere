@@ -1829,6 +1829,84 @@ fn refreshing_after_a_new_file_keeps_the_selection() {
 }
 
 #[test]
+fn failed_trash_restores_hidden_file_to_listing() {
+    let dir = fixture_dir("trash_failure_restore");
+    let ctx = egui::Context::default();
+    let mut app = App::build(&ctx, Some(dir.clone()));
+    let path = dir.join("one.png");
+    app.trashing.insert(path.clone());
+    app.entries.retain(|entry| entry.path != path);
+
+    app.report_trash(
+        std::slice::from_ref(&path),
+        OpOutcome {
+            moved: 0,
+            failures: vec![(path.clone(), "denied".into())],
+        },
+    );
+
+    assert!(app.entries.iter().any(|entry| entry.path == path));
+    assert!(app
+        .notice
+        .as_ref()
+        .unwrap()
+        .actions
+        .iter()
+        .any(|action| matches!(action, NoticeAction::Retry(_))));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn queued_job_waits_for_failure_notice() {
+    let dir = fixture_dir("queued_failure_notice");
+    let ctx = egui::Context::default();
+    let mut app = App::build(&ctx, Some(dir.clone()));
+    let path = dir.join("one.png");
+    let (tx, rx) = mpsc::channel();
+    app.job = Some(RunningJob {
+        prefix: "Moving",
+        tail: " to the Trash",
+        op: FileOp::Trash {
+            paths: vec![path.clone()],
+        },
+        total: 1,
+        done: 0,
+        last_name: String::new(),
+        rx,
+    });
+    app.start_job(FileOp::Trash {
+        paths: vec![dir.join("two.png")],
+    });
+    tx.send(JobMessage::Done(OpOutcome {
+        moved: 0,
+        failures: vec![(path, "denied".into())],
+    }))
+    .unwrap();
+    app.pump_job(&ctx);
+    assert!(app.job.is_none());
+    assert_eq!(app.job_queue.len(), 1);
+    assert!(app
+        .notice
+        .as_ref()
+        .unwrap()
+        .actions
+        .iter()
+        .any(|action| matches!(action, NoticeAction::Retry(_))));
+    app.pump_job(&ctx);
+    assert_eq!(app.job_queue.len(), 1);
+    app.notice = None;
+    app.pump_job(&ctx);
+    assert!(app.job_queue.is_empty());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app.job.is_some() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+        app.pump_job(&ctx);
+    }
+    assert!(app.job.is_none());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn a_second_delete_does_not_wait_for_the_first() {
     let dir = fixture_dir("trash_twice");
     let ctx = egui::Context::default();

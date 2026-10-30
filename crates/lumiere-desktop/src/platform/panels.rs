@@ -2,9 +2,8 @@
 //!
 //! On macOS the app asks AppKit for a real `NSOpenPanel`, so choosing a folder,
 //! and picking a Move/Copy destination, uses the same Finder-styled dialog the
-//! user knows. Everywhere else — and in the headless test build, where there is
-//! no `NSApplication` to host a panel — the caller falls back to the built-in
-//! egui dialogs.
+//! user knows. Windows uses its native folder picker. Other platforms and
+//! headless test builds fall back to the built-in egui dialogs.
 //!
 //! The panel is shown with a modal `runModal`, which spins AppKit's own event
 //! loop. The egui canvas simply waits behind the panel for as long as it takes;
@@ -140,7 +139,22 @@ pub fn choose_directory(title: &str, prompt: &str, start: Option<&Path>) -> Pane
     {
         native_choose_directory(title, prompt, start)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        if cfg!(any(test, feature = "test-support")) {
+            return PanelResult::Unavailable;
+        }
+        let mut dialog = rfd::FileDialog::new().set_title(title);
+        if let Some(dir) = start {
+            dialog = dialog.set_directory(dir);
+        }
+        let _ = prompt;
+        match dialog.pick_folder() {
+            Some(path) if path.is_dir() => PanelResult::Chose(path),
+            _ => PanelResult::Cancelled,
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = (title, prompt, start);
         PanelResult::Unavailable
@@ -388,4 +402,17 @@ pub fn open_with(paths: &[PathBuf], app: &Path) -> bool {
 pub fn open_with(paths: &[PathBuf], app: &Path) -> bool {
     let _ = (paths, app);
     false
+}
+
+#[cfg(test)]
+mod directory_tests {
+    use super::*;
+
+    #[test]
+    fn headless_tests_use_the_fallback_directory_picker() {
+        assert_eq!(
+            choose_directory("Choose a Folder", "Choose", Some(Path::new("."))),
+            PanelResult::Unavailable
+        );
+    }
 }

@@ -856,9 +856,9 @@ impl App {
         }
     }
 
-    /// Ask for a Move/Copy destination. On macOS a native directory chooser is
-    /// shown and the transfer happens as soon as the user picks a folder;
-    /// anywhere else the built-in dialog is shown and applied on confirm.
+    /// Ask for a Move/Copy destination. On macOS and Windows a native
+    /// directory chooser starts the transfer after a folder is picked;
+    /// other platforms use the built-in dialog.
     fn begin_transfer(&mut self, copy: bool) {
         let paths = self.selection_paths();
         if paths.is_empty() {
@@ -978,9 +978,13 @@ impl App {
     /// the files move, the floating card reports the progress ("Moving 2 of
     /// 4 — sunset.jpg"), and the finished outcome becomes the result card.
     pub fn start_job(&mut self, op: FileOp) {
-        if self.job.is_some() {
+        if self.job.is_some()
+            || self
+                .notice
+                .as_ref()
+                .is_some_and(|notice| !notice.actions.is_empty())
+        {
             self.job_queue.push_back(op);
-            self.notice = None;
             return;
         }
         let (prefix, tail) = match &op {
@@ -1017,6 +1021,16 @@ impl App {
     /// frame: a progress tick repaints, a finished outcome becomes the
     /// result card.
     fn pump_job(&mut self, ctx: &Context) {
+        if self.job.is_none()
+            && self
+                .notice
+                .as_ref()
+                .is_none_or(|notice| notice.actions.is_empty())
+        {
+            if let Some(next) = self.job_queue.pop_front() {
+                self.start_job(next);
+            }
+        }
         let drained: Vec<JobMessage> = match self.job.as_ref() {
             Some(job) => {
                 let mut out = Vec::new();
@@ -1050,9 +1064,8 @@ impl App {
             };
             ctx.request_repaint();
             self.finish_op(job.op, outcome);
-            if let Some(next) = self.job_queue.pop_front() {
-                self.start_job(next);
-            }
+            // Keep actionable failure reports visible until the user responds.
+            // The next frame starts queued work once the notice is dismissed.
         }
     }
 
@@ -1178,7 +1191,7 @@ impl App {
         for path in paths {
             self.trashing.remove(path);
         }
-        if outcome.moved > 0 && !still_listed {
+        if !still_listed {
             // `trash_now` already moved the selection on; just re-list, which
             // also brings back anything that failed to move.
             self.refresh_listing();
