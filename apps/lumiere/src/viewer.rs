@@ -451,9 +451,9 @@ fn draw_toolbar(app: &mut App, ui: &mut Ui, canvas: Rect) {
     }
     if app.gif_player.is_animated() {
         let label = if app.gif_player.paused() {
-            "播放"
+            "Play"
         } else {
-            "暫停"
+            "Pause"
         };
         if child.button(label).clicked() {
             app.gif_player.toggle();

@@ -65,7 +65,7 @@ fn decode_stream(
         }
         let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
         if file.metadata().map_err(|e| e.to_string())?.len() > MAX_FILE_BYTES {
-            return Err("GIF 檔案超過 64 MiB，僅顯示靜態畫面".into());
+            return Err("GIF exceeds the 64 MiB file size limit; showing a static image".into());
         }
         let limits = Limits::default()
             .max_total_pixels(MAX_PIXELS)
@@ -101,7 +101,7 @@ fn decode_stream(
             }
         }
         if count == 0 {
-            return Err("GIF 沒有影格".into());
+            return Err("GIF contains no frames".into());
         }
         completed = completed.saturating_add(1);
         let finished = match decoder.repeat() {
@@ -178,7 +178,9 @@ impl GifPlayer {
                 Some(Message::Frame(frame)) => {
                     let max_side = ctx.input(|i| i.max_texture_side);
                     if frame.width > max_side || frame.height > max_side {
-                        self.error = Some("GIF 尺寸超過 GPU texture 上限，僅顯示靜態畫面".into());
+                        self.error = Some(
+                            "GIF exceeds the GPU texture size limit; showing a static image".into(),
+                        );
                         if let Some(cancelled) = &self.cancelled {
                             cancelled.store(true, Ordering::Relaxed);
                         }
