@@ -62,7 +62,7 @@ use crate::platform::image_io as macos;
 pub const SUPPORTED_EXTS: &[&str] = &[
     "jpg", "jpeg", "jpe", "jfif", "png", "bmp", "rle", "gif", "webp", "tif", "tiff", "tga", "vda",
     "icb", "vst", "ico", "cur", "pcx", "qoi", "pnm", "pbm", "pgm", "ppm", "heic", "heif", "hif",
-    "avif",
+    "avif", "svg",
     // Camera RAW: the `image` crate cannot decode these, but macOS ImageIO can
     // (decode() already falls back to it).
     "dng", "cr2", "cr3", "nef", "nrw", "arw", "srf", "sr2", "orf", "rw2", "raf", "pef", "raw",
@@ -114,6 +114,20 @@ pub fn is_image(path: &Path) -> bool {
 /// Decode an image, applying EXIF orientation when needed.
 pub fn decode(path: &Path) -> Result<Decoded, DecodeError> {
     let ext = extension(path);
+
+    if ext == "svg" {
+        return match decode_svg(path) {
+            Ok(img) => Ok(img),
+            // resvg is strict about XML; give ImageIO a chance on macOS before
+            // declaring the document corrupt.
+            #[cfg(target_os = "macos")]
+            Err(primary) => macos::decode(path)
+                .map_err(|fallback| DecodeError::Corrupt(format!("{primary}; {fallback}"))),
+            #[cfg(not(target_os = "macos"))]
+            Err(primary) => Err(DecodeError::from_message(primary)),
+        };
+    }
+
     // Reject known oversized dimensions before considering a native fallback.
     if let Some((width, height)) = pixel_size(path) {
         if let Err(error) = check_decode_dimensions(width, height) {
@@ -153,6 +167,56 @@ pub fn decode(path: &Path) -> Result<Decoded, DecodeError> {
     }
 }
 
+/// Render a vector SVG with resvg. Unlike raster formats, an oversized
+/// document is not rejected but rendered at a reduced size: vector content
+/// can be drawn at any scale, so the pixel budget becomes a render target.
+/// Animated (SMIL) documents render their first frame only.
+pub fn decode_svg(path: &Path) -> Result<Decoded, String> {
+    let data = fs::read(path).map_err(|e| format!("open failed: {e}"))?;
+    let tree = usvg::Tree::from_data(&data, &usvg::Options::default())
+        .map_err(|e| format!("decode failed: {e}"))?;
+    let size = tree.size();
+    let (width, height) = (size.width() as u32, size.height() as u32);
+    if width == 0 || height == 0 {
+        return Err("decode failed: SVG has no renderable size".to_owned());
+    }
+    // Oversized documents are shrunk to fit the pixel budget instead of being
+    // rejected; `original_size` then carries the true document dimensions.
+    let pixels = u64::from(width).saturating_mul(u64::from(height));
+    let scale = if pixels > MAX_DECODE_PIXELS {
+        (MAX_DECODE_PIXELS as f64 / pixels as f64).sqrt()
+    } else {
+        1.0
+    };
+    // Render one output pixel per source unit at the scaled size so the
+    // surface stays inside MAX_DECODE_PIXELS even after rounding.
+    let target_w = ((f64::from(width) * scale).round() as u32).max(1);
+    let target_h = ((f64::from(height) * scale).round() as u32).max(1);
+    check_decode_dimensions(target_w, target_h)?;
+    let transform = if scale < 1.0 {
+        let factor = scale as f32;
+        resvg::tiny_skia::Transform::from_scale(factor, factor)
+    } else {
+        resvg::tiny_skia::Transform::identity()
+    };
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(target_w, target_h)
+        .ok_or_else(|| format!("resource limit: SVG render surface {target_w} × {target_h}"))?;
+    {
+        let mut surface = pixmap.as_mut();
+        resvg::render(&tree, transform, &mut surface);
+    }
+    // tiny-skia stores premultiplied RGBA; the rest of the pipeline (including
+    // the PNG thumbnail cache) expects straight alpha, so demultiply here.
+    let rgba = pixmap.take_demultiplied();
+    Ok(Decoded {
+        width: target_w,
+        height: target_h,
+        rgba,
+        premultiplied: false,
+        original_size: (scale < 1.0).then_some((width, height)),
+    })
+}
+
 /// Metadata shown in the preview pane.
 #[derive(Clone)]
 pub struct Info {
@@ -162,8 +226,16 @@ pub struct Info {
     pub exif: Vec<(String, String)>,
 }
 
-/// Header-only dimensions: no pixels are decoded.
+/// Header-only dimensions: no pixels are decoded. SVG is a text format the
+/// `image` crate cannot sniff, so it goes through usvg (parse only, no render).
 pub fn pixel_size(path: &Path) -> Option<(u32, u32)> {
+    if extension(path) == "svg" {
+        let data = fs::read(path).ok()?;
+        let size = usvg::Tree::from_data(&data, &usvg::Options::default())
+            .ok()?
+            .size();
+        return Some((size.width() as u32, size.height() as u32));
+    }
     let reader = ImageReader::open(path).ok()?.with_guessed_format().ok()?;
     let decoder = reader.into_decoder().ok()?;
     let (w, h) = decoder.dimensions();
@@ -585,6 +657,81 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    fn write_svg(path: &Path, body: &str) {
+        std::fs::write(path, body).unwrap();
+    }
+
+    #[test]
+    fn decodes_svg_at_intrinsic_size() {
+        let dir = temp_dir("svg");
+        let path = dir.join("square.svg");
+        write_svg(
+            &path,
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40\" height=\"24\">\n\
+             <rect width=\"40\" height=\"24\" fill=\"#f00\"/>\n</svg>",
+        );
+        let decoded = decode(&path).expect("svg decode");
+        assert_eq!((decoded.width, decoded.height), (40, 24));
+        assert!(!decoded.premultiplied);
+        // Centre pixel: straight-alpha red.
+        let centre = (12 * 40 + 19) as usize * 4;
+        assert_eq!(&decoded.rgba[centre..centre + 4], &[255, 0, 0, 255]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn oversized_svg_is_shrunk_to_fit_the_pixel_budget() {
+        let dir = temp_dir("svg_large");
+        let path = dir.join("huge.svg");
+        write_svg(
+            &path,
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"30000\" height=\"30000\">\n\
+             <rect width=\"30000\" height=\"30000\" fill=\"#00f\"/>\n</svg>",
+        );
+        let decoded = decode(&path).expect("oversized svg should render, not fail");
+        let pixels = u64::from(decoded.width) * u64::from(decoded.height);
+        assert!(pixels <= MAX_DECODE_PIXELS, "rendered {pixels} px");
+        // The true document size is preserved for the information pane.
+        assert_eq!(decoded.original_size, Some((30000, 30000)));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn svg_without_dimensions_uses_the_default_canvas() {
+        let dir = temp_dir("svg_nosize");
+        let path = dir.join("bare.svg");
+        write_svg(
+            &path,
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"10\" height=\"10\"/></svg>",
+        );
+        let decoded = decode(&path).expect("bare svg decode");
+        assert!(decoded.width > 0 && decoded.height > 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn corrupt_svg_is_a_decode_error() {
+        let dir = temp_dir("svg_corrupt");
+        let path = dir.join("broken.svg");
+        write_svg(&path, "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect");
+        assert!(decode(&path).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn pixel_size_reads_svg_without_rendering() {
+        let dir = temp_dir("svg_meta");
+        let path = dir.join("meta.svg");
+        write_svg(
+            &path,
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40\" height=\"24\"></svg>",
+        );
+        assert_eq!(pixel_size(&path), Some((40, 24)));
+        let info = info(&path);
+        assert_eq!((info.width, info.height), (40, 24));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn scaled_keeps_aspect_ratio_and_never_upscales() {
         let dir = temp_dir("scale");
@@ -621,6 +768,7 @@ mod tests {
         assert!(is_image(Path::new("/tmp/a.tga")));
         assert!(is_image(Path::new("/tmp/a.dng")));
         assert!(is_image(Path::new("/tmp/a.NEF")));
+        assert!(is_image(Path::new("/tmp/a.svg")));
         assert!(!is_image(Path::new("/tmp/a.txt")));
     }
 

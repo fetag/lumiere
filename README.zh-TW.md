@@ -24,7 +24,7 @@ Lumiere 是一款跨平台的圖片瀏覽器／檢視器，支援 macOS、Linux 
 - **獨立檢視器**：縮放、平移、旋轉、翻轉、實際大小、配合視窗
 - **投影片模式**：鍵盤或選單列快速開始／停止
 - **隨平台適配的介面**：淺色／深色自適應樣式、可用的原生整合、系統字型
-- **廣泛的格式支援**：常見格式透過 `image` crate；macOS 另以 ImageIO 支援 HEIC/HEIF/AVIF
+- **廣泛的格式支援**：常見格式透過 `image` crate、SVG 透過 resvg；macOS 另以 ImageIO 支援 HEIC/HEIF/AVIF
 - **可復原的刪除**：確認後將項目移至系統垃圾桶
 - **持久化的工作階段狀態**：還原上次開啟的資料夾與視窗位置大小
 - **真正的選單列整合**：鍵盤快捷鍵只定義一次，選單顯示與程式處理一致
@@ -137,6 +137,7 @@ cd lumiere-v<version>-linux-x86_64
 ## 格式支援與儲存
 
 - 內建（透過 `image` crate）：JPEG、PNG、GIF、BMP、TIFF、WebP、TGA、PCX、ICO、…
+- SVG 透過 resvg（動畫文件只渲染第一幀；超大文件會以縮小尺寸渲染而非拒絕）
 - HEIC / HEIF / AVIF 透過 macOS ImageIO（`crates/lumiere-desktop/src/platform/image_io.rs`、`objc2-image-io`）
 - EXIF 透過 `kamadak-exif`
 - 「移到垃圾桶」會先確認，再使用平台垃圾桶（`trash` crate），項目仍可透過桌面環境復原

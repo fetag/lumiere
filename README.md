@@ -28,7 +28,7 @@ dialogs as Linux; the native macOS menu bar and AppKit panels are macOS-only for
 - **Dedicated viewer**: zoom, pan, rotate, flip, actual size, and fit-to-window
 - **Slideshow mode**: quick start/stop from the keyboard or menu bar
 - **Platform-adaptive UI**: adaptive light/dark styling, native integrations where available, system fonts
-- **Wide format support**: common formats via `image`; macOS additionally uses ImageIO for HEIC/HEIF/AVIF
+- **Wide format support**: common formats via `image`, SVG via resvg; macOS additionally uses ImageIO for HEIC/HEIF/AVIF
 - **Recoverable delete**: moves items to the system Trash after confirmation
 - **Persistent session state**: restores the last folder and window geometry
 - **Real menu bar integration**: keyboard shortcuts are defined once and reflected consistently in menus and app handling
@@ -171,6 +171,7 @@ No installation is required. The window icon is compiled into the executable; th
 ## Format support and storage
 
 - Built-in via the `image` crate: JPEG, PNG, GIF, BMP, TIFF, WebP, TGA, PCX, ICO, …
+- SVG via resvg (first frame for animated documents; oversized documents are rendered at a reduced size)
 - HEIC / HEIF / AVIF via macOS ImageIO (`crates/lumiere-desktop/src/platform/image_io.rs`, `objc2-image-io`)
 - EXIF via `kamadak-exif`
 - "Move to Trash" confirms before using the platform Trash (`trash` crate), so

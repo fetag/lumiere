@@ -71,6 +71,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
                 <string>nef</string><string>nrw</string><string>arw</string>
                 <string>srf</string><string>sr2</string><string>orf</string>
                 <string>rw2</string><string>raf</string><string>pef</string><string>raw</string>
+                <string>svg</string>
             </array>
             <key>LSItemContentTypes</key>
             <array>
@@ -83,6 +84,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
                 <string>org.webmproject.webp</string>
                 <string>com.microsoft.ico</string>
                 <string>public.pnm</string>
+                <string>org.w3c.svg</string>
             </array>
         </dict>
     </array>
