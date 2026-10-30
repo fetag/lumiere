@@ -29,8 +29,10 @@ log = "0.4"
 lumiere-core = { path = "../../crates/lumiere-core" }
 lumiere-desktop = { path = "../../crates/lumiere-desktop" }
 notify = "8"
+zengif = "=0.6.0"
 
 [dev-dependencies]
+gif = "0.14.2"
 lumiere-desktop = { path = "../../crates/lumiere-desktop", features = ["test-support"] }
 
 [build-dependencies]

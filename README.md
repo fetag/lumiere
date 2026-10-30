@@ -172,6 +172,7 @@ No installation is required. The window icon is compiled into the executable; th
 
 - Built-in via the `image` crate: JPEG, PNG, GIF, BMP, TIFF, WebP, TGA, PCX, ICO, …
 - SVG via resvg (first frame for animated documents; oversized documents are rendered at a reduced size)
+- Animated GIFs play in the viewer with pause/resume; thumbnails and the preview remain static. Files exceeding the playback resource limits fall back to a static image.
 - HEIC / HEIF / AVIF via macOS ImageIO (`crates/lumiere-desktop/src/platform/image_io.rs`, `objc2-image-io`)
 - EXIF via `kamadak-exif`
 - "Move to Trash" confirms before using the platform Trash (`trash` crate), so

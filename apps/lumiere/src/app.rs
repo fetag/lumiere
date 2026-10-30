@@ -81,6 +81,7 @@ pub struct App {
 
     pub caches: Caches,
     pub loader: Loader,
+    pub gif_player: crate::animation::GifPlayer,
     listing_tx: mpsc::Sender<ListingReply>,
     listing_rx: mpsc::Receiver<ListingReply>,
     listing_generation: u64,
@@ -358,6 +359,7 @@ impl App {
             recent_dirs: Vec::new(),
             caches: Caches::default(),
             loader: Loader::new(4),
+            gif_player: crate::animation::GifPlayer::default(),
             listing_tx,
             listing_rx,
             listing_generation: 0,

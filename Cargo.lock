@@ -991,6 +991,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
 
 [[package]]
+name = "enough"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65641ff0923e45cf34a4cb0115080cb7fc8bf4fd419c2207670d5722bab4c581"
+
+[[package]]
 name = "enum-map"
 version = "2.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1962,6 +1968,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui_extras",
+ "gif",
  "image",
  "log",
  "lumiere-core",
@@ -1974,6 +1981,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "raw-window-handle",
  "winresource",
+ "zengif",
 ]
 
 [[package]]
@@ -4274,6 +4282,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "whereat"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab90f361db038ba3135da12c938c328fb43a012992101879e3d6ebccb4d7eba8"
+
+[[package]]
 name = "winapi-util"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4988,6 +5002,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1afec51604565183aeb5c54c20aeab286120d4e4460f7f76e3e8bb8c0d99473"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "zengif"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f5513ba58dd7213d6da66b01c40d8268479016d736510e72357347a32deebc3"
+dependencies = [
+ "bytemuck",
+ "enough",
+ "gif",
+ "rgb",
+ "whereat",
 ]
 
 [[package]]

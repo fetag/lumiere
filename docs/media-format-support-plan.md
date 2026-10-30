@@ -8,7 +8,7 @@
 |---|---|---|
 | `.ico` / `.cur` | **已支援**（v0.1.4+，使用者實測確認） | `crates/lumiere-desktop/src/imaging.rs` 的 `SUPPORTED_EXTS` 含 `"ico","cur"`；`image` crate 的 `ico` feature 在 `crates/lumiere-core/Cargo.toml` 與 `apps/lumiere/Cargo.toml` 均已啟用；`bundle.sh` 已宣告 `ico` document extension |
 | `.svg` | **已支援靜態顯示** | 使用 `resvg` / `usvg` 渲染；縮圖、預覽與檢視器依顯示尺寸產生 texture，放大時背景重渲染；使用者已確認清晰度與裁切修正 |
-| `.gif` | **僅第一幀，無動畫** | 解碼管線為 `decode_with_image()`（`crates/lumiere-core/src/imaging.rs`）：`into_decoder().to_rgba8()` 產出單張 RGBA buffer；全專案無任何 frame-delay / GifFrame 處理；egui texture 靜態 |
+| `.gif` | **檢視器支援動畫（三平台使用者測試通過）** | `apps/lumiere/src/animation.rs` 使用 `zengif` 背景逐幀解碼，依影格延遲與循環次數播放；縮圖與右側預覽仍是靜態畫面 |
 | `.mp4` / `.avi` | 不支援，屬架構級新增 | 現有管線假設「一個檔 = 一張 RGBA 圖」：decode worker（4 threads、`MAX_DECODE_PIXELS` 50MP）→ `Decoded{rgba}` → 單一 `TextureHandle`（Full/Thumb/Preview 三種 cache，見 `apps/lumiere/src/app/cache.rs`）→ 靜態 mesh（`apps/lumiere/src/viewer.rs`） |
 
 架構要點（影響所有新增格式）：
@@ -40,16 +40,12 @@
 - 動畫 SVG（SMIL）僅渲染靜態畫面；README 已註明。
 - 回歸測試涵蓋目標解析度、小數尺寸邊緣、損壞與超大 SVG。macOS 使用者測試已通過；Linux / Windows 實機驗證尚待執行。
 
-## Phase 2：GIF 動畫（中偏大，約 3–5 天）
+## Phase 2：GIF 動畫 — 第一版（三平台使用者測試通過）
 
-- **解碼**：`gif` crate（或 image 的 `GifDecoder::into_frames()`）取全部幀
-  + delay。重點驗證 disposal method 合成（透明/局部更新 GIF 最易出錯）。
-- **播放時鐘**：egui 以 `request_repaint_after(frame_delay)` 驅動逐幀更新；
-  小 GIF 預上傳全部 texture，大 GIF 按需解碼。
-  - 播放/暫停、loop count（`0` = 無限）。
-  - 記憶體上限：幀數 × 尺寸 cap，超額走按需解碼。
-- **縮圖**：維持第一幀靜態（動畫縮圖當 v2）。
-- **slideshow 整合**：決定 GIF 播完才切下一張，或固定間隔（建議播完再切）。
+- 採用 `zengif` 0.6.0 的 `with_next_frame` 逐幀解碼及合成，使用最多兩幀的佇列、單一 GPU texture；檢視器支援暫停／繼續及循環。縮圖與右側預覽維持靜態。
+- 上限為檔案 64 MiB、畫布 800 萬像素、10,000 幀及 decoder 記憶體 64 MiB；佇列與 GPU 等額外配置不計入 decoder 上限。超過限制時顯示警告。
+- slideshow 仍依既有固定間隔切換，不等待動畫播放完畢。
+- 回歸測試涵蓋影格延遲、透明與局部更新、disposal、循環次數、暫停及 101 幀串流；macOS GUI 已用使用者的 `test.gif` 確認畫面變化。Windows 與 Linux 原生建置和 GIF 測試通過；使用者回報 macOS、Windows、Linux 的 GIF 動畫功能測試均通過。
 
 ## Phase 3：影片 mp4 / avi（大，約 1–2 週；最大不確定項是打包）
 
@@ -72,7 +68,7 @@
 ## 順序與決策點
 
 1. Phase 1（SVG）已完成；後續可補 Linux / Windows 實機驗證。
-2. 接下來進行 Phase 2（GIF 動畫），可獨立交付，不擋 Phase 3。
+2. Phase 2（GIF 動畫）已改用 zengif 串流，使用者已完成三平台測試。
 3. Phase 3 開工前拍板：
    - v1 要不要音訊（建議不要）。
    - v1 要不要 seek（建議要基本 seek bar，v1.1 再強化）。

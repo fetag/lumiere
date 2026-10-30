@@ -138,6 +138,7 @@ cd lumiere-v<version>-linux-x86_64
 
 - 內建（透過 `image` crate）：JPEG、PNG、GIF、BMP、TIFF、WebP、TGA、PCX、ICO、…
 - SVG 透過 resvg（動畫文件只渲染第一幀；超大文件會以縮小尺寸渲染而非拒絕）
+- GIF 動畫可在檢視器播放及暫停／繼續；縮圖與預覽維持靜態。超出播放資源上限時，會退回靜態畫面。
 - HEIC / HEIF / AVIF 透過 macOS ImageIO（`crates/lumiere-desktop/src/platform/image_io.rs`、`objc2-image-io`）
 - EXIF 透過 `kamadak-exif`
 - 「移到垃圾桶」會先確認，再使用平台垃圾桶（`trash` crate），項目仍可透過桌面環境復原

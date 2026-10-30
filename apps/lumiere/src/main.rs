@@ -4,6 +4,7 @@
 // from appearing alongside the eframe window.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod animation;
 mod app;
 mod browser;
 mod panels;

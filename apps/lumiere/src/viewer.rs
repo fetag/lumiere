@@ -99,6 +99,8 @@ pub fn view(app: &mut App, ui: &mut Ui) {
         return;
     };
 
+    let texture = app.gif_player.update(ui.ctx(), &path).unwrap_or(texture);
+
     // ---- interaction ------------------------------------------------------
 
     let rotated = app.rotation % 180 != 0;
@@ -406,7 +408,13 @@ fn draw_toolbar(app: &mut App, ui: &mut Ui, canvas: Rect) {
     ];
     let trash_key = Shortcut::plain(Key::Delete).display();
 
-    let width = buttons.len() as f32 * 34.0 + 12.0;
+    let width = buttons.len() as f32 * 34.0
+        + 12.0
+        + if app.gif_player.is_animated() || app.gif_player.error().is_some() {
+            80.0
+        } else {
+            0.0
+        };
     let rect = Rect::from_min_size(
         pos2(canvas.left() + 8.0, canvas.bottom() - 40.0),
         vec2(width, 32.0),
@@ -440,6 +448,20 @@ fn draw_toolbar(app: &mut App, ui: &mut Ui, canvas: Rect) {
         if response.clicked() {
             actions.push(action);
         }
+    }
+    if app.gif_player.is_animated() {
+        let label = if app.gif_player.paused() {
+            "播放"
+        } else {
+            "暫停"
+        };
+        if child.button(label).clicked() {
+            app.gif_player.toggle();
+            ctx.request_repaint();
+        }
+    }
+    if let Some(error) = app.gif_player.error() {
+        child.label("GIF ⚠").on_hover_text(error);
     }
     for action in actions {
         app.act(action, &ctx);
