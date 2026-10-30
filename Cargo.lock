@@ -1889,7 +1889,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lumiere"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "dirs",
  "eframe",
@@ -1911,7 +1911,7 @@ dependencies = [
 
 [[package]]
 name = "lumiere-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "image",
  "kamadak-exif",
@@ -1920,7 +1920,7 @@ dependencies = [
 
 [[package]]
 name = "lumiere-desktop"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "dirs",

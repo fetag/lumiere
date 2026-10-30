@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-10-30
+
+### Added
+
+- Watch the open folder for external additions, removals and renames.
+- Move items to the Trash with Delete or Backspace, with a viewer toolbar button.
+- Use the native Windows folder picker for opening folders and choosing transfer destinations.
+
+### Changed
+
+- Trash operations run in the background and select the next image immediately.
+- Show platform-appropriate shortcut labels on Windows and Linux.
+
+### Fixed
+
+- Restore failed Trash items to the listing and preserve failure notices while operations are queued.
+- Render Chinese filenames on Windows using installed system fonts.
+- Show the embedded application icon in the About dialog without external files.
+- Fix `install.sh` bundle location and Homebrew rustup detection.
+
 ## [0.1.4] - 2026-10-28
 
 ### Added
@@ -124,7 +144,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ImageIO on macOS), recoverable delete to the system Trash, and persistent
   session state.
 
-[Unreleased]: https://github.com/fetag/lumiere/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/fetag/lumiere/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/fetag/lumiere/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/fetag/lumiere/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/fetag/lumiere/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/fetag/lumiere/compare/v0.1.1...v0.1.2
