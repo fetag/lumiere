@@ -55,9 +55,31 @@ impl Shortcut {
         self
     }
 
-    /// The macOS glyph spelling, e.g. `⌃⌘F` or `⌘⇧L`. Used by the in-window
-    /// fallback menu on platforms that have no native one.
+    /// 顯示符合目前平台的快捷鍵，並與實際鍵盤處理使用的修飾鍵一致。
     pub fn display(&self) -> String {
+        self.display_for_macos(cfg!(target_os = "macos"))
+    }
+
+    fn display_for_macos(&self, macos: bool) -> String {
+        if !macos {
+            let mut parts = Vec::new();
+            // egui 在非 macOS 將 command 對應到 Ctrl；兩者不可重複顯示。
+            if self.command || self.control {
+                parts.push("Ctrl".to_owned());
+            }
+            if self.option {
+                parts.push("Alt".to_owned());
+            }
+            if self.shift {
+                parts.push("Shift".to_owned());
+            }
+            parts.push(match self.key {
+                Key::Char(c) => c.to_uppercase().to_string(),
+                Key::Return => "Enter".to_owned(),
+                Key::Delete => "Delete / Backspace".to_owned(),
+            });
+            return parts.join("+");
+        }
         let mut out = String::new();
         if self.control {
             out.push('\u{2303}');
@@ -184,15 +206,57 @@ mod tests {
     fn shortcuts_use_macos_glyph_order() {
         // Modifier glyphs go Control, Option, Shift, Command, in that order.
         assert_eq!(
-            Shortcut::cmd(Key::Char('f')).control().display(),
+            Shortcut::cmd(Key::Char('f'))
+                .control()
+                .display_for_macos(true),
             "\u{2303}\u{2318}F"
         );
         assert_eq!(
-            Shortcut::cmd(Key::Char('l')).shift().display(),
+            Shortcut::cmd(Key::Char('l'))
+                .shift()
+                .display_for_macos(true),
             "\u{21E7}\u{2318}L"
         );
-        assert_eq!(Shortcut::cmd(Key::Delete).display(), "\u{2318}\u{232B}");
-        assert_eq!(Shortcut::cmd(Key::Char(',')).display(), "\u{2318},");
-        assert_eq!(Shortcut::plain(Key::Return).display(), "\u{21A9}");
+        assert_eq!(
+            Shortcut::cmd(Key::Delete).display_for_macos(true),
+            "\u{2318}\u{232B}"
+        );
+        assert_eq!(
+            Shortcut::cmd(Key::Char(',')).display_for_macos(true),
+            "\u{2318},"
+        );
+        assert_eq!(
+            Shortcut::plain(Key::Return).display_for_macos(true),
+            "\u{21A9}"
+        );
+    }
+
+    #[test]
+    fn windows_and_linux_shortcuts_match_ctrl_key_events() {
+        assert_eq!(
+            Shortcut::cmd(Key::Char('o')).display_for_macos(false),
+            "Ctrl+O"
+        );
+        assert_eq!(
+            Shortcut::cmd(Key::Char('f'))
+                .control()
+                .display_for_macos(false),
+            "Ctrl+F"
+        );
+        assert_eq!(
+            Shortcut::cmd(Key::Char('r'))
+                .option()
+                .shift()
+                .display_for_macos(false),
+            "Ctrl+Alt+Shift+R"
+        );
+        assert_eq!(
+            Shortcut::plain(Key::Delete).display_for_macos(false),
+            "Delete / Backspace"
+        );
+        assert_eq!(
+            Shortcut::plain(Key::Return).display_for_macos(false),
+            "Enter"
+        );
     }
 }

@@ -152,8 +152,7 @@ impl App {
                                     egui::Color32::WHITE,
                                 );
                             }
-                            // The png is only there with the bundle or in the source
-                            // tree; a drawn glyph keeps the panel intact elsewhere.
+                            // 圖示解碼失敗時仍保留可辨識的替代圖示。
                             None => {
                                 theme::draw_icon(
                                     ui,
@@ -175,49 +174,26 @@ impl App {
         self.about_open = open;
     }
 
-    /// The about panel's icon: the app's own artwork, loaded once from the
-    /// shipped png so the fallback panel matches what Finder shows.
+    /// 使用與主視窗相同的內嵌圖示，不依賴執行目錄或外部檔案。
     pub(super) fn about_icon(&mut self, ctx: &Context) -> Option<TextureHandle> {
         if self.app_icon.is_none() {
-            if let Some(path) = Self::about_icon_path() {
-                if let Ok(decoded) = image::open(&path).map(|img| {
-                    // egui samples without mipmaps, so shrinking a 512px
-                    // source straight to 80px in one linear pass smears it;
-                    // downsample properly to 2x display size first.
-                    img.resize(160, 160, image::imageops::FilterType::Lanczos3)
-                        .to_rgba8()
-                }) {
-                    let (width, height) = decoded.dimensions();
-                    let img = egui::ColorImage::from_rgba_unmultiplied(
-                        [width as usize, height as usize],
-                        decoded.as_ref(),
-                    );
-                    self.app_icon = Some(ctx.load_texture("app-icon", img, Default::default()));
-                }
+            if let Ok(decoded) = image::load_from_memory(include_bytes!(
+                "../../../../assets/AppIcon.png"
+            ))
+            .map(|img| {
+                // 先縮小至顯示大小的兩倍，避免 egui 線性取樣時模糊。
+                img.resize(160, 160, image::imageops::FilterType::Lanczos3)
+                    .to_rgba8()
+            }) {
+                let (width, height) = decoded.dimensions();
+                let img = egui::ColorImage::from_rgba_unmultiplied(
+                    [width as usize, height as usize],
+                    decoded.as_ref(),
+                );
+                self.app_icon = Some(ctx.load_texture("app-icon", img, Default::default()));
             }
         }
         self.app_icon.clone()
-    }
-
-    /// Where the icon png lives: `Contents/Resources` when running from the
-    /// bundled macOS app, next to the executable on a Linux install,
-    /// `assets/` when run straight from the source tree.
-    pub(super) fn about_icon_path() -> Option<PathBuf> {
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(contents) = exe.parent().and_then(Path::parent) {
-                let bundled = contents.join("Resources/AppIcon.png");
-                if bundled.is_file() {
-                    return Some(bundled);
-                }
-            }
-            if let Some(next_to_exe) = exe.parent().map(|p| p.join("AppIcon.png")) {
-                if next_to_exe.is_file() {
-                    return Some(next_to_exe);
-                }
-            }
-        }
-        let dev = PathBuf::from("assets/AppIcon.png");
-        dev.is_file().then_some(dev)
     }
 
     pub(super) fn explore_window(&mut self, ctx: &Context) {

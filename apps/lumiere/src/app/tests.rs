@@ -311,13 +311,20 @@ fn menu_uses_macos_names_and_shortcuts() {
         }
         panic!("no {} menu item", path[1]);
     };
-    assert_eq!(named(&["App", "Settings\u{2026}"]), "\u{2318},");
-    assert_eq!(named(&["File", "Open\u{2026}"]), "\u{2318}O");
-    assert_eq!(named(&["File", "Get Info"]), "\u{2318}I");
-    assert_eq!(named(&["File", "Move to Trash"]), "\u{232B}");
-    assert_eq!(named(&["View", "Reload"]), "\u{2318}R");
-    assert_eq!(named(&["View", "Enter Full Screen"]), "\u{2303}\u{2318}F");
-    assert_eq!(named(&["Go", "Up One Level"]), "\u{21E7}\u{2318}U");
+    if cfg!(target_os = "macos") {
+        assert_eq!(named(&["App", "Settings\u{2026}"]), "\u{2318},");
+        assert_eq!(named(&["File", "Open\u{2026}"]), "\u{2318}O");
+        assert_eq!(named(&["File", "Get Info"]), "\u{2318}I");
+        assert_eq!(named(&["File", "Move to Trash"]), "\u{232B}");
+        assert_eq!(named(&["View", "Reload"]), "\u{2318}R");
+        assert_eq!(named(&["View", "Enter Full Screen"]), "\u{2303}\u{2318}F");
+        assert_eq!(named(&["Go", "Up One Level"]), "\u{21E7}\u{2318}U");
+    } else {
+        assert_eq!(named(&["File", "Open\u{2026}"]), "Ctrl+O");
+        assert_eq!(named(&["File", "Move to Trash"]), "Delete / Backspace");
+        assert_eq!(named(&["View", "Enter Full Screen"]), "Ctrl+F");
+        assert_eq!(named(&["Go", "Up One Level"]), "Ctrl+Shift+U");
+    }
 
     // The Windows-era vocabulary must be gone from every level.
     let banned = [
@@ -1016,6 +1023,7 @@ fn about_and_explore_dialogs_render_their_content() {
 
     app.act(Action::About, &ctx);
     let text = painted_once(&ctx, &mut app, "Version");
+    assert!(app.app_icon.is_some(), "About 應載入內嵌的應用程式圖示");
     assert!(text.contains("Lumiere"));
     assert!(text.contains(env!("CARGO_PKG_VERSION")));
     assert!(!text.contains("written in Rust"));

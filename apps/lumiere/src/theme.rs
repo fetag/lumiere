@@ -63,7 +63,7 @@ pub fn install_fonts(ctx: &egui::Context) {
             FontFamily::Monospace,
         ),
     ] {
-        if let Some(bytes) = load_font(path) {
+        if let Some(bytes) = load_font(path.as_ref()) {
             fonts
                 .font_data
                 .insert(name.to_owned(), Arc::new(FontData::from_owned(bytes)));
@@ -77,13 +77,26 @@ pub fn install_fonts(ctx: &egui::Context) {
     }
 
     // CJK fallback, last in line.
-    const CJK_CANDIDATES: &[&str] = &[
+    let cjk_candidates: Vec<std::path::PathBuf> = [
         "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
         "/System/Library/Fonts/Supplemental/NotoSansCJK-Regular.ttc",
         "/Library/Fonts/Arial Unicode.ttf",
         "/usr/share/fonts/truetype/arphic/uming.ttc",
-    ];
-    for path in CJK_CANDIDATES {
+    ]
+    .into_iter()
+    .map(Into::into)
+    .collect();
+    #[cfg(target_os = "windows")]
+    let cjk_candidates = {
+        let mut candidates = cjk_candidates;
+        candidates.extend(windows_cjk_fonts(
+            &std::env::var_os("SystemRoot")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows")),
+        ));
+        candidates
+    };
+    for path in &cjk_candidates {
         if let Some(bytes) = load_font(path) {
             fonts
                 .font_data
@@ -105,7 +118,15 @@ pub fn install_fonts(ctx: &egui::Context) {
     }
 }
 
-fn load_font(path: &str) -> Option<Vec<u8>> {
+#[cfg(any(target_os = "windows", test))]
+fn windows_cjk_fonts(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    ["msjh.ttc", "msyh.ttc", "mingliu.ttc", "meiryo.ttc"]
+        .into_iter()
+        .map(|name| root.join("Fonts").join(name))
+        .collect()
+}
+
+fn load_font(path: &std::path::Path) -> Option<Vec<u8>> {
     let bytes = std::fs::read(path).ok()?;
     if bytes.len() < 1_000 {
         return None;
@@ -857,4 +878,18 @@ pub fn rect_of(ctx: &egui::Context, label: &str) -> Option<egui::Rect> {
 #[cfg(test)]
 pub fn clear_rects(ctx: &egui::Context) {
     ctx.data_mut(|d| d.remove_temp::<RectMap>(rect_map_id()));
+}
+
+#[cfg(test)]
+mod font_tests {
+    use super::*;
+
+    #[test]
+    fn windows_cjk_candidates_follow_system_root() {
+        let root = std::path::Path::new("custom-windows");
+        let paths = windows_cjk_fonts(root);
+        assert_eq!(paths[0], root.join("Fonts").join("msjh.ttc"));
+        assert!(paths.contains(&root.join("Fonts").join("msyh.ttc")));
+        assert!(paths.contains(&root.join("Fonts").join("mingliu.ttc")));
+    }
 }
