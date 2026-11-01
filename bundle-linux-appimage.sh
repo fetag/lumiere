@@ -30,7 +30,7 @@ RUNTIME_TAG="20251108"
 APPIMAGE_TOOL_URL="https://github.com/AppImage/appimagetool/releases/download/${TOOL_VERSION}/appimagetool-${ARCH}.AppImage"
 RUNTIME_URL="https://github.com/AppImage/type2-runtime/releases/download/${RUNTIME_TAG}/runtime-${ARCH}"
 
-cargo build --release -p lumiere --locked
+cargo build --release -p lumiere --locked --features video
 VERSION=$(cargo metadata --no-deps --format-version 1 | sed -n 's/.*"name":"lumiere","version":"\([^"]*\)".*/\1/p')
 [ -n "$VERSION" ]
 
@@ -60,7 +60,7 @@ chmod +x "$WORK/appimagetool.AppImage"
 # hicolor icon entries — the layout appimagetool expects.
 APPDIR="$WORK/AppDir"
 mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/icons/hicolor"
-install -m 755 target/release/lumiere "$APPDIR/usr/bin/lumiere"
+sh scripts/linux-video-appdir.sh "$APPDIR"
 install -m 644 assets/AppIcon.png "$APPDIR/usr/bin/AppIcon.png"
 cp -R assets/linux-icons/* "$APPDIR/usr/share/icons/hicolor/"
 
@@ -72,6 +72,7 @@ cat > "$APPDIR/AppRun" <<'APPRUN'
 #!/bin/sh
 HERE="$(dirname "$(readlink -f "$0")")"
 export PATH="$HERE/usr/bin:$PATH"
+export SDL_NO_SIGNAL_HANDLERS=1
 exec "$HERE/usr/bin/lumiere" "$@"
 APPRUN
 chmod 755 "$APPDIR/AppRun"
@@ -86,7 +87,7 @@ Exec=lumiere %F
 Icon=lumiere
 Terminal=false
 Categories=Graphics;Viewer;
-MimeType=image/bmp;image/gif;image/jpeg;image/png;image/tiff;image/webp;
+MimeType=image/bmp;image/gif;image/jpeg;image/png;image/tiff;image/webp;video/mp4;video/x-msvideo;
 StartupWMClass=lumiere
 DESKTOP
 

@@ -10,7 +10,9 @@ set -- "$DIST"/*.tar.gz
 [ "$#" -eq 1 ] && [ -f "$1" ]
 tar -xzf "$1" -C "$WORK"
 set -- "$WORK"/lumiere-v*-linux-*
-[ "$#" -eq 1 ] && [ -x "$1/bin/lumiere" ] && [ -f "$1/bin/AppIcon.png" ]
+[ "$#" -eq 1 ] && [ -x "$1/bin/lumiere" ] && [ -x "$1/bin/lumiere.bin" ] && [ -f "$1/bin/AppIcon.png" ]
+[ -f "$1/lib/libmpv.so.1" ] || [ -f "$1/lib/libmpv.so.2" ]
+[ -f "$1/share/doc/lumiere/THIRD_PARTY_NOTICES.md" ]
 PORTABLE="$1/bin/lumiere"
 
 set -- "$DIST"/*.deb
@@ -18,7 +20,10 @@ set -- "$DIST"/*.deb
 dpkg-deb -f "$1" Depends | grep -q 'libc6 (>= '
 dpkg-deb -x "$1" "$WORK/deb"
 [ -x "$WORK/deb/opt/lumiere/lumiere" ]
-[ -f "$WORK/deb/opt/lumiere/AppIcon.png" ]
+[ -f "$WORK/deb/opt/lumiere/usr/bin/AppIcon.png" ]
+[ -x "$WORK/deb/opt/lumiere/usr/bin/lumiere" ]
+[ -f "$WORK/deb/opt/lumiere/usr/lib/libmpv.so.1" ] || [ -f "$WORK/deb/opt/lumiere/usr/lib/libmpv.so.2" ]
+[ -f "$WORK/deb/opt/lumiere/usr/share/doc/lumiere/THIRD_PARTY_NOTICES.md" ]
 [ -f "$WORK/deb/usr/share/applications/lumiere.desktop" ]
 
 set -- "$DIST"/*.AppImage
@@ -27,6 +32,8 @@ APPIMAGE="$1"
 (cd "$WORK" && "$APPIMAGE" --appimage-extract >/dev/null)
 [ -x "$WORK/squashfs-root/usr/bin/lumiere" ]
 [ -f "$WORK/squashfs-root/usr/bin/AppIcon.png" ]
+[ -f "$WORK/squashfs-root/usr/lib/libmpv.so.1" ] || [ -f "$WORK/squashfs-root/usr/lib/libmpv.so.2" ]
+[ -f "$WORK/squashfs-root/usr/share/doc/lumiere/THIRD_PARTY_NOTICES.md" ]
 [ -f "$WORK/squashfs-root/lumiere.desktop" ]
 
 # 檢查視窗真的出現，避免只以程序仍在執行判定啟動成功。

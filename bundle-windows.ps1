@@ -9,12 +9,16 @@ param(
 $ErrorActionPreference = "Stop"
 Push-Location $PSScriptRoot
 try {
+    if (-not $env:MPV_LIBRARY_DIR -or -not (Test-Path (Join-Path $env:MPV_LIBRARY_DIR 'mpv.lib')) -or -not (Test-Path (Join-Path $env:MPV_LIBRARY_DIR 'libmpv-2.dll'))) {
+        throw 'Set MPV_LIBRARY_DIR to a directory containing mpv.lib and libmpv-2.dll'
+    }
+
     # cargo writes build progress to stderr; keep that from tripping the
     # ErrorActionPreference. A real failure is caught via $LASTEXITCODE.
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
 
-    cargo build --release -p lumiere --locked
+    cargo build --release -p lumiere --locked --features video
     if ($LASTEXITCODE -ne 0) { throw "cargo build --release failed" }
 
     # Cargo.toml is the release-version authority; read it without a second
@@ -65,6 +69,10 @@ public static class LumiereIconCheck {
     }
     Copy-Item $exe  (Join-Path $Stage "lumiere.exe") -Force
     Copy-Item $icon (Join-Path $Stage "AppIcon.png") -Force
+    Copy-Item (Join-Path $env:MPV_LIBRARY_DIR 'libmpv-2.dll') (Join-Path $Stage 'libmpv-2.dll') -Force
+    Copy-Item (Join-Path $PSScriptRoot 'LICENSE') (Join-Path $Stage 'LICENSE') -Force
+    Copy-Item (Join-Path $PSScriptRoot 'THIRD_PARTY_NOTICES.md') (Join-Path $Stage 'THIRD_PARTY_NOTICES.md') -Force
+    Copy-Item (Join-Path $PSScriptRoot 'third-party\mpv-windows') (Join-Path $Stage 'mpv-windows') -Recurse -Force
 
     $Readme = @"
 Lumiere for Windows

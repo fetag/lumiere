@@ -12,7 +12,9 @@ case "$ARCH" in
 esac
 mkdir -p "$OUT"
 
-cargo build --release -p lumiere --locked
+: "${MPV_LIBRARY_DIR:?Set MPV_LIBRARY_DIR to the libmpv link directory}"
+: "${LUMIERE_MPV_FRAMEWORKS:?Set LUMIERE_MPV_FRAMEWORKS to the IINA Frameworks directory}"
+cargo build --release -p lumiere --locked --features video
 
 # Cargo.toml is the release-version authority. Keep the bundle metadata in
 # lockstep without asking a maintainer to edit a second value at release time.
@@ -71,7 +73,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
                 <string>nef</string><string>nrw</string><string>arw</string>
                 <string>srf</string><string>sr2</string><string>orf</string>
                 <string>rw2</string><string>raf</string><string>pef</string><string>raw</string>
-                <string>svg</string>
+                <string>svg</string><string>mp4</string><string>avi</string>
             </array>
             <key>LSItemContentTypes</key>
             <array>
@@ -85,6 +87,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
                 <string>com.microsoft.ico</string>
                 <string>public.pnm</string>
                 <string>org.w3c.svg</string>
+                <string>public.mpeg-4</string>
+                <string>public.avi</string>
             </array>
         </dict>
     </array>
@@ -101,6 +105,12 @@ cp assets/AppIcon.png "$APP/Contents/Resources/AppIcon.png"
 # The native macOS About panel uses a close-cropped variant in its fixed icon
 # view; this intentionally does not affect the Dock/Finder .icns artwork.
 cp assets/AboutIcon.png "$APP/Contents/Resources/AboutIcon.png"
+
+# Package libmpv and its IINA-provided dylib dependencies beside the app.
+python3 scripts/bundle-macos-mpv.py "$LUMIERE_MPV_FRAMEWORKS" "$APP/Contents/Frameworks"
+install_name_tool -add_rpath '@executable_path/../Frameworks' "$APP/Contents/MacOS/Lumiere"
+cp LICENSE THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
+cp -R third-party/iina-1.5.0 "$APP/Contents/Resources/"
 
 # Ad-hoc signature so Gatekeeper lets a locally built app run.
 # For distribution replace "-" with a Developer ID identity and notarize:

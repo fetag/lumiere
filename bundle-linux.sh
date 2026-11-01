@@ -15,7 +15,7 @@ case "$ARCH" in
     *) echo "Unsupported Linux architecture: $ARCH" >&2; exit 1 ;;
 esac
 
-cargo build --release -p lumiere --locked
+cargo build --release -p lumiere --locked --features video
 VERSION=$(cargo metadata --no-deps --format-version 1 | sed -n 's/.*"name":"lumiere","version":"\([^"]*\)".*/\1/p')
 [ -n "$VERSION" ]
 
@@ -23,13 +23,23 @@ NAME="lumiere-v${VERSION}-linux-${ARCH}"
 STAGE="$OUT/$NAME"
 ARCHIVE="$OUT/$NAME.tar.gz"
 rm -rf "$STAGE" "$ARCHIVE"
-mkdir -p "$STAGE/bin" "$STAGE/icons/hicolor"
-
-# Keep the About panel artwork beside the executable. The executable itself
-# embeds the same image for the winit window icon fallback.
-install -m 755 target/release/lumiere "$STAGE/bin/lumiere"
+mkdir -p "$STAGE/bin" "$STAGE/lib" "$STAGE/share" "$STAGE/icons/hicolor"
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT HUP INT TERM
+sh scripts/linux-video-appdir.sh "$WORK/AppDir"
+install -m 755 "$WORK/AppDir/usr/bin/lumiere" "$STAGE/bin/lumiere.bin"
+cp -a "$WORK/AppDir/usr/lib/." "$STAGE/lib/"
+cp -a "$WORK/AppDir/usr/share/doc" "$STAGE/share/"
 install -m 644 assets/AppIcon.png "$STAGE/bin/AppIcon.png"
 cp -R assets/linux-icons/* "$STAGE/icons/hicolor/"
+cat > "$STAGE/bin/lumiere" <<'LAUNCHER'
+#!/bin/sh
+# SDL may otherwise replace SIGTERM while opening an audio device.
+export SDL_NO_SIGNAL_HANDLERS=1
+HERE=$(CDPATH= cd -- "$(dirname -- "$(readlink -f "$0")")" && pwd)
+exec "$HERE/lumiere.bin" "$@"
+LAUNCHER
+chmod 755 "$STAGE/bin/lumiere"
 
 cat > "$STAGE/install.sh" <<'INSTALL'
 #!/bin/sh
@@ -44,10 +54,13 @@ DATADIR="$PREFIX/share"
 ICONDIR="$DATADIR/icons/hicolor"
 DESKTOPDIR="$DATADIR/applications"
 
-mkdir -p "$APPDIR" "$BINDIR" "$DESKTOPDIR"
-install -m 755 "$HERE/bin/lumiere" "$APPDIR/lumiere"
-install -m 644 "$HERE/bin/AppIcon.png" "$APPDIR/AppIcon.png"
-ln -sfn "$APPDIR/lumiere" "$BINDIR/lumiere"
+mkdir -p "$APPDIR/bin" "$APPDIR/lib" "$APPDIR/share" "$BINDIR" "$DESKTOPDIR"
+install -m 755 "$HERE/bin/lumiere" "$APPDIR/bin/lumiere"
+install -m 755 "$HERE/bin/lumiere.bin" "$APPDIR/bin/lumiere.bin"
+install -m 644 "$HERE/bin/AppIcon.png" "$APPDIR/bin/AppIcon.png"
+cp -a "$HERE/lib/." "$APPDIR/lib/"
+cp -a "$HERE/share/doc" "$APPDIR/share/"
+ln -sfn "$APPDIR/bin/lumiere" "$BINDIR/lumiere"
 
 # Ship real pixels at every common panel size. Cinnamon associates the
 # running X11 window (WM_CLASS=lumiere) with this entry through
@@ -66,11 +79,11 @@ Version=1.0
 Type=Application
 Name=Lumiere
 Comment=Image browser and viewer
-Exec=$APPDIR/lumiere %F
+Exec=$APPDIR/bin/lumiere %F
 Icon=lumiere
 Terminal=false
 Categories=Graphics;Viewer;
-MimeType=image/bmp;image/gif;image/jpeg;image/png;image/tiff;image/webp;
+MimeType=image/bmp;image/gif;image/jpeg;image/png;image/tiff;image/webp;video/mp4;video/x-msvideo;
 StartupWMClass=lumiere
 StartupNotify=true
 DESKTOP

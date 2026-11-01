@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - View SVG images, with resolution-aware rendering when zooming.
 - Play animated GIFs in the viewer, including pause/resume and bounded streaming decoding.
-- Add an experimental `video` build feature for MP4 and AVI playback with audio, play/pause and seeking via libmpv. The feature requires native libmpv and is **not included in standard release bundles**; video thumbnails are placeholders.
+- Add experimental MP4 and AVI playback with audio, play/pause and seeking via libmpv. Release bundles include the video feature; video thumbnails are placeholders.
 
 ### Fixed
 

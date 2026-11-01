@@ -1,9 +1,9 @@
 # Releasing
 
-Maintainer's guide to cutting a release. The pipeline is tag-driven: pushing
-a version tag builds all three platform bundles on native runners (no
-cross-compilation) and publishes them as a GitHub release with SHA-256
-checksums. Nothing here runs automatically until the tag is pushed.
+Maintainer's guide to cutting a release. Build the bundles on the native
+macOS, Windows and Ubuntu 22.04 machines, then upload them to GitHub with
+SHA-256 checksums. The release workflow is manual while its runners are not
+configured with the video runtime dependencies; pushing a tag does not publish.
 
 ## Before you tag
 
@@ -22,20 +22,27 @@ checksums. Nothing here runs automatically until the tag is pushed.
 
 ## Tag and push
 
-```sh
-git tag v0.1.4
-git push origin main --tags   # push to the remote that runs GitHub Actions
-```
+Build the version being tagged on each machine. The scripts enable `video`:
 
-The `check-version` job fails fast if the tag does not equal both the workspace
-and app versions, or if the lockfile is stale. If a tag
-must be redone: fix the tree, push, then delete and recreate the tag locally
-and on the remote — the previous release's assets are replaced by the new
-run.
+- macOS: set `MPV_LIBRARY_DIR` to the libmpv link directory and
+  `LUMIERE_MPV_FRAMEWORKS` to the IINA 1.5.0 `Contents/Frameworks`, then run
+  `./bundle.sh`. The selected IINA runtime and its source information are
+  described in `THIRD_PARTY_NOTICES.md`.
+- Windows: set `MPV_LIBRARY_DIR` to a directory containing `mpv.lib` and
+  `libmpv-2.dll`, then run `./bundle-windows.ps1` in PowerShell.
+- Ubuntu 22.04: install the libmpv development package and run
+  `./bundle-linux.sh`, `./bundle-linux-deb.sh`, and
+  `./bundle-linux-appimage.sh`. The portable bundles include their runtime
+  libraries and Ubuntu copyright files.
 
-## What the pipeline does
+Verify the assets and their checksums, then tag the committed source and upload
+all assets and `SHA256SUMS.txt` to the GitHub release. Confirm the tag matches
+both the workspace and application versions before publishing.
 
-`release.yml`, in order:
+## Release workflow (not currently configured for video)
+
+Once the native video dependencies are configured on all runners, the manual
+`release.yml` workflow can be dispatched against a version tag. It contains:
 
 1. `check-version`: tag == workspace and app versions, with a current lockfile.
 2. `build-macos` (macos-latest, arm64), `build-linux` (Ubuntu 22.04 container,

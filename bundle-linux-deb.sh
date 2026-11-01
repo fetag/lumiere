@@ -20,7 +20,7 @@ esac
 MAINTAINER="Lumiere Maintainers <james.cl.lin@gmail.com>"
 HOME_URL="https://github.com/fetag/lumiere"
 
-cargo build --release -p lumiere --locked
+cargo build --release -p lumiere --locked --features video
 VERSION=$(cargo metadata --no-deps --format-version 1 | sed -n 's/.*"name":"lumiere","version":"\([^"]*\)".*/\1/p')
 [ -n "$VERSION" ]
 # The control file's Architecture uses dpkg's name (amd64/arm64); the output
@@ -42,10 +42,15 @@ mkdir -p \
     "$PKGROOT/usr/share/applications" \
     "$PKGROOT/usr/share/icons/hicolor"
 
-# The executable and its About-panel artwork live together in /opt, mirroring
-# the portable archive's bin/ directory.
-install -m 755 target/release/lumiere "$PKGROOT/opt/lumiere/lumiere"
-install -m 644 assets/AppIcon.png "$PKGROOT/opt/lumiere/AppIcon.png"
+# 連同 libmpv 的相依函式庫及授權資訊打包，避免不同發行版的 SONAME 不相容。
+sh scripts/linux-video-appdir.sh "$PKGROOT/opt/lumiere"
+install -m 644 assets/AppIcon.png "$PKGROOT/opt/lumiere/usr/bin/AppIcon.png"
+cat > "$PKGROOT/opt/lumiere/lumiere" <<'LAUNCHER'
+#!/bin/sh
+export SDL_NO_SIGNAL_HANDLERS=1
+exec /opt/lumiere/usr/bin/lumiere "$@"
+LAUNCHER
+chmod 755 "$PKGROOT/opt/lumiere/lumiere"
 
 # A /usr/bin symlink puts `lumiere` on PATH so it can be started from a
 # terminal with a folder argument, like the portable install does.
@@ -63,7 +68,7 @@ Exec=/opt/lumiere/lumiere %F
 Icon=lumiere
 Terminal=false
 Categories=Graphics;Viewer;
-MimeType=image/bmp;image/gif;image/jpeg;image/png;image/tiff;image/webp;
+MimeType=image/bmp;image/gif;image/jpeg;image/png;image/tiff;image/webp;video/mp4;video/x-msvideo;
 StartupWMClass=lumiere
 StartupNotify=true
 DESKTOP
@@ -111,7 +116,8 @@ Package: lumiere
 Architecture: any
 Description: Image browser and viewer
 SOURCE_CONTROL
-SHLIB_DEPENDS=$(cd "$PKGROOT" && dpkg-shlibdeps -O -eopt/lumiere/lumiere)
+# libmpv 已隨 AppDir 打包；其他系統依賴仍從未修改的 ELF 解析。
+SHLIB_DEPENDS=$(cd "$PKGROOT" && dpkg-shlibdeps -O -xlibmpv1 -xlibmpv2 -e"$OLDPWD/target/release/lumiere")
 SHLIB_DEPENDS=${SHLIB_DEPENDS#shlibs:Depends=}
 [ -n "$SHLIB_DEPENDS" ]
 rm -rf "$PKGROOT/debian"
