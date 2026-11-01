@@ -1309,35 +1309,32 @@ impl eframe::App for App {
 
 #[cfg(not(target_os = "macos"))]
 fn menu_row(
-    ui: &egui::Ui,
+    ui: &mut egui::Ui,
     label: &str,
     shortcut: Option<&Shortcut>,
-    checked: Option<bool>,
-) -> egui::text::LayoutJob {
-    // `Visuals` is not `Copy`, so read the two adaptive colours we need.
-    let mark_color = ui.ctx().style().visuals.text_color();
-    let weak_color = ui.ctx().style().visuals.weak_text_color();
-    let mut job = egui::text::LayoutJob::default();
-    let mark = egui::TextFormat {
-        font_id: egui::FontId::proportional(13.0),
-        color: mark_color,
-        ..Default::default()
-    };
-    let prefix = match checked {
-        Some(true) => "\u{2713} ",
-        Some(false) => "   ",
-        None => "",
-    };
-    job.append(&format!("{prefix}{label}"), 0.0, mark.clone());
+    checked: bool,
+    enabled: bool,
+) -> egui::Response {
+    // 使用繪製的勾選符號，不依賴系統字型是否包含 U+2713。
+    // 每一列保留相同的左側空間，快捷鍵由 egui 佈局靠右。
+    let mut button = egui::Button::new(format!("      {label}")).min_size(egui::vec2(240.0, 0.0));
     if let Some(shortcut) = shortcut {
-        let weak = egui::TextFormat {
-            font_id: egui::FontId::proportional(11.0),
-            color: weak_color,
-            ..Default::default()
-        };
-        job.append(&format!("    {}", shortcut.display()), 24.0, weak);
+        button = button.shortcut_text(shortcut.display());
     }
-    job
+    let response = ui.add_enabled(enabled, button);
+    if checked {
+        let center = egui::pos2(response.rect.left() + 11.0, response.rect.center().y);
+        let stroke = egui::Stroke::new(1.6_f32, ui.style().interact(&response).text_color());
+        ui.painter().line(
+            vec![
+                center + egui::vec2(-4.0, 0.0),
+                center + egui::vec2(-1.0, 3.0),
+                center + egui::vec2(4.0, -3.0),
+            ],
+            stroke,
+        );
+    }
+    response
 }
 
 pub fn sort_key_name(key: SortKey) -> &'static str {
@@ -1497,11 +1494,7 @@ fn menu_items(ui: &mut egui::Ui, items: &[Item], actions: &mut Vec<Action>) {
                 enabled,
                 marked,
             } => {
-                let response = ui.add_enabled(
-                    *enabled,
-                    egui::Button::new(menu_row(ui, label, shortcut.as_ref(), Some(*marked)))
-                        .min_size(egui::vec2(240.0, 0.0)),
-                );
+                let response = menu_row(ui, label, shortcut.as_ref(), *marked, *enabled);
                 // The row a human reads is a tick gutter, the command name and
                 // the shortcut glyphs, which is noise for VoiceOver. Say just
                 // the command, and offer the shortcut as its own property.

@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Preserve fractional SVG dimensions to avoid clipping the right and bottom edges.
 - Keep video Play/Pause buttons at a fixed width and restart playback from the beginning at end of file.
+- Draw menu checkmarks without relying on font glyphs and right-align shortcuts on Windows and Linux.
 
 ## [0.1.5] - 2026-10-30
 

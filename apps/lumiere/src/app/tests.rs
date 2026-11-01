@@ -1,5 +1,67 @@
 use super::*;
 
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn menu_rows_align_shortcuts_and_draw_font_independent_checkmark() {
+    fn collect(shape: &egui::Shape, texts: &mut Vec<(String, f32)>, paths: &mut usize) {
+        match shape {
+            egui::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    collect(shape, texts, paths);
+                }
+            }
+            egui::Shape::Text(text) => {
+                texts.push((
+                    text.galley.job.text.clone(),
+                    text.pos.x + text.galley.size().x,
+                ));
+            }
+            egui::Shape::Path(path) if path.points.len() == 3 => *paths += 1,
+            _ => {}
+        }
+    }
+    let ctx = egui::Context::default();
+    let first = Shortcut::cmd(Key::Char('s'));
+    let second = Shortcut::cmd(Key::Char('n')).shift();
+    let mut row_widths = Vec::new();
+    let output = ctx.run(raw_input(), |ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.set_width(300.0);
+            row_widths.push(menu_row(ui, "Short", Some(&first), true, true).rect.width());
+            row_widths.push(
+                menu_row(ui, "Longer menu label", Some(&second), false, true)
+                    .rect
+                    .width(),
+            );
+        });
+    });
+    let mut texts = Vec::new();
+    let mut paths = 0;
+    for clipped in &output.shapes {
+        collect(&clipped.shape, &mut texts, &mut paths);
+    }
+    let right_edge = |shortcut: Shortcut| {
+        texts
+            .iter()
+            .find(|(text, _)| *text == shortcut.display())
+            .unwrap_or_else(|| panic!("shortcut not drawn: {:?}", texts))
+            .1
+    };
+    assert!(
+        (right_edge(first) - right_edge(second)).abs() < 1.0,
+        "{texts:?}"
+    );
+    assert!(
+        row_widths.iter().all(|width| *width < 260.0),
+        "{row_widths:?}"
+    );
+    assert_eq!(
+        paths, 1,
+        "a checked row must draw exactly one vector checkmark"
+    );
+    assert!(!texts.iter().any(|(text, _)| text.contains('\u{2713}')));
+}
+
 fn raw_input() -> egui::RawInput {
     egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_max(

@@ -263,11 +263,7 @@ impl App {
                 menu_items(ui, &spec.app, &mut actions);
                 ui.separator();
                 let quit = Shortcut::cmd(Key::Char('q'));
-                let response = ui.add_enabled(
-                    true,
-                    egui::Button::new(menu_row(ui, "Quit Lumiere", Some(&quit), None))
-                        .min_size(egui::vec2(240.0, 0.0)),
-                );
+                let response = menu_row(ui, "Quit Lumiere", Some(&quit), false, true);
                 if response.clicked() {
                     actions.push(Action::Quit);
                     ui.close();
