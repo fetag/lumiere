@@ -85,7 +85,11 @@ mod tests {
             show_folders: 0,
             show_sidebar: 1,
             show_inspector: 0,
+            show_toolbar: 1,
+            show_status: 0,
+            canvas_dark: 1,
             slideshow_fullscreen: 0,
+            slideshow_delay: 7.5,
             sidebar_dirs: vec![
                 PathBuf::from("/Volumes/Work/exports"),
                 PathBuf::from("/tmp/lumiere_demo"),

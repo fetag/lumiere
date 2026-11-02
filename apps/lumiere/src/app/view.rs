@@ -122,7 +122,11 @@ impl App {
                 show_folders: i32::from(self.show_folders),
                 show_sidebar: i32::from(self.show_sidebar),
                 show_inspector: i32::from(self.show_inspector),
+                show_toolbar: i32::from(self.show_toolbar),
+                show_status: i32::from(self.show_status),
+                canvas_dark: i32::from(self.canvas_dark),
                 slideshow_fullscreen: i32::from(self.slideshow_fullscreen),
+                slideshow_delay: self.slideshow_delay,
                 sidebar_dirs: self.sidebar_dirs.clone(),
                 recent_dirs: self.recent_dirs.clone(),
             };

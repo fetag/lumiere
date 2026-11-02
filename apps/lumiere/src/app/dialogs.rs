@@ -28,6 +28,7 @@ impl App {
                             if theme::settings_slider(ui, &mut size, 32.0..=320.0, 1.0).changed() {
                                 self.thumb_size = size.round() as u32;
                                 self.caches.clear_thumbs();
+                                self.state_dirty = true;
                             }
                         });
                     });
@@ -37,6 +38,7 @@ impl App {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if theme::settings_switch(ui, &mut self.show_folders).changed() {
                                 rescan = true;
+                                self.state_dirty = true;
                             }
                         });
                     });
@@ -47,6 +49,7 @@ impl App {
                         ui.label("Use black background");
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if theme::settings_switch(ui, &mut self.canvas_dark).changed() {
+                                self.state_dirty = true;
                                 ctx.request_repaint();
                             }
                         });
@@ -58,7 +61,11 @@ impl App {
                         ui.label("Change image every");
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(format!("{:.1} s", self.slideshow_delay));
-                            theme::settings_slider(ui, &mut self.slideshow_delay, 0.5..=30.0, 0.5);
+                            if theme::settings_slider(ui, &mut self.slideshow_delay, 0.5..=30.0, 0.5)
+                                .changed()
+                            {
+                                self.state_dirty = true;
+                            }
                         });
                     });
                     ui.separator();

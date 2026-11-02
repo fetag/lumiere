@@ -13,11 +13,19 @@ pub struct State {
     pub sort_reverse: bool,
     pub filter: String,
     pub show_folders: i32,
-    /// Sidebar / Inspector visibility; -1 means "not stored yet".
+    /// Sidebar / Inspector / Toolbar / Status bar visibility; -1 means "not
+    /// stored yet".
     pub show_sidebar: i32,
     pub show_inspector: i32,
+    pub show_toolbar: i32,
+    pub show_status: i32,
+    /// Whether the viewer uses a black background; -1 = "not stored yet".
+    pub canvas_dark: i32,
     /// Whether a slideshow should start in full screen; -1 = "not stored yet".
     pub slideshow_fullscreen: i32,
+    /// Seconds between slideshow images; 0 = "not stored yet" (the slider's
+    /// range starts at 0.5, so 0 is free as the sentinel).
+    pub slideshow_delay: f32,
     /// Folders the user pinned into the sidebar's Locations section.
     pub sidebar_dirs: Vec<PathBuf>,
     /// Recently visited folders, most recent first.
@@ -39,7 +47,11 @@ impl Default for State {
             show_folders: -1,
             show_sidebar: -1,
             show_inspector: -1,
+            show_toolbar: -1,
+            show_status: -1,
+            canvas_dark: -1,
             slideshow_fullscreen: -1,
+            slideshow_delay: 0.0,
             sidebar_dirs: Vec::new(),
             recent_dirs: Vec::new(),
         }
@@ -66,7 +78,11 @@ pub fn parse(text: &str) -> State {
             "show_folders" => state.show_folders = value.parse().unwrap_or(-1),
             "show_sidebar" => state.show_sidebar = value.parse().unwrap_or(-1),
             "show_inspector" => state.show_inspector = value.parse().unwrap_or(-1),
+            "show_toolbar" => state.show_toolbar = value.parse().unwrap_or(-1),
+            "show_status" => state.show_status = value.parse().unwrap_or(-1),
+            "canvas_dark" => state.canvas_dark = value.parse().unwrap_or(-1),
             "slideshow_fullscreen" => state.slideshow_fullscreen = value.parse().unwrap_or(-1),
+            "slideshow_delay" => state.slideshow_delay = value.parse().unwrap_or(0.0),
             key if key.starts_with("sidebar_dir_") => {
                 if let Ok(i) = key["sidebar_dir_".len()..].parse::<usize>() {
                     if i < 64 {
@@ -133,11 +149,23 @@ pub fn serialize(state: &State) -> String {
     if state.show_inspector >= 0 {
         text.push_str(&format!("show_inspector={}\n", state.show_inspector));
     }
+    if state.show_toolbar >= 0 {
+        text.push_str(&format!("show_toolbar={}\n", state.show_toolbar));
+    }
+    if state.show_status >= 0 {
+        text.push_str(&format!("show_status={}\n", state.show_status));
+    }
+    if state.canvas_dark >= 0 {
+        text.push_str(&format!("canvas_dark={}\n", state.canvas_dark));
+    }
     if state.slideshow_fullscreen >= 0 {
         text.push_str(&format!(
             "slideshow_fullscreen={}\n",
             state.slideshow_fullscreen
         ));
+    }
+    if state.slideshow_delay > 0.0 {
+        text.push_str(&format!("slideshow_delay={}\n", state.slideshow_delay));
     }
     for (i, dir) in state.sidebar_dirs.iter().enumerate() {
         text.push_str(&format!(
@@ -216,7 +244,11 @@ mod tests {
             show_folders: 1,
             show_sidebar: 0,
             show_inspector: 1,
+            show_toolbar: 0,
+            show_status: 1,
+            canvas_dark: 1,
             slideshow_fullscreen: 0,
+            slideshow_delay: 5.0,
             sidebar_dirs: vec!["/a".into(), "/b".into()],
             recent_dirs: vec!["/c".into()],
         };

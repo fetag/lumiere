@@ -368,7 +368,10 @@ impl App {
             listing_rx,
             listing_generation: 0,
             dir_watch: watch::DirWatcher::new(),
-            pending_select: start_file.clone().map(|file| (file, false)),
+            // A file handed to us on the command line (Windows/Linux "Open
+            // with") opens straight in the viewer, mirroring macOS's
+            // `open_document` and pressing Enter on the thumbnail.
+            pending_select: start_file.clone().map(|file| (file, true)),
             sort: SortKey::Name,
             sort_reverse: false,
             filter: "*.*".to_owned(),
@@ -1379,8 +1382,20 @@ fn apply_preferences(app: &mut App, saved: &crate::state::State) {
     if saved.show_inspector >= 0 {
         app.show_inspector = saved.show_inspector == 1;
     }
+    if saved.show_toolbar >= 0 {
+        app.show_toolbar = saved.show_toolbar == 1;
+    }
+    if saved.show_status >= 0 {
+        app.show_status = saved.show_status == 1;
+    }
+    if saved.canvas_dark >= 0 {
+        app.canvas_dark = saved.canvas_dark == 1;
+    }
     if saved.slideshow_fullscreen >= 0 {
         app.slideshow_fullscreen = saved.slideshow_fullscreen == 1;
+    }
+    if saved.slideshow_delay > 0.0 {
+        app.slideshow_delay = saved.slideshow_delay;
     }
     app.sidebar_dirs = saved.sidebar_dirs.clone();
     app.recent_dirs = saved.recent_dirs.clone();
@@ -1467,6 +1482,74 @@ fn egui_keys(key: Key) -> Vec<egui::Key> {
         Key::Return => vec![egui::Key::Enter],
         Key::Delete => vec![egui::Key::Backspace, egui::Key::Delete],
     }
+}
+
+/// The unshifted base key for a character that is typed with `Shift`, if any.
+///
+/// On a US layout `+` lives on the `=` key, `)` on `0`, and so on: the logical
+/// key a user expects (`+`) is the shifted form of a base key. Windows in
+/// particular reports these pressed keys in ways that the direct logical-key
+/// match misses, so a character shortcut also tries its shifted base form.
+fn shifted_base_key(c: char) -> Option<egui::Key> {
+    match c {
+        '+' => Some(egui::Key::Equals),
+        '!' => Some(egui::Key::Num1),
+        '@' => Some(egui::Key::Num2),
+        '#' => Some(egui::Key::Num3),
+        '$' => Some(egui::Key::Num4),
+        '%' => Some(egui::Key::Num5),
+        '^' => Some(egui::Key::Num6),
+        '&' => Some(egui::Key::Num7),
+        '*' => Some(egui::Key::Num8),
+        '(' => Some(egui::Key::Num9),
+        ')' => Some(egui::Key::Num0),
+        '?' => Some(egui::Key::Slash),
+        '"' => Some(egui::Key::Quote),
+        '<' => Some(egui::Key::Comma),
+        '>' => Some(egui::Key::Period),
+        '{' => Some(egui::Key::OpenBracket),
+        '}' => Some(egui::Key::CloseBracket),
+        ':' => Some(egui::Key::Semicolon),
+        '~' => Some(egui::Key::Backtick),
+        '|' => Some(egui::Key::Backslash),
+        _ => None,
+    }
+}
+
+/// Try to consume a menu-declared shortcut from the input.
+///
+/// A character shortcut is matched against every egui key it can arrive as —
+/// the logical key and, where the character is a shifted form of a base key
+/// (on a US layout `+` lives on `=`, `)` on `0`, …), that base key with
+/// `Shift` — and against every spelling of the command modifier the platform
+/// may report. `consume_key` consumes the matched press, so the extra attempts
+/// never double-fire; they only widen the range of layouts and platforms a
+/// binding reaches.
+pub(crate) fn consume_menu_shortcut(i: &mut egui::InputState, shortcut: Shortcut) -> bool {
+    let modifiers = egui_modifiers(shortcut);
+    // macOS: the command key is `Cmd` and `Ctrl` is a distinct modifier that
+    // must not trigger a `⌘` shortcut, so only the command spelling is tried.
+    // Windows/Linux: the command key is `Ctrl`, and egui may report the press
+    // with the `Ctrl` bit (sometimes the only bit), so try both spellings.
+    let commands: [egui::Modifiers; 2] = if shortcut.command && !cfg!(target_os = "macos") {
+        [modifiers, egui::Modifiers::CTRL]
+    } else {
+        [modifiers, modifiers]
+    };
+    let mut hit = false;
+    for key in egui_keys(shortcut.key) {
+        for mods in commands {
+            hit |= i.consume_key(mods, key);
+        }
+    }
+    if let Key::Char(c) = shortcut.key {
+        if let Some(base) = shifted_base_key(c) {
+            for mods in commands {
+                hit |= i.consume_key(mods | egui::Modifiers::SHIFT, base);
+            }
+        }
+    }
+    hit
 }
 
 #[cfg(not(target_os = "macos"))]

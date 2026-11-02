@@ -1390,6 +1390,72 @@ fn command_shortcuts_read_event_modifiers() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Ctrl++/Ctrl+-/Ctrl+0 drive the zoom on every platform. On Windows/Linux the
+/// command key is `Ctrl`; egui may report that press with the `command` bit,
+/// the `ctrl` bit, or both. This exercises the zoom bindings under every
+/// plausible modifier spelling so a Windows key-reporting quirk cannot take a
+/// single one of them out of service.
+#[test]
+fn ctrl_zoom_shortcuts_work_on_all_platforms() {
+    let dir = fixture_dir("ctrol_zoom");
+    let ctx = egui::Context::default();
+    let mut app = App::build(&ctx, Some(dir.clone()));
+    let mut time = 1.0;
+    let mut press_key = |app: &mut App, key: egui::Key, modifiers: egui::Modifiers| {
+        let mut input = raw_input();
+        input.time = Some(time);
+        input.events.push(egui::Event::Key {
+            key,
+            pressed: true,
+            modifiers,
+            physical_key: None,
+            repeat: false,
+        });
+        let _ = ctx.run(input, |ctx| app.draw(ctx));
+        time += 0.4;
+    };
+    // The modifier spellings a command-key press can carry. On macOS the
+    // command key is `Cmd` (`Ctrl` is a distinct modifier the binding must not
+    // match), so only the `command` spellings are exercised there; on
+    // Windows/Linux the command key is `Ctrl`, which egui may report with the
+    // `ctrl` bit alone or together with `command`.
+    let spellings: [egui::Modifiers; 3] = if cfg!(target_os = "macos") {
+        [
+            egui::Modifiers::COMMAND,
+            egui::Modifiers::COMMAND, // macOS does not match the plain `ctrl` spelling.
+            egui::Modifiers::COMMAND | egui::Modifiers::CTRL,
+        ]
+    } else {
+        [
+            egui::Modifiers::COMMAND,
+            egui::Modifiers::CTRL,
+            egui::Modifiers::COMMAND | egui::Modifiers::CTRL,
+        ]
+    };
+
+    for &modifiers in &spellings {
+        // Start from a known state: actual size.
+        app.zoom = 1.0;
+        app.fit = true;
+
+        // Zoom in (Ctrl++).
+        press_key(&mut app, egui::Key::Plus, modifiers);
+        assert!((app.zoom - 1.25).abs() < 1e-4, "Ctrl++ did not zoom in ({:?}): {}", modifiers, app.zoom);
+
+        // Zoom out (Ctrl+-).
+        press_key(&mut app, egui::Key::Minus, modifiers);
+        assert!((app.zoom - 1.0).abs() < 1e-4, "Ctrl+- did not zoom out ({:?}): {}", modifiers, app.zoom);
+
+        // Zoom in again, then reset with Ctrl+0.
+        press_key(&mut app, egui::Key::Plus, modifiers);
+        assert!((app.zoom - 1.25).abs() < 1e-4, "Ctrl++ ({:?}) second pass", modifiers);
+        press_key(&mut app, egui::Key::Num0, modifiers);
+        assert!((app.zoom - 1.0).abs() < 1e-4, "Ctrl+0 did not reset zoom ({:?}): {}", modifiers, app.zoom);
+    }
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn slideshow_starts_from_first_image_when_folder_selected() {
     let dir = fixture_dir("slide");
@@ -2062,9 +2128,12 @@ fn rename_updates_disk_and_selection() {
 fn opening_a_file_selects_it() {
     let dir = fixture_dir("openfile");
     let ctx = egui::Context::default();
+    // A file handed in on the command line (Windows/Linux "Open with") opens
+    // straight in the viewer on its folder, with the file selected.
     let app = App::build(&ctx, Some(dir.join("two.png")));
     assert_eq!(app.dir, dir);
     assert_eq!(app.current().map(|e| e.name.as_str()), Some("two.png"));
+    assert_eq!(app.mode, Mode::Viewer);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

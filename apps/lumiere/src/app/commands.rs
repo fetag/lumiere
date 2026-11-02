@@ -210,8 +210,14 @@ impl App {
                 self.show_inspector = !self.show_inspector;
                 self.state_dirty = true;
             }
-            Action::ToggleToolbar => self.show_toolbar = !self.show_toolbar,
-            Action::ToggleStatus => self.show_status = !self.show_status,
+            Action::ToggleToolbar => {
+                self.show_toolbar = !self.show_toolbar;
+                self.state_dirty = true;
+            }
+            Action::ToggleStatus => {
+                self.show_status = !self.show_status;
+                self.state_dirty = true;
+            }
             Action::Settings => self.settings_open = true,
             Action::About => self.about_open = true,
         }
@@ -321,16 +327,7 @@ impl App {
 
             // Menu-declared shortcuts, most specific modifier set first.
             for (shortcut, action) in shortcuts {
-                let modifiers = egui_modifiers(shortcut);
-                let mut hit = false;
-                for key in egui_keys(shortcut.key) {
-                    hit |= i.consume_key(modifiers, key);
-                }
-                // `⌘+` is `⇧⌘=` on the keyboards that have no dedicated `+`.
-                if shortcut.key == Key::Char('+') {
-                    hit |= i.consume_key(modifiers | egui::Modifiers::SHIFT, egui::Key::Equals);
-                }
-                if hit {
+                if consume_menu_shortcut(i, shortcut) {
                     actions.push(action);
                 }
             }
