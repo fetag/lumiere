@@ -228,6 +228,45 @@ struct GpuPrimitive {
     base_color: [f32; 4],
 }
 
+/// 拒絕 loader 不解碼的幾何壓縮 extension。gltf crate 不解碼 Draco/meshopt，
+/// 壓縮 payload 保留原樣；若直接讀取壓縮 accessor 會因 bufferView 過小而
+/// 回 None / 吐錯位資料。在讀取前偵測並回明確、可操作的錯誤。
+fn check_compression_extensions(document: &gltf::Document) -> Result<(), String> {
+    for mesh in document.meshes() {
+        for primitive in mesh.primitives() {
+            if let Some(exts) = primitive.extensions() {
+                if exts.contains_key("KHR_draco_mesh_compression") {
+                    return Err(
+                        "Draco-compressed geometry (KHR_draco_mesh_compression) is not supported"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+    }
+    for accessor in document.accessors() {
+        if let Some(exts) = accessor.extensions() {
+            if exts.contains_key("EXT_meshopt_compression") {
+                return Err(
+                    "meshopt-compressed geometry (EXT_meshopt_compression) is not supported"
+                        .to_string(),
+                );
+            }
+        }
+        if let Some(view) = accessor.view() {
+            if let Some(exts) = view.extensions() {
+                if exts.contains_key("EXT_meshopt_compression") {
+                    return Err(
+                        "meshopt-compressed geometry (EXT_meshopt_compression) is not supported"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// 解析 .glb bytes → GPU-ready primitives + 邊界球資訊。
 ///
 /// 與 GPU / thread 無關，可 headless 測試。回傳 `(primitives, center,
@@ -235,6 +274,11 @@ struct GpuPrimitive {
 fn parse_glb(bytes: &[u8]) -> Result<(Vec<GpuPrimitive>, Vec3, f32, usize), String> {
     let (document, buffers, images) =
         gltf::import_slice(bytes).map_err(|e| format!("gltf import failed: {e}"))?;
+
+    // 攔截尚不支援的幾何壓縮 extension。gltf crate 不解碼 Draco/meshopt，
+    // 若直接讀取壓縮 accessor 會因 bufferView 過小而回 None / 吐錯位資料；
+    // 在讀取前偵測並給出明確、可操作的錯誤。
+    check_compression_extensions(&document)?;
 
     let mut gpus: Vec<GpuPrimitive> = Vec::new();
     let mut total_vertices = 0usize;
@@ -1200,6 +1244,34 @@ mod tests {
         match parse_glb(EMPTY) {
             Ok(_) => panic!("empty model must fail"),
             Err(e) => assert!(e.contains("no triangle primitives"), "got: {e}"),
+        }
+    }
+
+    // KHR_draco_mesh_compression primitive → 明確的「不支援」錯誤（而非讀取失敗）。
+    static DRACO: &[u8] = include_bytes!("../fixtures/model-draco.glb");
+
+    #[test]
+    fn parse_glb_rejects_draco() {
+        match parse_glb(DRACO) {
+            Ok(_) => panic!("draco model must fail"),
+            Err(e) => assert!(
+                e.contains("Draco"),
+                "expected a clear Draco-unsupported error, got: {e}"
+            ),
+        }
+    }
+
+    // EXT_meshopt_compression bufferView → 明確的「不支援」錯誤。
+    static MESHOPT: &[u8] = include_bytes!("../fixtures/model-meshopt.glb");
+
+    #[test]
+    fn parse_glb_rejects_meshopt() {
+        match parse_glb(MESHOPT) {
+            Ok(_) => panic!("meshopt model must fail"),
+            Err(e) => assert!(
+                e.contains("meshopt"),
+                "expected a clear meshopt-unsupported error, got: {e}"
+            ),
         }
     }
 

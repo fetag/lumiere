@@ -186,9 +186,24 @@ RGBA → texture 管線無法直接處理，必須新增一條 3D 渲染管線�
   - 驗證：92 測試（含 `service_renders_and_persists` 全 path + disk cache
     round-trip）；DamagedHelmet（3.7MB 帶 texture）經本 path 渲染 11.9%
     coverage、max_pixel=255。
-- wireframe 開關、auto-rotate 開關。（未實作）
-- Draco / meshopt 解壓縮（真實世界大量 GLB 有壓縮；純 Rust 解碼
-  crate 存在，選用與授權需查證後再定）。（未實作）
+- wireframe 開關、auto-rotate 開關（已完成：`Command::Render(Camera, bool)` + 兩個 checkbox；adapter 不支援 `POLYGON_MODE_LINE` 時 wireframe 自動 no-op 不 crash；`render_wireframe_differs_from_solid` 測試）。
+- Draco / meshopt 解壓縮（2026-11-09 完成偵測層 + 調研；完整解碼另行決策）：
+  - **已實作：偵測 + 明確錯誤**。`parse_glb` 在讀取幾何前調 `check_compression_extensions`：
+    - primitive 帶 `KHR_draco_mesh_compression` → 「Draco-compressed geometry … not supported」
+    - accessor / bufferView 帶 `EXT_meshopt_compression` → 「meshopt-compressed geometry … not supported」
+    - 啟用 gltf 的 `extensions` feature 才能讀 `extensions()`；測試 `parse_glb_rejects_draco` /
+      `parse_glb_rejects_meshopt`（fixture `model-draco.glb` / `model-meshopt.glb`）。
+    - 為什麼必要：gltf crate 不解碼壓縮 payload，壓縮 accessor 的 bufferView 比 declared
+      size 小，直接讀會回 `None` / 吐錯位資料（之前會以「no positions」模糊錯誤失敗）。
+  - **調研（為何未直接實作解碼）**：
+    - **沒有純 Rust 解碼器**。只有 FFI binding：`draco-rs`（`autocxx+cmake+cxx`，build
+      時從源碼編譯整個 C++ Draco，重）；`meshopt`（0.7.0，2026-10 活躍，`cc` 編譯小 MIT C 庫，輕）。
+    - **gltf crate 限制**：`import_buffers` 用 `blob.take()` 只支援單一 BIN buffer；兩 buffer
+      的 meshopt GLB 在 import 階段就失敗（`MissingBlob`），偵測邏輯沒機會跑。Draco GLB
+      通常單 buffer → import 成功 → 偵測攔截。
+    - 即使加解碼 crate 還需自行 wire glTF extension（Draco attribute remap 尤其複雜）。
+  - **建議**：本專案「不要變臃腫」原則下，完整解碼另立決策；若要實作 meshopt 優先（輕）。
+    現階段：壓縮模型以明確錯誤提示（不 crash、不吐錯位幾何）。
 - （獨立可選項，單列不併入）GLB 動畫播放：animation sampling +
   播放控制，工作量不小，另立 phase。
 

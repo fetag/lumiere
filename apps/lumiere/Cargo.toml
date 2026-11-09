@@ -21,7 +21,7 @@ models = [
 [dependencies]
 dirs = "7.0.0"
 mpv-engine = { version = "=0.2.1", optional = true }
-gltf = { version = "1.4", optional = true }
+gltf = { version = "1.4", optional = true, features = ["extensions"] }
 wgpu = { version = "=27.0.1", optional = true }
 glam = { version = "0.34", optional = true }
 bytemuck = { version = "1", optional = true }
