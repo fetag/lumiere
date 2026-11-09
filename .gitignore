@@ -6,3 +6,6 @@ dist/
 work-baseline-bundle/
 work-refactor-bundle/
 .codegraph/
+# GLB spike 本機產物（CC-BY-NC 模型渲染截圖 + 大型測試模型，不進 repo）
+experiments/glb-spike/out/
+experiments/glb-spike/test-models/

@@ -84,6 +84,8 @@ pub struct App {
     pub gif_player: crate::animation::GifPlayer,
     #[cfg(feature = "video")]
     pub video_player: crate::video::VideoPlayer,
+    #[cfg(feature = "models")]
+    pub model_player: crate::models::ModelPlayer,
     listing_tx: mpsc::Sender<ListingReply>,
     listing_rx: mpsc::Receiver<ListingReply>,
     listing_generation: u64,
@@ -364,6 +366,8 @@ impl App {
             gif_player: crate::animation::GifPlayer::default(),
             #[cfg(feature = "video")]
             video_player: crate::video::VideoPlayer::default(),
+            #[cfg(feature = "models")]
+            model_player: crate::models::ModelPlayer::default(),
             listing_tx,
             listing_rx,
             listing_generation: 0,
@@ -647,7 +651,7 @@ impl App {
             neighbours.push(self.entries[indices[next]].path.clone());
         }
         for path in neighbours {
-            if imaging::is_video(&path) {
+            if imaging::is_video(&path) || imaging::is_model(&path) {
                 continue;
             }
             if self.caches.full(&path).is_none() && !self.caches.full_failed(&path) {

@@ -74,6 +74,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
                 <string>srf</string><string>sr2</string><string>orf</string>
                 <string>rw2</string><string>raf</string><string>pef</string><string>raw</string>
                 <string>svg</string><string>mp4</string><string>avi</string>
+                <string>glb</string>
             </array>
             <key>LSItemContentTypes</key>
             <array>
@@ -89,6 +90,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
                 <string>org.w3c.svg</string>
                 <string>public.mpeg-4</string>
                 <string>public.avi</string>
+                <string>model.gltf-binary</string>
             </array>
         </dict>
     </array>

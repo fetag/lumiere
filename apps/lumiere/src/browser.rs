@@ -481,7 +481,7 @@ pub fn grid(app: &mut App, ui: &mut Ui) {
     if !warm.is_empty() {
         for entry in entries[warm]
             .iter()
-            .filter(|e| e.is_image && !imaging::is_video(&e.path))
+            .filter(|e| e.is_image && !imaging::is_video(&e.path) && !imaging::is_model(&e.path))
         {
             let size = svg_render_size(&entry.path, cell.thumb, ui.ctx().pixels_per_point());
             if app.caches.thumb(&entry.path, size).is_none() {
@@ -593,6 +593,8 @@ fn thumbnail(
             "folder"
         } else if imaging::is_video(&entry.path) {
             "video"
+        } else if imaging::is_model(&entry.path) {
+            "model"
         } else {
             "image"
         });
@@ -646,6 +648,14 @@ fn thumbnail(
             box_rect.center(),
             box_size * 0.4,
             Icon::Slideshow,
+            ui.visuals().text_color(),
+        );
+    } else if imaging::is_model(&entry.path) {
+        theme::draw_icon(
+            ui,
+            box_rect.center(),
+            box_size * 0.5,
+            Icon::Model,
             ui.visuals().text_color(),
         );
     } else if let Some(thumb) = app.caches.thumb(&entry.path, size) {
@@ -921,6 +931,16 @@ pub fn preview_pane(app: &mut App, ui: &mut Ui) {
             rect.center(),
             32.0,
             Icon::Slideshow,
+            ui.visuals().text_color(),
+        );
+    } else if imaging::is_model(&entry.path) {
+        let (rect, _) = ui.allocate_exact_size(vec2(width, width * 0.5), Sense::hover());
+        well(ui, rect);
+        theme::draw_icon(
+            ui,
+            rect.center(),
+            32.0,
+            Icon::Model,
             ui.visuals().text_color(),
         );
     } else if entry.is_image {

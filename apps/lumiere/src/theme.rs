@@ -411,6 +411,8 @@ pub enum Icon {
     Home,
     Image,
     Browser,
+    /// 3D 模型：等角立方體剪影（六角形）。
+    Model,
     /// The sidebar toggle: a window with its left band, drawn like the
     /// browser glyph.
     Sidebar,
@@ -522,6 +524,11 @@ fn bootstrap_paths(glyph: Icon) -> (&'static str, &'static str) {
         Icon::Image => (
             "image",
             r#"<path d="M6.002 5.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0"/><path d="M2.002 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2zm12 1a1 1 0 0 1 1 1v6.5l-3.777-1.947a.5.5 0 0 0-.577.093l-3.71 3.71-2.66-1.772a.5.5 0 0 0-.63.062L1.002 12V3a1 1 0 0 1 1-1z"/>"#,
+        ),
+        Icon::Model => (
+            "cube",
+            // 等角立方體剪影（六角形）；单一白色 fill 下可辨识的 3D 物件。
+            r#"<path d="M8 1.5 13.2 4.75v6.5L8 14.5 2.8 11.25v-6.5z"/>"#,
         ),
         Icon::Browser | Icon::Sidebar => (
             "layout-sidebar",

@@ -171,6 +171,8 @@ impl App {
             self.gif_player.clear();
             #[cfg(feature = "video")]
             self.video_player.clear();
+            #[cfg(feature = "models")]
+            self.model_player.clear();
         }
         let chrome = !self.fullscreen && self.mode == Mode::Browser;
 

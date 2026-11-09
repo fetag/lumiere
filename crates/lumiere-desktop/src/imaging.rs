@@ -111,9 +111,18 @@ pub fn is_video(path: &Path) -> bool {
     cfg!(feature = "video") && matches!(extension(path).as_str(), "mp4" | "avi")
 }
 
+/// 3D 模型（.glb）支援僅在啟用實驗性 models feature 時開放。
+///
+/// 與 video 同樣的 feature-gate 先例：glb 不進 `SUPPORTED_EXTS`（那些是
+/// `image` crate / ImageIO 解得到的影像格式），feature 關閉時 `.glb`
+/// 對 `is_image` 不成立，browser 不列出、viewer 拒絕開啟。
+pub fn is_model(path: &Path) -> bool {
+    cfg!(feature = "models") && extension(path) == "glb"
+}
+
 pub fn is_image(path: &Path) -> bool {
     let ext = extension(path);
-    (!ext.is_empty() && SUPPORTED_EXTS.contains(&ext.as_str())) || is_video(path)
+    (!ext.is_empty() && SUPPORTED_EXTS.contains(&ext.as_str())) || is_video(path) || is_model(path)
 }
 
 /// Decode an image, applying EXIF orientation when needed.
@@ -809,6 +818,17 @@ mod tests {
             assert_eq!(is_image(Path::new(path)), cfg!(feature = "video"));
         }
         assert!(!is_video(Path::new("/tmp/image.gif")));
+    }
+
+    #[test]
+    fn model_extensions_are_feature_gated() {
+        for path in ["/tmp/model.glb", "/tmp/model.GLB"] {
+            assert_eq!(is_model(Path::new(path)), cfg!(feature = "models"));
+            assert_eq!(is_image(Path::new(path)), cfg!(feature = "models"));
+        }
+        assert!(!is_model(Path::new("/tmp/image.gif")));
+        // 影像格式不受 models feature 影響。
+        assert!(is_image(Path::new("/tmp/a.png")));
     }
 
     #[test]

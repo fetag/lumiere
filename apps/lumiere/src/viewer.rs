@@ -59,6 +59,15 @@ pub fn view(app: &mut App, ui: &mut Ui) {
         app.video_player.clear();
     }
 
+    #[cfg(feature = "models")]
+    {
+        if crate::imaging::is_model(&path) {
+            crate::models::view(app, ui, &path);
+            return;
+        }
+        app.model_player.clear();
+    }
+
     let cached = app.caches.full(&path).map(|entry| {
         (
             entry.texture.id(),

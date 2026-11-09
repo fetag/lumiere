@@ -9,10 +9,23 @@ repository = "https://github.com/fetag/lumiere"
 
 [features]
 video = ["dep:mpv-engine", "lumiere-desktop/video"]
+models = [
+    "dep:gltf",
+    "dep:wgpu",
+    "dep:glam",
+    "dep:bytemuck",
+    "dep:pollster",
+    "lumiere-desktop/models",
+]
 
 [dependencies]
 dirs = "7.0.0"
 mpv-engine = { version = "=0.2.1", optional = true }
+gltf = { version = "1.4", optional = true }
+wgpu = { version = "=27.0.1", optional = true }
+glam = { version = "0.34", optional = true }
+bytemuck = { version = "1", optional = true }
+pollster = { version = "1", optional = true }
 eframe = { version = "0.33.3", features = ["wgpu"] }
 image = { version = "0.25", default-features = false, features = [
     "bmp",
