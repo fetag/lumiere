@@ -60,7 +60,8 @@ impl Camera {
 }
 
 enum Command {
-    Render(Camera),
+    /// 以指定 camera 渲染一幀；`wireframe` 決定用 solid 還是 wireframe 管線。
+    Render(Camera, bool),
 }
 
 enum Event {
@@ -80,6 +81,10 @@ pub struct ModelPlayer {
     error: Option<String>,
     meta: Option<(usize, usize)>,
     camera: Camera,
+    /// wireframe 顯示開關（UI 端狀態，隨 render 指令送 background thread）。
+    wireframe: bool,
+    /// 自動旋轉（連續 orbit）開關。
+    auto_rotate: bool,
 }
 
 impl Drop for ModelPlayer {
@@ -167,8 +172,13 @@ impl ModelPlayer {
     fn request_render(&mut self, camera: Camera) {
         self.camera = camera;
         if let Some(commands) = &self.commands {
-            let _ = commands.send(Command::Render(camera));
+            let _ = commands.send(Command::Render(camera, self.wireframe));
         }
+    }
+
+    /// 切換 wireframe / auto-rotate 後重新渲染當前視角。
+    fn apply_view_flags(&mut self) {
+        self.request_render(self.camera);
     }
 }
 
@@ -177,6 +187,8 @@ struct Scene {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
+    /// wireframe 管線（同 shader，polygon_mode = Wireframe、不 cull）。
+    wire_pipeline: wgpu::RenderPipeline,
     uniform_buf: wgpu::Buffer,
     primitives: Vec<Primitive>,
     target: wgpu::Texture,
@@ -373,11 +385,7 @@ fn run(
         ..Default::default()
     }))
     .map_err(|e| format!("no GPU adapter: {e}"))?;
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("lumiere-model"),
-        ..Default::default()
-    }))
-    .map_err(|e| format!("device request failed: {e}"))?;
+    let (device, queue) = request_model_device(&adapter)?;
 
     if cancel.load(Ordering::Relaxed) {
         return Ok(());
@@ -415,9 +423,9 @@ fn run(
         while let Ok(c) = commands.try_recv() {
             latest = c;
         }
-        let Command::Render(Camera { yaw, pitch, zoom }) = latest;
+        let Command::Render(Camera { yaw, pitch, zoom }, wireframe) = latest;
         let dist = fit_dist * zoom;
-        match scene.render(yaw, pitch, dist) {
+        match scene.render(yaw, pitch, dist, wireframe) {
             Ok(pixels) => {
                 let _ = events.send(Event::Frame {
                     width: WIDTH as usize,
@@ -433,6 +441,87 @@ fn run(
         }
     }
     Ok(())
+}
+
+/// 建立單一 render pipeline；solid（Fill）與 wireframe 共用同一 shader，
+/// 只有 `polygon_mode` 與 culling 不同（wireframe 不 cull，back 面線條也顯示）。
+fn create_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    label: &str,
+    polygon: wgpu::PolygonMode,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<Vertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![
+                    0 => Float32x3,
+                    1 => Float32x3,
+                    2 => Float32x2
+                ],
+            }],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            cull_mode: if polygon == wgpu::PolygonMode::Line {
+                None
+            } else {
+                Some(wgpu::Face::Back)
+            },
+            front_face: wgpu::FrontFace::Ccw,
+            polygon_mode: polygon,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    })
+}
+
+/// Request a device with the optional `POLYGON_MODE_LINE` feature enabled when
+/// the adapter supports it (needed by the wireframe pipeline). Adapters
+/// without line mode still get a device; the wire pipeline then falls back to
+/// solid in `Scene::build`.
+fn request_model_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue), String> {
+    let mut required = wgpu::Features::empty();
+    if adapter
+        .features()
+        .contains(wgpu::Features::POLYGON_MODE_LINE)
+    {
+        required |= wgpu::Features::POLYGON_MODE_LINE;
+    }
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features: required,
+            ..Default::default()
+        }))
+        .map_err(|e| format!("request_device failed: {e}"))?;
+    Ok((device, queue))
 }
 
 impl Scene {
@@ -511,50 +600,24 @@ impl Scene {
                 bind_group_layouts: &[&bg_layout],
                 push_constant_ranges: &[],
             });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![
-                        0 => Float32x3,
-                        1 => Float32x3,
-                        2 => Float32x2
-                    ],
-                }],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: Some(wgpu::Face::Back),
-                front_face: wgpu::FrontFace::Ccw,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        let pipeline =
+            create_pipeline(device, &shader, &pipeline_layout, "pipeline", wgpu::PolygonMode::Fill);
+        // wireframe 需要 POLYGON_MODE_LINE feature；adapter 不支援時 fallback 到
+        // solid 管線（wireframe 開關只是不生效，不 crash）。
+        let wire_pipeline = if device
+            .features()
+            .contains(wgpu::Features::POLYGON_MODE_LINE)
+        {
+            create_pipeline(
+                device,
+                &shader,
+                &pipeline_layout,
+                "wire",
+                wgpu::PolygonMode::Line,
+            )
+        } else {
+            pipeline.clone()
+        };
 
         // 單一 uniform buffer，所有 primitive 共用；每次 render 更新。
         // 布局：mvp(16) + key(3) + fill(3) = 22 float，16-byte 對齊到 24。
@@ -659,6 +722,7 @@ impl Scene {
             device: device.clone(),
             queue: queue.clone(),
             pipeline,
+            wire_pipeline,
             uniform_buf,
             primitives,
             target,
@@ -683,6 +747,7 @@ impl Scene {
         yaw: f32,
         pitch: f32,
         dist: f32,
+        wireframe: bool,
     ) -> Result<Vec<u8>, String> {
         let dir = Vec3::new(
             pitch.cos() * yaw.sin(),
@@ -692,7 +757,7 @@ impl Scene {
         let cam = self.center + dir * dist;
         let proj = glam::camera::rh::proj::directx::perspective(
             self.fov,
-            WIDTH as f32 / HEIGHT as f32,
+            1.0,
             self.near,
             self.far,
         );
@@ -742,7 +807,11 @@ impl Scene {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            pass.set_pipeline(&self.pipeline);
+            pass.set_pipeline(if wireframe {
+                &self.wire_pipeline
+            } else {
+                &self.pipeline
+            });
             for prim in &self.primitives {
                 pass.set_bind_group(0, &prim.bind_group, &[]);
                 pass.set_vertex_buffer(0, prim.vbuf.slice(..));
@@ -889,7 +958,7 @@ pub(crate) fn render_offscreen_with_device(
     let rendered = scene.size();
     let dist = (radius / (fov * 0.5).tan()) * 1.35;
     // 固定縮圖鏡頭：微微由上往正面看，顯示 3D 立體感。
-    let pixels = scene.render(0.0, 0.35, dist).map_err(|e| format!("render failed: {e}"))?;
+    let pixels = scene.render(0.0, 0.35, dist, false).map_err(|e| format!("render failed: {e}"))?;
     Ok((pixels, rendered))
 }
 
@@ -900,6 +969,28 @@ pub fn view(app: &mut App, ui: &mut Ui, path: &Path) {
     // 故各處 inline 取用。
     app.model_player.open(path, ui.ctx());
     app.model_player.pump(ui.ctx());
+
+    // 3D 顯示控制（模型 ready 後才顯示）：wireframe + auto-rotate 開關。
+    let mut view_changed = false;
+    if app.model_player.is_ready() {
+        ui.horizontal(|ui| {
+            if ui
+                .checkbox(&mut app.model_player.wireframe, "Wireframe")
+                .changed()
+            {
+                view_changed = true;
+            }
+            if ui
+                .checkbox(&mut app.model_player.auto_rotate, "Auto-rotate")
+                .changed()
+            {
+                view_changed = true;
+            }
+        });
+    }
+    if view_changed {
+        app.model_player.apply_view_flags();
+    }
 
     let canvas = ui.available_rect_before_wrap();
     let response = ui.allocate_rect(canvas, egui::Sense::click_and_drag());
@@ -936,6 +1027,15 @@ pub fn view(app: &mut App, ui: &mut Ui, path: &Path) {
         let fresh = Camera::new();
         app.model_player.request_render(fresh);
         dirty = true;
+    }
+    // 自動旋轉：啟用時連續 orbit（每幀推進 yaw 並重繪），形成動畫迴圈。
+    if app.model_player.auto_rotate && app.model_player.is_ready() {
+        let cam = app.model_player.camera;
+        let mut next = cam;
+        let dt = ui.ctx().input(|i| i.stable_dt);
+        next.yaw += 0.6 * dt;
+        app.model_player.request_render(next);
+        ui.ctx().request_repaint();
     }
 
     // ---- 畫 -----------------------------------------------------------------
@@ -1145,7 +1245,7 @@ mod tests {
         // 正前方 + 微仰視；距離 = fit。
         let fit_dist = radius / (fov * 0.5).tan() * 1.35;
         let mut scene = scene;
-        let pixels = scene.render(0.0, 0.18, fit_dist).expect("render");
+        let pixels = scene.render(0.0, 0.18, fit_dist, false).expect("render");
 
         assert_eq!(pixels.len(), (WIDTH * HEIGHT * 4) as usize);
         // 前景 = 背景色 (24,26,32) 之外的像素；兩個三角形必須被畫出。
@@ -1169,5 +1269,54 @@ mod tests {
             .filter(|px| px[1] as u32 > 50 && px[1] as u32 > 2 * px[0] as u32 && px[1] as u32 > 2 * px[2] as u32)
             .count();
         assert!(red > 0 && green > 0, "baseColorFactor not applied: red={red} green={green}");
+    }
+
+    /// wireframe 管線（PolygonMode::Line）渲染成功、畫出線條、且輸出與 solid 不同
+    /// （證明管線切換生效）。
+    #[test]
+    fn render_wireframe_differs_from_solid() {
+        let (gpus, center, radius, _vertices) = parse_glb(FIXTURE).expect("parse fixture");
+
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: Backends::all(),
+            ..Default::default()
+        });
+        let adapter = match pollster::block_on(instance.request_adapter(&
+            wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                ..Default::default()
+            }
+        )) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("skip: no GPU adapter ({e})");
+                return;
+            }
+        };
+        let (device, queue) = match request_model_device(&adapter) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("skip: device request failed ({e})");
+                return;
+            }
+        };
+
+        let fov = 45.0f32.to_radians();
+        let near = (radius * 0.01).max(0.001);
+        let far = radius * 10.0;
+        let fit_dist = radius / (fov * 0.5).tan() * 1.35;
+
+        let mut scene = Scene::build(&device, &queue, &gpus, center, fov, near, far, WIDTH)
+            .expect("build scene");
+        let solid = scene.render(0.0, 0.18, fit_dist, false).expect("solid render");
+        let wire = scene.render(0.0, 0.18, fit_dist, true).expect("wireframe render");
+
+        assert_eq!(wire.len(), (WIDTH * HEIGHT * 4) as usize);
+        let fg = wire
+            .chunks(4)
+            .filter(|px| !(px[0] < 40 && px[1] < 40 && px[2] < 48))
+            .count();
+        assert!(fg > 0, "wireframe should draw lines");
+        assert_ne!(solid, wire, "wireframe output should differ from solid");
     }
 }
