@@ -481,7 +481,7 @@ pub fn grid(app: &mut App, ui: &mut Ui) {
     if !warm.is_empty() {
         for entry in entries[warm]
             .iter()
-            .filter(|e| e.is_image && !imaging::is_video(&e.path) && !imaging::is_model(&e.path))
+            .filter(|e| e.is_image && !imaging::is_video(&e.path))
         {
             let size = svg_render_size(&entry.path, cell.thumb, ui.ctx().pixels_per_point());
             if app.caches.thumb(&entry.path, size).is_none() {
@@ -651,13 +651,37 @@ fn thumbnail(
             ui.visuals().text_color(),
         );
     } else if imaging::is_model(&entry.path) {
-        theme::draw_icon(
-            ui,
-            box_rect.center(),
-            box_size * 0.5,
-            Icon::Model,
-            ui.visuals().text_color(),
-        );
+        // Models: draw the GPU-rendered thumbnail once it has arrived; until
+        // then a loading / failed icon. The request routes to the GPU service
+        // (queue_work), not the image loader.
+        if let Some(thumb) = app.caches.thumb(&entry.path, size) {
+            let scale = (box_size / thumb.width as f32)
+                .min(box_size / thumb.height as f32)
+                .min(1.0);
+            let drawn = Vec2::new(thumb.width as f32, thumb.height as f32) * scale;
+            let drawn_rect = Rect::from_center_size(box_rect.center(), drawn);
+            painter.image(
+                thumb.texture.id(),
+                drawn_rect,
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        } else {
+            app.caches
+                .request(&app.loader, Kind::Thumb, &entry.path, size);
+            let colour = if app.caches.thumb_failed(&entry.path, size) {
+                theme::DECODE_FAILED
+            } else {
+                ui.visuals().weak_text_color()
+            };
+            theme::draw_icon(
+                ui,
+                box_rect.center(),
+                box_size * 0.5,
+                Icon::Model,
+                colour,
+            );
+        }
     } else if let Some(thumb) = app.caches.thumb(&entry.path, size) {
         let scale = (box_size / thumb.width as f32)
             .min(box_size / thumb.height as f32)
@@ -934,15 +958,37 @@ pub fn preview_pane(app: &mut App, ui: &mut Ui) {
             ui.visuals().text_color(),
         );
     } else if imaging::is_model(&entry.path) {
-        let (rect, _) = ui.allocate_exact_size(vec2(width, width * 0.5), Sense::hover());
-        well(ui, rect);
-        theme::draw_icon(
-            ui,
-            rect.center(),
-            32.0,
-            Icon::Model,
-            ui.visuals().text_color(),
-        );
+        let request_size = svg_render_size(&entry.path, width as u32, ui.ctx().pixels_per_point());
+        if let Some(preview) = app.caches.thumb(&entry.path, request_size) {
+            let scale = (width / preview.width as f32)
+                .min(width / preview.height as f32)
+                .min(1.0);
+            let drawn = vec2(preview.width as f32, preview.height as f32) * scale;
+            let height = (ui.available_height() - 24.0).min(drawn.y).max(16.0);
+            let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+            let drawn_rect = Rect::from_center_size(
+                rect.center(),
+                vec2(drawn.x.min(rect.width()), drawn.y.min(rect.height())),
+            );
+            well(ui, rect);
+            ui.painter().image(
+                preview.texture.id(),
+                drawn_rect,
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        } else {
+            app.caches
+                .request(&app.loader, Kind::Preview, &entry.path, request_size);
+            let (rect, _) = ui.allocate_exact_size(vec2(width, width * 0.5), Sense::hover());
+            well(ui, rect);
+            let colour = if app.caches.thumb_failed(&entry.path, request_size) {
+                theme::DECODE_FAILED
+            } else {
+                ui.visuals().weak_text_color()
+            };
+            theme::draw_icon(ui, rect.center(), 32.0, Icon::Model, colour);
+        }
     } else if entry.is_image {
         let request_size = svg_render_size(&entry.path, width as u32, ui.ctx().pixels_per_point());
         if let Some(preview) = app.caches.thumb(&entry.path, request_size) {

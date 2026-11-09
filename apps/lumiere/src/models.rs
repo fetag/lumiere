@@ -183,6 +183,8 @@ struct Scene {
     target_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
     staging: wgpu::Buffer,
+    /// 離屏 target 的邊長（方型 size x size）。
+    size: u32,
     center: Vec3,
     fov: f32,
     near: f32,
@@ -388,7 +390,7 @@ fn run(
     let near = (radius * 0.01).max(0.001);
     let far = radius * 10.0;
 
-    let scene = Scene::build(&device, &queue, &gpus, center, fov, near, far)
+    let scene = Scene::build(&device, &queue, &gpus, center, fov, near, far, WIDTH)
         .map_err(|e| format!("GPU setup failed: {e}"))?;
 
     let _ = events.send(Event::Meta {
@@ -434,6 +436,7 @@ fn run(
 }
 
 impl Scene {
+    #[allow(clippy::too_many_arguments)]
     fn build(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -442,7 +445,13 @@ impl Scene {
         fov: f32,
         near: f32,
         far: f32,
+        size: u32,
     ) -> Result<Self, String> {
+        // Normalize the offscreen size to a multiple of 64 so that `size * 4`
+        // is always a multiple of 256 (COPY_BYTES_PER_ROW_ALIGNMENT) for the
+        // readback. Callers (viewer: 1024, thumbnail service: any size) pass a
+        // logical size; the GPU target is rounded up to the nearest 64.
+        let size = size.max(64).div_ceil(64) * 64;
         // ---- shared pipeline resources ------------------------------------
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("sampler"),
@@ -618,7 +627,7 @@ impl Scene {
         // ---- offscreen target / depth / staging ---------------------------
         let target = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("offscreen"),
-            size: wgpu::Extent3d { width: WIDTH, height: HEIGHT, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -629,7 +638,7 @@ impl Scene {
         let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
         let depth = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("depth"),
-            size: wgpu::Extent3d { width: WIDTH, height: HEIGHT, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -638,7 +647,7 @@ impl Scene {
             view_formats: &[],
         });
         let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
-        let byte_len = (WIDTH * HEIGHT * 4) as wgpu::BufferAddress;
+        let byte_len = (size * size * 4) as wgpu::BufferAddress;
         let staging = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("staging"),
             size: byte_len,
@@ -656,11 +665,17 @@ impl Scene {
             target_view,
             depth_view,
             staging,
+            size,
             center,
             fov,
             near,
             far,
         })
+    }
+
+    /// The normalized (multiple-of-64) offscreen size this scene renders at.
+    fn size(&self) -> u32 {
+        self.size
     }
 
     fn render(
@@ -746,13 +761,17 @@ impl Scene {
                 buffer: &self.staging,
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(WIDTH * 4),
+                    // `self.size` is a multiple of 64 (normalized in `build`),
+                    // so `size * 4` is a multiple of 256, satisfying
+                    // COPY_BYTES_PER_ROW_ALIGNMENT for the texture -> buffer
+                    // readback.
+                    bytes_per_row: Some(self.size * 4),
                     rows_per_image: None,
                 },
             },
             wgpu::Extent3d {
-                width: WIDTH,
-                height: HEIGHT,
+                width: self.size,
+                height: self.size,
                 depth_or_array_layers: 1,
             },
         );
@@ -845,6 +864,33 @@ fn upload_albedo(
         wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
     );
     (tex.create_view(&wgpu::TextureViewDescriptor::default()), tex)
+}
+
+/// 離屏渲染一個 GLB 到 `size`×`size` 的 RGBA pixels（固定縮圖鏡頭）。
+/// 供 GPU 縮圖服務（`model_thumbs`）用：device 由呼叫方建立一次並重用，
+/// 每個 (model, size) 只渲染一次（其餘靠 disk thumbnail cache）。
+pub(crate) fn render_offscreen_with_device(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    bytes: &[u8],
+    size: u32,
+) -> Result<(Vec<u8>, u32), String> {
+    let (gpus, center, radius, count) = parse_glb(bytes)?;
+    if count == 0 {
+        return Err("model has no primitives".to_string());
+    }
+    let fov = 45.0f32.to_radians();
+    let near = (radius * 0.1).max(1e-3);
+    let far = radius * 10.0;
+    let mut scene =
+        Scene::build(device, queue, &gpus, center, fov, near, far, size)
+            .map_err(|e| format!("GPU setup failed: {e}"))?;
+    // Actual GPU target size (rounded up to a multiple of 64).
+    let rendered = scene.size();
+    let dist = (radius / (fov * 0.5).tan()) * 1.35;
+    // 固定縮圖鏡頭：微微由上往正面看，顯示 3D 立體感。
+    let pixels = scene.render(0.0, 0.35, dist).map_err(|e| format!("render failed: {e}"))?;
+    Ok((pixels, rendered))
 }
 
 /// UI：畫 model texture + orbit/zoom 互動。
@@ -1093,7 +1139,7 @@ mod tests {
         let fov = 45.0f32.to_radians();
         let near = (radius * 0.01).max(0.001);
         let far = radius * 10.0;
-        let scene = Scene::build(&device, &queue, &gpus, center, fov, near, far)
+        let scene = Scene::build(&device, &queue, &gpus, center, fov, near, far, WIDTH)
             .expect("build scene");
 
         // 正前方 + 微仰視；距離 = fit。

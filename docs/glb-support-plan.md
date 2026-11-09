@@ -171,13 +171,24 @@ RGBA → texture 管線無法直接處理，必須新增一條 3D 渲染管線�
 > 開發期踩坑：glTF `componentType` 常數 `5123`=U16、`5125`=U32（易與
 > OpenGL 混淆）；fixture 用錯會使 indices 解錯。詳見 spike README。
 
-## Phase 2：縮圖 + 打磨（3–5 天，視 MVP 驗收結果）
+## Phase 2：縮圖 + 打磨（3–5 天，視 MVP 驗收結果）— 實作中（2026-11-09 GPU 縮圖服務代碼完成）
 
-- GPU thumbnail 服務：獨立單 thread + 共用 wgpu device，固定相機
-  渲染 → 餵進現有 disk thumbnail cache；preview pane 同路徑。
-- wireframe 開關、auto-rotate 開關。
+- **GPU thumbnail 服務（已實作 2026-11-09）**：獨立單 thread（`model_thumbs.rs`
+  `ModelThumbService`）+ 自持單一 wgpu device，固定相機（yaw=0/pitch=0.35）
+  離屏渲染 → 產出 `Decoded` → 餵進**同一條** `Caches::pump`（Decoded →
+  texture → ThumbEntry）→ browser grid / preview pane 自動畫真實縮圖；渲染
+  結果寫入現有 disk thumbnail cache（`store_thumbnail`），跨 session 免再渲染。
+  - 路由：`Caches::queue_work` 偵測 `is_model` → 送 GPU 服務（非 image
+    loader，它解不開 .glb）；browser prefetch/請求移除 `!is_model` 過濾。
+  - `Scene` 參數化 size 且**正規化到 64 的倍數**（`size*4` 必為 256 倍數，
+    滿足 wgpu `COPY_BYTES_PER_ROW_ALIGNMENT` 讀回）；縮圖服務渲染後
+    `Decoded::scaled`（Lanczos）縮到請求尺寸。
+  - 驗證：92 測試（含 `service_renders_and_persists` 全 path + disk cache
+    round-trip）；DamagedHelmet（3.7MB 帶 texture）經本 path 渲染 11.9%
+    coverage、max_pixel=255。
+- wireframe 開關、auto-rotate 開關。（未實作）
 - Draco / meshopt 解壓縮（真實世界大量 GLB 有壓縮；純 Rust 解碼
-  crate 存在，選用與授權需查證後再定）。
+  crate 存在，選用與授權需查證後再定）。（未實作）
 - （獨立可選項，單列不併入）GLB 動畫播放：animation sampling +
   播放控制，工作量不小，另立 phase。
 

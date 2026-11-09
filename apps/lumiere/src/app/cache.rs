@@ -34,6 +34,9 @@ pub struct Caches {
     /// Thumbnail and preview decodes that failed: the grid and the preview
     /// pane would otherwise re-request the broken picture on every frame.
     failed_thumbs: HashSet<(PathBuf, u32)>,
+    /// GPU renderer for `.glb` thumbnails/previews (models feature only).
+    #[cfg(feature = "models")]
+    model_thumbs: Option<crate::model_thumbs::ModelThumbService>,
 }
 
 pub(super) const MAX_THUMBS: usize = 4000;
@@ -72,6 +75,12 @@ impl Caches {
     pub fn clear_failures(&mut self) {
         self.failed_fulls.clear();
         self.failed_thumbs.clear();
+    }
+
+    /// Attach the GPU renderer for `.glb` thumbnails (models feature only).
+    #[cfg(feature = "models")]
+    pub fn attach_model_thumbs(&mut self, service: crate::model_thumbs::ModelThumbService) {
+        self.model_thumbs = Some(service);
     }
 
     /// Format + EXIF without decoding pixels, cached because the preview pane
@@ -119,6 +128,17 @@ impl Caches {
         if self.pending.len() > 512 {
             return;
         }
+        // Model thumbnails/previews go to the GPU service, not the image
+        // loader (it cannot decode `.glb`). `is_model` is false when the
+        // models feature is off, so this is a no-op there.
+        #[cfg(feature = "models")]
+        if imaging::is_model(path) && matches!(kind, Kind::Thumb | Kind::Preview) {
+            if let Some(service) = &self.model_thumbs {
+                service.submit(kind, path.to_path_buf(), size);
+                self.pending.insert(key);
+                return;
+            }
+        }
         if back {
             loader.submit_prefetch(kind, path.to_path_buf(), size);
         } else {
@@ -145,7 +165,13 @@ impl Caches {
     /// the LRU before eviction so a prefetch landing behind it cannot push the
     /// displayed image out (the classic viewer flicker).
     pub fn pump(&mut self, ctx: &Context, loader: &Loader, protect: Option<&Path>) -> usize {
-        let replies = loader.drain(24);
+        // `mut` is only needed when the models feature drains the GPU service.
+        #[allow(unused_mut)]
+        let mut replies = loader.drain(24);
+        #[cfg(feature = "models")]
+        if let Some(service) = &mut self.model_thumbs {
+            replies.extend(service.drain(24));
+        }
         let arrived = replies.len();
         for reply in replies {
             let request = reply.request;
