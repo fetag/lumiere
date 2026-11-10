@@ -15,6 +15,15 @@
   `~` 根目錄）。
 - **macOS**：repo 在 `~/workspace/lumiere`，bundle 從 repo 根跑。
 
+## 來源同步（build 前）
+
+正常流程（2026-11-10 確認，James 手動 push）：
+1. 本地 commit 完 → **push 到 GitLab（origin）**（AI 不 push，James 做）。
+2. **Windows .120**：`C:\workspace\lumiere` → `git pull origin main`。
+3. **Linux .123**：`~/workspace/lumiere` → `git pull origin main`。
+4. **macOS**：本地，已在最新（不需 pull）。
+5. 三台 pull 到最新後各自 build（對照下面「各機器 libmpv」）。
+
 ## 各機器 libmpv（video feature 的硬依賴）
 
 video feature 經 `mpv-engine` crate link libmpv；三台各有一份本地 libmpv，
