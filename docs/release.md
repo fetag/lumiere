@@ -5,6 +5,11 @@ macOS, Windows and Ubuntu 22.04 machines, then upload them to GitHub with
 SHA-256 checksums. The release workflow is manual while its runners are not
 configured with the video runtime dependencies; pushing a tag does not publish.
 
+> Machine-specific build environment (libmpv locations, the Linux Ubuntu 22.04
+> rootfs, per-machine workspace paths) is documented in
+> [`release-env.md`](release-env.md). Check it before building — do not guess
+> the mpv paths.
+
 ## Before you tag
 
 1. **The tree is ready.** The release contains exactly what is on `main`;
