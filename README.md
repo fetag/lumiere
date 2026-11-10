@@ -10,7 +10,7 @@ Lumiere is a cross-platform image viewer for macOS, Linux, and Windows.
 
 I started this project because I wanted a fast image viewer that I enjoy using. Open a folder, browse thumbnails, quickly look through photos and images, and organize them. That's all there is to it, and I want to keep it that way.
 
-Lumiere isn't meant to grow bloated with flashy features or things most people rarely use. Browsing images will always be its main purpose. It also plays animated GIFs, with experimental support for MP4 and AVI videos.
+Lumiere isn't meant to grow bloated with flashy features or things most people rarely use. Browsing images will always be its main purpose. It also plays animated GIFs, with experimental support for MP4 and AVI videos and 3D model (.glb) viewing.
 
 ![Lumiere browsing view](assets/lumiere-browse.webp)
 
@@ -20,6 +20,7 @@ Lumiere isn't meant to grow bloated with flashy features or things most people r
 - Browse folders and image thumbnails, with previews and basic information
 - Zoom and rotate images, or view them in full screen or as a slideshow
 - Play animated GIFs and MP4 or AVI videos, including audio and seeking
+- View 3D models (.glb) with orbit, zoom, and wireframe and auto-rotate toggles
 - Organize images by renaming, copying, or moving them; deleted items go to the system Trash after confirmation
 - Follow your system's light or dark appearance and remember the last opened folder and window position
 
@@ -52,6 +53,8 @@ Common image formats include JPEG, PNG, GIF, BMP, TIFF, WebP, TGA, PCX, ICO, and
 Animated SVGs show only the first frame. Animated GIFs can be played and paused in the viewer, while thumbnails and previews remain static. If a file exceeds the playback resource limits, it will also be shown as a static image.
 
 MP4 and AVI playback is experimental. Videos currently show a placeholder in the thumbnail and preview areas. Release downloads include video playback support; if building from source, enable the `video` feature and provide libmpv and its runtime dependencies.
+
+GLB 3D model viewing is experimental. A `.glb` file can be opened in the viewer and supports orbiting with the mouse or the WASD keys, zooming with the scroll wheel, and resetting the view with a double-click, with wireframe and auto-rotate toggles. Model thumbnails are rendered on the GPU. Release downloads include model viewing support; if building from source, enable the `models` feature.
 
 *If you don't need MP4 or AVI playback, you can remove the mpv library to save disk space.*
 

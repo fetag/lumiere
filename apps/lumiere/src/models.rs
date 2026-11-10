@@ -32,6 +32,8 @@ const BG: [f32; 4] = [24.0 / 255.0, 26.0 / 255.0, 32.0 / 255.0, 1.0];
 const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024; // 64 MiB
 const MAX_TOTAL_VERTICES: usize = 5_000_000;
 const MAX_TEXTURE_DIM: u32 = 8192;
+/// WASD 鍵盤 orbit 角速度（rad/s）。
+const KEY_ORBIT_SPEED: f32 = 1.2;
 
 /// 相機軌道參數（球座標，围绕模型中心）。
 #[derive(Clone, Copy, Default)]
@@ -1066,6 +1068,29 @@ pub fn view(app: &mut App, ui: &mut Ui, path: &Path) {
         app.model_player.request_render(next);
         dirty = true;
     }
+    // WASD 鍵盤旋轉（持續按下時連續 orbit；方向與滑鼠拖曳一致：
+    // A/D = yaw 左/右、W/S = pitch 上/下）。
+    if app.model_player.is_ready() {
+        let (kw, ka, ks, kd) = ui.ctx().input(|i| {
+            (
+                i.key_down(egui::Key::W),
+                i.key_down(egui::Key::A),
+                i.key_down(egui::Key::S),
+                i.key_down(egui::Key::D),
+            )
+        });
+        if kw || ka || ks || kd {
+            let dt = ui.ctx().input(|i| i.stable_dt);
+            let cam = app.model_player.camera;
+            let mut next = cam;
+            next.yaw += KEY_ORBIT_SPEED * dt * (i32::from(ka) - i32::from(kd)) as f32;
+            next.pitch += KEY_ORBIT_SPEED * dt * (i32::from(ks) - i32::from(kw)) as f32;
+            next.pitch = next.pitch.clamp(-1.5, 1.5);
+            app.model_player.request_render(next);
+            ui.ctx().request_repaint();
+            dirty = true;
+        }
+    }
     // 雙擊 = 重設視角。
     if response.double_clicked() {
         let fresh = Camera::new();
@@ -1120,7 +1145,7 @@ pub fn view(app: &mut App, ui: &mut Ui, path: &Path) {
     }
 
     // HUD：orbit 提示 + 元資訊。
-    let hint = "Drag to orbit · Scroll to zoom · Double-click to reset";
+    let hint = "Drag or WASD to orbit · Scroll to zoom · Double-click to reset";
     let label = if let Some((prims, verts)) = app.model_player.meta() {
         format!("{file_name}   {prims} primitive(s), {verts} vertices   ·   {hint}")
     } else {
