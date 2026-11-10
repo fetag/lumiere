@@ -15,7 +15,7 @@ case "$ARCH" in
     *) echo "Unsupported Linux architecture: $ARCH" >&2; exit 1 ;;
 esac
 
-cargo build --release -p lumiere --locked --features video
+cargo build --release -p lumiere --locked --features video,models
 VERSION=$(cargo metadata --no-deps --format-version 1 | sed -n 's/.*"name":"lumiere","version":"\([^"]*\)".*/\1/p')
 [ -n "$VERSION" ]
 

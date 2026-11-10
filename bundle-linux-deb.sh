@@ -20,7 +20,7 @@ esac
 MAINTAINER="Lumiere Maintainers <james.cl.lin@gmail.com>"
 HOME_URL="https://github.com/fetag/lumiere"
 
-cargo build --release -p lumiere --locked --features video
+cargo build --release -p lumiere --locked --features video,models
 VERSION=$(cargo metadata --no-deps --format-version 1 | sed -n 's/.*"name":"lumiere","version":"\([^"]*\)".*/\1/p')
 [ -n "$VERSION" ]
 # The control file's Architecture uses dpkg's name (amd64/arm64); the output

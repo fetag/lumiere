@@ -18,7 +18,7 @@ try {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
 
-    cargo build --release -p lumiere --locked --features video
+    cargo build --release -p lumiere --locked --features video,models
     if ($LASTEXITCODE -ne 0) { throw "cargo build --release failed" }
 
     # Cargo.toml is the release-version authority; read it without a second

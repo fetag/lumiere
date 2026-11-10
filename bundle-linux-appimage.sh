@@ -30,7 +30,7 @@ RUNTIME_TAG="20251108"
 APPIMAGE_TOOL_URL="https://github.com/AppImage/appimagetool/releases/download/${TOOL_VERSION}/appimagetool-${ARCH}.AppImage"
 RUNTIME_URL="https://github.com/AppImage/type2-runtime/releases/download/${RUNTIME_TAG}/runtime-${ARCH}"
 
-cargo build --release -p lumiere --locked --features video
+cargo build --release -p lumiere --locked --features video,models
 VERSION=$(cargo metadata --no-deps --format-version 1 | sed -n 's/.*"name":"lumiere","version":"\([^"]*\)".*/\1/p')
 [ -n "$VERSION" ]
 

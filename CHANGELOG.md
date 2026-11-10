@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-11-10
+
+### Added
+
+- Experimental GLB 3D model viewer: open `.glb` files and orbit with the mouse or the WASD keys, zoom with the scroll wheel, and reset the view with a double-click; wireframe and auto-rotate toggles. Model thumbnails are rendered on the GPU.
+- Release bundles now include the `models` feature. Compressed (Draco / meshopt) models are rejected with a clear "not supported" message instead of failing to load.
+
 ## [0.1.6] - 2026-10-31
 
 ### Added

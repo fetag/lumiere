@@ -14,7 +14,7 @@ mkdir -p "$OUT"
 
 : "${MPV_LIBRARY_DIR:?Set MPV_LIBRARY_DIR to the libmpv link directory}"
 : "${LUMIERE_MPV_FRAMEWORKS:?Set LUMIERE_MPV_FRAMEWORKS to the IINA Frameworks directory}"
-cargo build --release -p lumiere --locked --features video
+cargo build --release -p lumiere --locked --features video,models
 
 # Cargo.toml is the release-version authority. Keep the bundle metadata in
 # lockstep without asking a maintainer to edit a second value at release time.
