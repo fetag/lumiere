@@ -26,8 +26,7 @@
 
 ## 各機器 libmpv（video feature 的硬依賴）
 
-video feature 經 `mpv-engine` crate link libmpv；三台各有一份本地 libmpv，
-**不是**靠系統 apt/安裝，而是 workspace 下的既定副本。
+video feature 經 `mpv-engine` crate link libmpv；Windows、macOS 使用本地副本，Linux 0.1.7 使用系統套件。
 
 ### Windows（.120）
 - `[已確認]` `MPV_LIBRARY_DIR = C:\workspace\lumiere-official-libmpv-20261101\lib`
@@ -39,18 +38,29 @@ video feature 經 `mpv-engine` crate link libmpv；三台各有一份本地 libm
 - `[已確認]` mpv dylibs（含 `libmpv.2.dylib` + 全套 mpv 相依 dylib）在
   `dist/Lumiere-video-test.app/Contents/Frameworks/`（舊 build 產物，repo 內 `dist/`）。
 - `[已確認]` 0.1.6 release 產物在 `dist/release-v0.1.6/`（`lumiere-v0.1.6-macos-arm64.zip`）。
-- `[已確認]` env 值（用上述 frameworks 目錄）：
-  - `LUMIERE_MPV_FRAMEWORKS` = `dist/Lumiere-video-test.app/Contents/Frameworks`
-    （bundle 進 app 的來源）。
-  - `MPV_LIBRARY_DIR` = 同上（link 用 libmpv 目錄）。
-- 建置：`MPV_LIBRARY_DIR=dist/Lumiere-video-test.app/Contents/Frameworks LUMIERE_MPV_FRAMEWORKS=dist/Lumiere-video-test.app/Contents/Frameworks ./bundle.sh`
+- `[已實測]` 該目錄只有 `libmpv.2.dylib`，linker 需要無版本名稱：
+  ```sh
+  mkdir -p dist/mpv-link
+  ln -sf ../Lumiere-video-test.app/Contents/Frameworks/libmpv.2.dylib dist/mpv-link/libmpv.dylib
+  MPV_LIBRARY_DIR=dist/mpv-link LUMIERE_MPV_FRAMEWORKS=dist/Lumiere-video-test.app/Contents/Frameworks ./bundle.sh
+  ```
 - `third-party/iina-1.5.0/` 只有授權檔（LICENSE/Credits/versions.env），**不是**
   Frameworks 來源，別搞錯。
 
 ### Linux（.123）
-- `[已確認]` **build 不直接用 host 系統 libmpv**。host 是 Ubuntu 24.04（noble，
-  系統 `libmpv2` 0.37 / `libmpv.so.2`），但 release 用 **Ubuntu 22.04 rootfs**
-  的 libmpv（soname `libmpv.so.1`）。
+- `[0.1.7 已實測]` 直接在 Linux Mint 22.3 host 建置，使用系統 `libmpv.so.2`；
+  binary 需要 GLIBC_2.39（`objdump -T`），不再宣稱支援 Ubuntu 22.04。
+  ```sh
+  mkdir -p ~/workspace/lumiere-mpv-link
+  ln -sfn /usr/lib/x86_64-linux-gnu/libmpv.so.2 ~/workspace/lumiere-mpv-link/libmpv.so
+  cd ~/workspace/lumiere
+  . "$HOME/.cargo/env"
+  export RUSTFLAGS="-L native=$HOME/workspace/lumiere-mpv-link"
+  ./bundle-linux.sh
+  ./bundle-linux-deb.sh
+  ./bundle-linux-appimage.sh
+  ```
+  三種包裝皆已產出；GUI、影片與模型仍需使用者驗收。
 - `[已確認]` 0.1.6 實際環境（實地查證）：
   - **Ubuntu base**：`ubuntu-base-22.04.5-base-amd64.tar.gz`（jammy，29MB）。
   - **libmpv**：`libmpv1` / `libmpv-dev` = **0.34.1-1ubuntu3**（soname
@@ -60,23 +70,18 @@ video feature 經 `mpv-engine` crate link libmpv；三台各有一份本地 libm
   - 0.1.6 完整工作目錄：`/home/james/workspace/lumiere-release-0.1.6/`（`rootfs/`
     + `work/`：source、`mpv-spike`、`rustup`/`cargo` CARGO/RUSTUP_HOME、linuxdeploy
     AppImage、validation logs）。0.1.6 是互動式 probe 建置，無單一成文 build 腳本。
-- **可重複重建 asset（2026-11-10 新增）**：
+- **舊 rootfs 重建嘗試（未驗證，不可當作可重現的 release 流程）**：
   - `scripts/linux-release-rootfs.sh`：從 ubuntu-base tarball +
     `linux-release-packages.txt` 重建 rootfs（apt 裝 libmpv-dev + build 相依 +
     rustup Rust 1.91.1）。需 root。
   - `scripts/linux-release-packages.txt`：0.1.6 rootfs 的 365 套件清單（重建立參考）。
-  - 注意：jammy apt 的 libmpv 目前是 0.35.0；0.1.6 rootfs 是 0.34.1。若要精確
-    重現 0.34.1，需 pin 該 .deb（mpv-engine 0.2.1 兩版皆相容，release 可用 0.35）。
-- 建置：chroot 進 rootfs（內有 cargo）後跑 `./bundle-linux.sh`、
-  `./bundle-linux-deb.sh`、`./bundle-linux-appimage.sh`；mpv runtime 由
-  `scripts/linux-video-appdir.sh` 經 linuxdeploy 打包。
+  - 套件版本未固定；腳本會刪除目標目錄，執行前須先審查，勿指向既有 rootfs。
+  - rootless chroot 嘗試未成功；不能據此聲稱已驗證 0.1.6 的建置流程。
 
 ## 发版前檢查清單（對照本檔）
 
 1. 工作路徑在 `C:\workspace\`（Win）/ `/home/james/workspace/`（Linux）下。
 2. 各機 mpv 路徑存在（Windows `mpv.lib`+`libmpv-2.dll`；macOS Frameworks
-   有 `libmpv.2.dylib`；Linux rootfs 有 `libmpv.so` dev symlink）。
-3. Linux rootfs：重用 `lumiere-release-0.1.6/rootfs`，或用
-   `scripts/linux-release-rootfs.sh` 重建（jammy apt libmpv 目前 0.35.0，
-   0.1.6 是 0.34.1，pin 該 .deb 可精確重現）。
+   有 `libmpv.2.dylib`；Linux host 有 `libmpv.so.2` 與 link symlink）。
+3. 確認 Linux 產物實際 glibc 需求及 README 說明一致。
 4. `bundle*.sh`/`.ps1` 都是 `--features video,models`、`--locked`。

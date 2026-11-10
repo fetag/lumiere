@@ -40,7 +40,7 @@ Download the Windows zip, extract it, and run `lumiere.exe`. No installation is 
 
 ### Linux
 
-An x86_64 version is available, built on Ubuntu 22.04. Other distributions have not been tested, and compatible graphics libraries and drivers are required.
+An x86_64 version is available, built on Linux Mint 22.3; the executable requires glibc 2.39 or newer. Other distributions have not been tested, and compatible graphics libraries and drivers are required.
 
 - **`.deb`**: For Debian, Ubuntu, Linux Mint, and similar systems. Install with `sudo apt install ./filename.deb`.
 - **AppImage**: Make it executable and run it. FUSE is required; if you don't have FUSE, run it with `--appimage-extract-and-run`.

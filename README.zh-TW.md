@@ -40,7 +40,7 @@ Lumiere 是一個給 macOS、Linux 和 Windows 跨平台支持的看圖工具。
 
 ### Linux
 
-目前提供 x86_64 版本，在 Ubuntu 22.04 上建置；其他發行版尚未經過測試，且需要相容的圖形函式庫和驅動程式。
+目前提供 x86_64 版本，在 Linux Mint 22.3 上建置；執行檔需要 glibc 2.39 以上版本。其他發行版尚未經過測試，且需要相容的圖形函式庫和驅動程式。
 
 - **`.deb`**：適合 Debian、Ubuntu、Linux Mint 等系統，可使用 `sudo apt install ./檔案名稱.deb` 安裝。
 - **AppImage**：加上執行權限後即可開啟；需要 FUSE，若沒有 FUSE，可加上 `--appimage-extract-and-run` 執行。
