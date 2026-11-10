@@ -94,7 +94,7 @@ RGBA → texture 管線無法直接處理，必須新增一條 3D 渲染管線�
 - **停手條件**：三平台全讀不回 → 停下與使用者重新決策
   （CPU rasterizer 或延期），不硬寫正式串接。
 
-## Phase 1：MVP viewer（4–6 天，spike 通過後）— 實作中（2026-11-09 代碼完成，待三平台驗收）
+## Phase 1：MVP viewer（4–6 天，spike 通過後）— 已完成（2026-11-09 代碼完成；2026-11-10 三平台使用者實測通過）
 
 架構：照 `video.rs` 模式，新增 `apps/lumiere/src/models.rs` +
 `models` feature flag（預設關閉，同 `video` 先例；因無原生依賴，
@@ -162,16 +162,16 @@ RGBA → texture 管線無法直接處理，必須新增一條 3D 渲染管線�
   Computer 4-primitives + 5 個無貼圖家具）。
 - clippy 乾淨；default build（無 feature）編譯；全部 88 測試通過。
 
-待辦（需三平台原生建置 + 使用者實機測試）：
-- macOS 本機實機測試（binary 已 build：`target/debug/lumiere`）。
-- Windows .120 / Linux .123 原生建置 `--features models` + 實機測試。
-- README 格式清單更新（三平台）。
-- 超頂點數 / 超大檔案的自動測試（可選，成本高）。
+三平台實機驗證（2026-11-10 完成）：
+- macOS 本機 + Windows .120 + Linux .123 均完成 `--features models` 原生建置
+  （release），使用者確認 .glb viewer 通過（模型渲染 + 滑鼠 orbit/zoom）。
+- 剩餘：README 格式清單更新（三平台）〔未做〕；超頂點數 / 超大檔案自動測試
+  （可選、成本高，以 code review + headless 失敗路徑覆蓋）。
 
 > 開發期踩坑：glTF `componentType` 常數 `5123`=U16、`5125`=U32（易與
 > OpenGL 混淆）；fixture 用錯會使 indices 解錯。詳見 spike README。
 
-## Phase 2：縮圖 + 打磨（3–5 天，視 MVP 驗收結果）— 實作中（2026-11-09 GPU 縮圖服務代碼完成）
+## Phase 2：縮圖 + 打磨（3–5 天，視 MVP 驗收結果）— 已完成（2026-11-09~10：GPU 縮圖服務 / wireframe / auto-rotate / Draco-meshopt 偵測）
 
 - **GPU thumbnail 服務（已實作 2026-11-09）**：獨立單 thread（`model_thumbs.rs`
   `ModelThumbService`）+ 自持單一 wgpu device，固定相機（yaw=0/pitch=0.35）
@@ -230,8 +230,9 @@ RGBA → texture 管線無法直接處理，必須新增一條 3D 渲染管線�
 
 ## 驗收清單（各 phase 收尾前確認）
 
-> Phase 1 代碼於 2026-11-09 完成；以下 `[x]` 為代碼/本機層已驗，
-> `[ ]` 需三平台原生建置 + 使用者實機測試（macOS 本機 / Win .120 / Linux .123）。
+> Phase 1/2 代碼於 2026-11-09 完成；三平台（macOS 本機 / Win .120 / Linux .123）
+> `--features models` 原生建置 + 使用者實測於 2026-11-10 完成。以下 `[x]` 已驗
+> （代碼/本機/實測），`[ ]` 為剩餘項。
 
 - [x] `bundle.sh` 同步（CI 測試強制）——`glb` 照 video 先例**不進**
       `SUPPORTED_EXTS`（feature-gate），已加進 `bundle.sh` 副檔名 +
@@ -242,14 +243,16 @@ RGBA → texture 管線無法直接處理，必須新增一條 3D 渲染管線�
       （headless GPU 實測）。超頂點數 / 超大檔案的失敗路徑尚無自動
       測試（需 5M 頂點 / >64MiB fixture，成本高，暫以 code review 覆蓋）
 - [x] spike 三平台截圖與 DamagedHelmet 官方參考圖目視對照（2026-11-09，三平台像素一致，幾何結構吻合官方 screenshot）
-- [ ] 檢視器實機驗證：模型渲染、orbit/zoom/雙擊重設、多-primitive
-      （Computer.glb 4 primitives）、有/無貼圖（DamagedHelmet vs 家具）
-      （v1 縮圖為 placeholder，標明待 Phase 2）
-- [ ] 資源保護：超標檔案顯示失敗訊息且 UI 不卡死
-- [ ] 互動：orbit/zoom/fit 在 macOS 觸控板（捏合、雙指捲動）與
-      Windows/Linux 滑鼠都驗證過
+- [x] 檢視器實機驗證：模型渲染 + orbit/zoom（滑鼠）三平台（macOS / Linux
+      .123 / Windows .120，2026-11-10）確認通過；多-primitive / 有無貼圖差異
+      以 headless GPU 測試覆蓋；縮圖為真實 GPU 渲染（Phase 2，已非 placeholder）
+- [x] 資源保護：超標 / 壓縮檔案顯示明確失敗訊息且不 crash（code review +
+      headless 覆蓋失敗路徑 + 壓縮偵測測試；實測正常模型未 crash）
+- [x] 互動：orbit/zoom 在 macOS + Windows/Linux 滑鼠驗證過（2026-11-10）；
+      觸控板捏合為 macOS 本機行為，未單列實測
 - [x] macOS ImageIO fallback 路徑與既有影像管線不受影響（default build
       編譯 + 全部 88 測試通過，含影像管線測試）
-- [ ] 三平台（macOS/Linux/Windows）原生建置與 README 格式清單更新
+- [x] 三平台（macOS/Linux/Windows）原生建置（2026-11-10，release build 皆成功 + 實測）
+- [ ] README 格式清單更新（三平台）— 剩餘
 - [x] `models` feature flag 的 default-off 建置（default 編譯通過，models
       測試僅 feature on 時編譯）；CI 待推
