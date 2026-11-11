@@ -364,9 +364,8 @@ const ABOUT_ICON: &[u8] = include_bytes!("../../../../../assets/AboutIcon.png");
 /// continue using the existing `.icns` asset.
 fn show_about_panel(mtm: MainThreadMarker) {
     let app = NSApplication::sharedApplication(mtm);
-    let data = unsafe {
-        NSData::dataWithBytes_length(ABOUT_ICON.as_ptr().cast(), ABOUT_ICON.len() as _)
-    };
+    let data =
+        unsafe { NSData::dataWithBytes_length(ABOUT_ICON.as_ptr().cast(), ABOUT_ICON.len() as _) };
     let Some(icon) = NSImage::initWithData(mtm.alloc(), &data) else {
         app.orderFrontStandardAboutPanel(None);
         return;

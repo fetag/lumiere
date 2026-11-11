@@ -61,8 +61,10 @@ use crate::platform::image_io as macos;
 /// Extensions we know how to display.
 pub const SUPPORTED_EXTS: &[&str] = &[
     "jpg", "jpeg", "jpe", "jfif", "png", "bmp", "rle", "gif", "webp", "tif", "tiff", "tga", "vda",
-    "icb", "vst", "ico", "cur", "pcx", "qoi", "pnm", "pbm", "pgm", "ppm", "heic", "heif", "hif",
-    "avif", "svg",
+    "icb", "vst", "ico", "cur", "pcx", "qoi", "pnm", "pbm", "pgm", "ppm", "pam", "heic", "heif",
+    "hif", "avif", "svg",
+    // 3D and game pipelines: the `image` crate has pure-Rust decoders for these.
+    "dds", "exr", "hdr", "farbfeld", "ff",
     // Camera RAW: the `image` crate cannot decode these, but macOS ImageIO can
     // (decode() already falls back to it).
     "dng", "cr2", "cr3", "nef", "nrw", "arw", "srf", "sr2", "orf", "rw2", "raf", "pef", "raw",
@@ -889,7 +891,107 @@ mod tests {
         assert!(is_image(Path::new("/tmp/a.dng")));
         assert!(is_image(Path::new("/tmp/a.NEF")));
         assert!(is_image(Path::new("/tmp/a.svg")));
+        assert!(is_image(Path::new("/tmp/a.pam")));
+        assert!(is_image(Path::new("/tmp/a.dds")));
+        assert!(is_image(Path::new("/tmp/a.exr")));
+        assert!(is_image(Path::new("/tmp/a.hdr")));
+        assert!(is_image(Path::new("/tmp/a.farbfeld")));
         assert!(!is_image(Path::new("/tmp/a.txt")));
+    }
+
+    fn write_dxt1_dds(path: &Path) {
+        // Minimal uncompressed-pixel DDS is rejected by the image crate, so
+        // the fixture is a 4x4 DXT1 surface: both color endpoints are solid
+        // red and every index selects the first endpoint, making each pixel
+        // opaque red.
+        let mut bytes: Vec<u8> = vec![b'D', b'D', b'S', b' '];
+        for value in [124u32, 0x1007, 4, 4, 0, 0, 0] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        bytes.extend([0u8; 44]); // dwReserved1
+        bytes.extend_from_slice(&32u32.to_le_bytes()); // pixel format size
+        bytes.extend_from_slice(&4u32.to_le_bytes()); // DDPF_FOURCC
+        bytes.extend_from_slice(b"DXT1");
+        bytes.extend([0u8; 20]); // bit count and channel masks
+        for value in [0x1000u32, 0, 0, 0, 0] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        // DXT1 block: color0 0xF800 (red in 565), color1 0x0000, indices 0.
+        bytes.extend_from_slice(&[0x00, 0xF8, 0x00, 0x00, 0, 0, 0, 0]);
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    #[test]
+    fn decodes_dxt1_dds_fixture() {
+        let dir = temp_dir("dds");
+        let path = dir.join("tex.dds");
+        write_dxt1_dds(&path);
+        let decoded = decode(&path).expect("dds decode");
+        assert_eq!((decoded.width, decoded.height), (4, 4));
+        assert_eq!(&decoded.rgba[..8], &[255, 0, 0, 255, 255, 0, 0, 255]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn decodes_hdr_fixture() {
+        let dir = temp_dir("hdr");
+        let path = dir.join("shot.hdr");
+        // Powers of two round-trip Radiance RGBE exactly.
+        image::Rgb32FImage::from_pixel(8, 6, image::Rgb([0.5, 0.25, 0.125]))
+            .save(&path)
+            .unwrap();
+        let decoded = decode(&path).expect("hdr decode");
+        assert_eq!((decoded.width, decoded.height), (8, 6));
+        assert_eq!(decoded.rgba.len(), 8 * 6 * 4);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn decodes_exr_fixture() {
+        let dir = temp_dir("exr");
+        let path = dir.join("shot.exr");
+        image::Rgba32FImage::from_pixel(8, 6, image::Rgba([0.5, 0.25, 0.125, 1.0]))
+            .save(&path)
+            .unwrap();
+        let decoded = decode(&path).expect("exr decode");
+        assert_eq!((decoded.width, decoded.height), (8, 6));
+        assert_eq!(decoded.rgba.len(), 8 * 6 * 4);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn decodes_farbfeld_fixture() {
+        let dir = temp_dir("farbfeld");
+        let path = dir.join("shot.ff");
+        // `Rgba16Image` has no crate-root alias in image 0.25.
+        image::ImageBuffer::from_pixel(8, 6, image::Rgba([1234u16, 5678, 9012, 40960]))
+            .save(&path)
+            .unwrap();
+        let decoded = decode(&path).expect("farbfeld decode");
+        assert_eq!((decoded.width, decoded.height), (8, 6));
+        assert_eq!(decoded.rgba.len(), 8 * 6 * 4);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn decodes_pam_fixture() {
+        let dir = temp_dir("pam");
+        let path = dir.join("shot.pam");
+        // PnmEncoder defaults to P6; PAM is the P7 (arbitrary) subtype.
+        // Samples are flat RGBA8 bytes, so a plain buffer is the fixture.
+        let rgba: Vec<u8> = std::iter::repeat_n([10u8, 20, 30, 255], 8 * 6)
+            .flatten()
+            .collect();
+        let mut encoder =
+            image::codecs::pnm::PnmEncoder::new(std::fs::File::create(&path).unwrap())
+                .with_subtype(image::codecs::pnm::PnmSubtype::ArbitraryMap);
+        encoder
+            .encode(&*rgba, 8, 6, image::ColorType::Rgba8.into())
+            .unwrap();
+        let decoded = decode(&path).expect("pam decode");
+        assert_eq!((decoded.width, decoded.height), (8, 6));
+        assert_eq!(&decoded.rgba[..4], &[10, 20, 30, 255]);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[cfg(target_os = "macos")]

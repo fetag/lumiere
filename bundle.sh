@@ -66,15 +66,16 @@ cat > "$APP/Contents/Info.plist" <<PLIST
                 <string>tif</string><string>tiff</string><string>webp</string>
                 <string>ico</string><string>cur</string><string>tga</string><string>vda</string>
                 <string>icb</string><string>vst</string><string>pcx</string>
-                <string>pnm</string><string>ppm</string><string>pgm</string>
-                <string>pbm</string><string>qoi</string><string>heic</string>
-                <string>heif</string><string>hif</string><string>avif</string>
+                <string>pnm</string><string>ppm</string><string>pgm</string><string>pbm</string>
+                <string>pam</string><string>qoi</string><string>heic</string>
+                <string>heif</string><string>hif</string><string>avif</string><string>svg</string>
+                <string>dds</string><string>exr</string><string>hdr</string>
+                <string>farbfeld</string><string>ff</string>
                 <string>dng</string><string>cr2</string><string>cr3</string>
                 <string>nef</string><string>nrw</string><string>arw</string>
                 <string>srf</string><string>sr2</string><string>orf</string>
                 <string>rw2</string><string>raf</string><string>pef</string><string>raw</string>
-                <string>svg</string><string>mp4</string><string>avi</string>
-                <string>glb</string>
+                <string>mp4</string><string>avi</string><string>glb</string>
             </array>
             <key>LSItemContentTypes</key>
             <array>

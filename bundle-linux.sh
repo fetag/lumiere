@@ -83,7 +83,7 @@ Exec=$APPDIR/bin/lumiere %F
 Icon=lumiere
 Terminal=false
 Categories=Graphics;Viewer;
-MimeType=image/bmp;image/gif;image/jpeg;image/png;image/tiff;image/webp;video/mp4;video/x-msvideo;
+MimeType=image/bmp;image/gif;image/jpeg;image/png;image/tiff;image/webp;image/x-pnm;image/x-dds;image/vnd.radiance;image/x-farbfeld;image/x-exr;video/mp4;video/x-msvideo;
 StartupWMClass=lumiere
 StartupNotify=true
 DESKTOP
