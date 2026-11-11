@@ -128,32 +128,40 @@ impl App {
             }
             Action::NextImage => {
                 if self.mode == Mode::Viewer {
-                    let dropped = self.loader.purge_thumbs();
-                    self.caches.abandon(&dropped);
+                    self.purge_stale_decodes();
                 }
                 self.step_image(1);
             }
             Action::PrevImage => {
                 if self.mode == Mode::Viewer {
-                    let dropped = self.loader.purge_thumbs();
-                    self.caches.abandon(&dropped);
+                    self.purge_stale_decodes();
                 }
                 self.step_image(-1);
             }
-            Action::FirstImage => self.jump_image(true),
-            Action::LastImage => self.jump_image(false),
+            Action::FirstImage => {
+                if self.mode == Mode::Viewer {
+                    self.purge_stale_decodes();
+                }
+                self.jump_image(true);
+            }
+            Action::LastImage => {
+                if self.mode == Mode::Viewer {
+                    self.purge_stale_decodes();
+                }
+                self.jump_image(false);
+            }
             Action::OpenViewer => {
                 self.ensure_image_selected();
                 if self.current_image_path().is_some() {
                     self.mode = Mode::Viewer;
-                    let dropped = self.loader.purge_thumbs();
-                    self.caches.abandon(&dropped);
+                    self.purge_stale_decodes();
                     self.fit = true;
                     self.pan = Vec2::ZERO;
                 }
             }
             Action::CloseViewer => {
                 self.mode = Mode::Browser;
+                self.purge_stale_decodes();
                 if self.slideshow {
                     self.slideshow = false;
                     self.restore_slideshow_view(ctx);
@@ -189,8 +197,7 @@ impl App {
                 }
                 self.ensure_image_selected();
                 self.mode = Mode::Viewer;
-                let dropped = self.loader.purge_thumbs();
-                self.caches.abandon(&dropped);
+                self.purge_stale_decodes();
                 // Snapshot the view so StopSlideshow can put the window and
                 // the zoom back the way the user had them.
                 self.slideshow_saved = Some(SlideshowView {
@@ -432,8 +439,7 @@ impl App {
                 self.act(Action::StopSlideshow, ctx);
                 self.notify("Slideshow finished");
             } else {
-                let dropped = self.loader.purge_thumbs();
-                self.caches.abandon(&dropped);
+                self.purge_stale_decodes();
                 self.step_image(1);
             }
         }

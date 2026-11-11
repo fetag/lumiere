@@ -2432,18 +2432,96 @@ fn viewer_prefetches_the_neighbouring_images() {
     let mut app = App::build(&ctx, Some(dir.clone()));
     app.mode = Mode::Viewer;
     app.selected = app.image_indices()[0];
-    app.prefetch_neighbours();
+    let current = app.current_image_path().expect("current image");
 
-    let queued: Vec<PathBuf> = app
-        .caches
-        .pending
-        .iter()
-        .filter(|(kind, _, _)| *kind == Kind::Full)
-        .map(|(_, path, _)| path.clone())
-        .collect();
-    assert_eq!(queued.len(), 2);
-    assert!(queued.contains(&dir.join("two.png")));
-    assert!(queued.contains(&dir.join("three.png")));
+    // While the picture on screen is still loading nothing is queued: the
+    // neighbour decodes would hold the pixel gate the current picture still
+    // needs.
+    assert!(app.caches.full(&current).is_none());
+    app.prefetch_neighbours();
+    assert!(
+        !app.caches
+            .pending
+            .iter()
+            .any(|(kind, _, _)| *kind == Kind::Full),
+        "neighbour prefetch must wait for the current image to display"
+    );
+
+    for frame in 0..120 {
+        let mut input = raw_input();
+        input.time = Some(1.0 + frame as f64 * 0.1);
+        let _ = ctx.run(input, |ctx| app.draw(ctx));
+        if app.caches.full(&current).is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(
+        app.caches.full(&current).is_some(),
+        "current image never displayed"
+    );
+
+    // With the picture on screen settled, the neighbours are decoded and
+    // land in the full cache.
+    for frame in 0..120 {
+        let mut input = raw_input();
+        input.time = Some(2.0 + frame as f64 * 0.1);
+        let _ = ctx.run(input, |ctx| app.draw(ctx));
+        if app.caches.full(&dir.join("two.png")).is_some()
+            && app.caches.full(&dir.join("three.png")).is_some()
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(
+        app.caches.full(&dir.join("two.png")).is_some(),
+        "neighbour two.png was never prefetched"
+    );
+    assert!(
+        app.caches.full(&dir.join("three.png")).is_some(),
+        "neighbour three.png was never prefetched"
+    );
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn viewer_navigation_purges_stale_decode_work() {
+    let dir = fixture_dir("navdrop");
+    let ctx = egui::Context::default();
+    let mut app = App::build(&ctx, Some(dir.clone()));
+    app.mode = Mode::Viewer;
+    app.selected = app.image_indices()[0];
+
+    // In the viewer, moving to another image must drop the decode work that
+    // is still queued for the picture being left (a stale neighbour prefetch
+    // would hold the pixel gate behind the new picture). The purge is driven
+    // by bumping the loader's generation, so each step advances it by one and
+    // older requests no longer match.
+    let before = app.loader.generation();
+    app.act(Action::NextImage, &ctx);
+    assert_eq!(app.loader.generation(), before + 1);
+    app.act(Action::PrevImage, &ctx);
+    assert_eq!(app.loader.generation(), before + 2);
+    app.act(Action::FirstImage, &ctx);
+    assert_eq!(app.loader.generation(), before + 3);
+    app.act(Action::LastImage, &ctx);
+    assert_eq!(app.loader.generation(), before + 4);
+
+    // Leaving the viewer drops the queued decodes as well.
+    let before = app.loader.generation();
+    app.act(Action::CloseViewer, &ctx);
+    assert_eq!(app.loader.generation(), before + 1);
+    assert_eq!(app.mode, Mode::Browser);
+
+    // In the browser the same keys only move the grid selection and must NOT
+    // bump the generation — the thumbnail queue there is still live.
+    let before = app.loader.generation();
+    app.act(Action::NextImage, &ctx);
+    assert_eq!(app.loader.generation(), before);
+    app.act(Action::FirstImage, &ctx);
+    assert_eq!(app.loader.generation(), before);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -553,8 +553,7 @@ impl App {
                 self.scroll_to_selected = true;
                 if open_viewer {
                     self.mode = Mode::Viewer;
-                    let dropped = self.loader.purge_thumbs();
-                    self.caches.abandon(&dropped);
+                    self.purge_stale_decodes();
                     self.fit = true;
                     self.zoom = 1.0;
                     self.pan = Vec2::ZERO;
@@ -632,7 +631,17 @@ impl App {
             .map(|e| e.path.clone())
     }
 
-    /// Move the selection to the next/previous image entry, wrapping.
+    /// Drop every queued decode request: it belongs to an older visible set,
+    /// and a stale neighbour prefetch left in the queue would hold the pixel
+    /// gate behind the picture the user just switched to. In-flight decodes
+    /// finish and land in the LRU caches; only queued work is dropped, and
+    /// the pending markers of the dropped requests are released so the paths
+    /// can be requested again.
+    fn purge_stale_decodes(&mut self) {
+        let (_, dropped) = self.loader.bump_generation();
+        self.caches.abandon(&dropped);
+    }
+
     /// Decode the images on either side of the one being viewed, so stepping
     /// through a folder does not stall waiting for the next full decode.
     pub fn prefetch_neighbours(&mut self) {
@@ -641,6 +650,17 @@ impl App {
         }
         let indices = self.image_indices();
         if indices.len() < 2 {
+            return;
+        }
+        // Hold the neighbour decodes until the picture on screen has finished
+        // loading: a prefetch reaching the workers would hold the pixel gate
+        // that the current picture's own full decode is still waiting for. A
+        // settled failure also passes the gate — nothing is queued behind a
+        // failed decode, so the workers are free.
+        let Some(path) = self.current_image_path() else {
+            return;
+        };
+        if self.caches.full(&path).is_none() && !self.caches.full_failed(&path) {
             return;
         }
         let position = indices
@@ -817,8 +837,7 @@ impl App {
                 self.mode = Mode::Viewer;
                 self.fit = true;
                 self.pan = Vec2::ZERO;
-                let dropped = self.loader.purge_thumbs();
-                self.caches.abandon(&dropped);
+                self.purge_stale_decodes();
             }
             return;
         }
