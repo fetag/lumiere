@@ -8,9 +8,9 @@ mod animation;
 mod app;
 mod browser;
 #[cfg(feature = "models")]
-mod models;
-#[cfg(feature = "models")]
 mod model_thumbs;
+#[cfg(feature = "models")]
+mod models;
 mod panels;
 mod platform_ui;
 mod theme;

@@ -674,13 +674,7 @@ fn thumbnail(
             } else {
                 ui.visuals().weak_text_color()
             };
-            theme::draw_icon(
-                ui,
-                box_rect.center(),
-                box_size * 0.5,
-                Icon::Model,
-                colour,
-            );
+            theme::draw_icon(ui, box_rect.center(), box_size * 0.5, Icon::Model, colour);
         }
     } else if let Some(thumb) = app.caches.thumb(&entry.path, size) {
         let scale = (box_size / thumb.width as f32)

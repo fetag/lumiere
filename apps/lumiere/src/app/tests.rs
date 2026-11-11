@@ -1440,17 +1440,36 @@ fn ctrl_zoom_shortcuts_work_on_all_platforms() {
 
         // Zoom in (Ctrl++).
         press_key(&mut app, egui::Key::Plus, modifiers);
-        assert!((app.zoom - 1.25).abs() < 1e-4, "Ctrl++ did not zoom in ({:?}): {}", modifiers, app.zoom);
+        assert!(
+            (app.zoom - 1.25).abs() < 1e-4,
+            "Ctrl++ did not zoom in ({:?}): {}",
+            modifiers,
+            app.zoom
+        );
 
         // Zoom out (Ctrl+-).
         press_key(&mut app, egui::Key::Minus, modifiers);
-        assert!((app.zoom - 1.0).abs() < 1e-4, "Ctrl+- did not zoom out ({:?}): {}", modifiers, app.zoom);
+        assert!(
+            (app.zoom - 1.0).abs() < 1e-4,
+            "Ctrl+- did not zoom out ({:?}): {}",
+            modifiers,
+            app.zoom
+        );
 
         // Zoom in again, then reset with Ctrl+0.
         press_key(&mut app, egui::Key::Plus, modifiers);
-        assert!((app.zoom - 1.25).abs() < 1e-4, "Ctrl++ ({:?}) second pass", modifiers);
+        assert!(
+            (app.zoom - 1.25).abs() < 1e-4,
+            "Ctrl++ ({:?}) second pass",
+            modifiers
+        );
         press_key(&mut app, egui::Key::Num0, modifiers);
-        assert!((app.zoom - 1.0).abs() < 1e-4, "Ctrl+0 did not reset zoom ({:?}): {}", modifiers, app.zoom);
+        assert!(
+            (app.zoom - 1.0).abs() < 1e-4,
+            "Ctrl+0 did not reset zoom ({:?}): {}",
+            modifiers,
+            app.zoom
+        );
     }
 
     std::fs::remove_dir_all(&dir).unwrap();

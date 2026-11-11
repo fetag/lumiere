@@ -61,8 +61,13 @@ impl App {
                         ui.label("Change image every");
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(format!("{:.1} s", self.slideshow_delay));
-                            if theme::settings_slider(ui, &mut self.slideshow_delay, 0.5..=30.0, 0.5)
-                                .changed()
+                            if theme::settings_slider(
+                                ui,
+                                &mut self.slideshow_delay,
+                                0.5..=30.0,
+                                0.5,
+                            )
+                            .changed()
                             {
                                 self.state_dirty = true;
                             }

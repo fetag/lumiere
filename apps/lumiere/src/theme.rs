@@ -6,8 +6,8 @@
 //! UI without a restart.
 
 use egui::{
-    pos2, vec2, Align, Color32, FontData, FontFamily, FontId, Margin, Pos2, Rect, Response,
-    Sense, Stroke, StrokeKind, Ui,
+    pos2, vec2, Align, Color32, FontData, FontFamily, FontId, Margin, Pos2, Rect, Response, Sense,
+    Stroke, StrokeKind, Ui,
 };
 use std::sync::Arc;
 

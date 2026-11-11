@@ -478,6 +478,45 @@ pub fn cache_root() -> PathBuf {
     base.join(app).join("thumbs")
 }
 
+/// True when the two app-owned components of the cache root (the `<app>`
+/// directory and `thumbs`) are not symbolic links. A local user who can
+/// pre-create one of them as a symlink before the first launch would
+/// otherwise redirect cache writes and pruning to a directory of their
+/// choice; the check runs once per process. Higher prefixes are deliberately
+/// not inspected: platform symlinks such as macOS `/var -> /private/var`
+/// are legitimate, and the app-owned components are the ones the app itself
+/// would create.
+pub fn cache_root_safe(root: &Path) -> bool {
+    [
+        Some(root.to_path_buf()),
+        root.parent().map(|parent| parent.to_path_buf()),
+    ]
+    .into_iter()
+    .flatten()
+    .all(|prefix| match fs::symlink_metadata(&prefix) {
+        Ok(meta) => !meta.file_type().is_symlink(),
+        // Not there yet; the cache write will create it.
+        Err(_) => true,
+    })
+}
+
+/// The once-per-process result of [`cache_root_safe`] for the actual root.
+/// When it fails the on-disk thumbnail cache is disabled for this session.
+fn disk_cache_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        let safe = cache_root_safe(&cache_root());
+        if !safe {
+            log::warn!(
+                "cache root {} contains a symbolic link; the on-disk thumbnail \
+                 cache is disabled for this session",
+                cache_root().display()
+            );
+        }
+        safe
+    })
+}
+
 fn fnv1a(bytes: &[u8], seed: u64) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325 ^ seed;
     for b in bytes {
@@ -518,10 +557,15 @@ fn store_thumbnail_in(root: &Path, path: &Path, size: u32, img: &Decoded) -> std
 }
 
 pub fn cached_thumbnail(path: &Path, size: u32) -> Option<PathBuf> {
-    cached_thumbnail_in(&cache_root(), path, size)
+    disk_cache_enabled()
+        .then(|| cached_thumbnail_in(&cache_root(), path, size))
+        .flatten()
 }
 
 pub fn store_thumbnail(path: &Path, size: u32, img: &Decoded) {
+    if !disk_cache_enabled() {
+        return;
+    }
     if let Err(error) = store_thumbnail_in(&cache_root(), path, size, img) {
         log::warn!("could not store thumbnail for {}: {error}", path.display());
     }
@@ -578,10 +622,16 @@ pub fn prune_cache(dir: &Path, max_bytes: u64) -> std::io::Result<u64> {
 }
 
 pub fn prune_thumbnail_cache(max_bytes: u64) -> std::io::Result<u64> {
+    if !disk_cache_enabled() {
+        return Ok(0);
+    }
     prune_cache(&cache_root(), max_bytes)
 }
 
 pub fn clear_thumbnail_cache() -> std::io::Result<u64> {
+    if !disk_cache_enabled() {
+        return Ok(0);
+    }
     let dir = cache_root();
     let mut count = 0u64;
     if let Ok(entries) = fs::read_dir(&dir) {
@@ -883,5 +933,37 @@ mod tests {
         assert!(dir.join("c.png").exists());
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn cache_root_safe_flags_symlinked_app_or_thumbs_dirs() {
+        let base = std::env::temp_dir().join("lumiere_cachesafe_test");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+
+        // A root that does not exist yet is safe: the first cache write
+        // creates it.
+        assert!(cache_root_safe(&base.join("app").join("thumbs")));
+
+        // Plain directories are safe.
+        fs::create_dir_all(base.join("real").join("thumbs")).unwrap();
+        assert!(cache_root_safe(&base.join("real").join("thumbs")));
+
+        // A symlinked leaf or parent would redirect cache writes (and
+        // pruning) elsewhere, so it is unsafe. Symlink creation needs
+        // privileges on some platforms; only assert when it succeeded.
+        #[cfg(unix)]
+        {
+            fs::create_dir_all(base.join("target")).unwrap();
+            std::os::unix::fs::symlink(base.join("target"), base.join("linked-leaf")).unwrap();
+            assert!(!cache_root_safe(&base.join("linked-leaf")));
+
+            fs::create_dir_all(base.join("linked-parent")).unwrap();
+            fs::remove_dir(base.join("linked-parent")).unwrap();
+            std::os::unix::fs::symlink(base.join("target"), base.join("linked-parent")).unwrap();
+            assert!(!cache_root_safe(&base.join("linked-parent").join("thumbs")));
+        }
+
+        let _ = fs::remove_dir_all(&base);
     }
 }

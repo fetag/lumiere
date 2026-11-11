@@ -8,15 +8,36 @@ use super::*;
 fn open_with_default_app(path: &std::path::Path) {
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(path).spawn();
+    // ShellExecuteW instead of `cmd /c start`: cmd re-parses its own command
+    // line, so a file name containing `&`, `|`, `<`, `>`, `^` or `%` would be
+    // executed as a separate command (e.g. `photo&calc.exe&x.jpg`).
     #[cfg(target_os = "windows")]
-    let _ = std::process::Command::new("cmd")
-        .arg("/c")
-        .arg("start")
-        .arg("")
-        .arg(path)
-        .spawn();
+    open_with_default_app_windows(path);
     #[cfg(target_os = "linux")]
     let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+}
+
+/// Windows default-app launch via ShellExecuteW, which hands the path to the
+/// shell as a single opaque argument.
+#[cfg(target_os = "windows")]
+fn open_with_default_app_windows(path: &std::path::Path) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+
+    let file: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    // NUL-terminated wide string, exactly as encode_wide() would produce.
+    let verb: Vec<u16> = "open\0".encode_utf16().collect();
+    // Return > 32 is a valid instance handle; <= 32 is an SE_ERR_* code.
+    let _ = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            file.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            1, // SW_SHOWNORMAL
+        )
+    };
 }
 
 impl App {

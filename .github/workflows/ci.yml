@@ -62,3 +62,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.91
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --locked --workspace --all-targets
+
+  # Flag dependencies with known security advisories (RUSTSEC). The lockfile
+  # is shared across the platform matrix, so one audit covers every build.
+  # cargo-audit is installed from crates.io (checksum-verified) rather than a
+  # third-party action, and reads Cargo.lock directly without building.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+      - run: cargo audit

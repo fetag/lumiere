@@ -47,7 +47,11 @@ struct Camera {
 impl Camera {
     fn new() -> Self {
         // 與 spike 的 "front" 角度一致：微微仰視的正面。
-        Self { yaw: 0.0, pitch: 0.18, zoom: 1.0 }
+        Self {
+            yaw: 0.0,
+            pitch: 0.18,
+            zoom: 1.0,
+        }
     }
 
     /// 球座標 → 由中心指向相機的單位方向。
@@ -67,8 +71,15 @@ enum Command {
 }
 
 enum Event {
-    Meta { primitives: usize, vertices: usize },
-    Frame { width: usize, height: usize, pixels: Vec<u8> },
+    Meta {
+        primitives: usize,
+        vertices: usize,
+    },
+    Frame {
+        width: usize,
+        height: usize,
+        pixels: Vec<u8>,
+    },
     Error(String),
 }
 
@@ -149,16 +160,24 @@ impl ModelPlayer {
         };
         while let Ok(event) = events.try_recv() {
             match event {
-                Event::Meta { primitives, vertices } => {
+                Event::Meta {
+                    primitives,
+                    vertices,
+                } => {
                     self.meta = Some((primitives, vertices));
                 }
-                Event::Frame { width, height, pixels } => {
+                Event::Frame {
+                    width,
+                    height,
+                    pixels,
+                } => {
                     self.size = [width, height];
                     let image = ColorImage::from_rgba_unmultiplied(self.size, &pixels);
                     if let Some(texture) = &mut self.texture {
                         texture.set(image, TextureOptions::LINEAR);
                     } else {
-                        self.texture = Some(ctx.load_texture("model", image, TextureOptions::LINEAR));
+                        self.texture =
+                            Some(ctx.load_texture("model", image, TextureOptions::LINEAR));
                     }
                     ctx.request_repaint();
                 }
@@ -310,9 +329,7 @@ fn parse_glb(bytes: &[u8]) -> Result<(Vec<GpuPrimitive>, Vec3, f32, usize), Stri
             }
             let indices = reader.read_indices().map(|ri| match ri {
                 gltf::mesh::util::ReadIndices::U8(i) => i.map(|x| x as u32).collect::<Vec<u32>>(),
-                gltf::mesh::util::ReadIndices::U16(i) => {
-                    i.map(|x| x as u32).collect::<Vec<u32>>()
-                }
+                gltf::mesh::util::ReadIndices::U16(i) => i.map(|x| x as u32).collect::<Vec<u32>>(),
                 gltf::mesh::util::ReadIndices::U32(i) => i.collect::<Vec<u32>>(),
             });
             let normals = reader
@@ -360,11 +377,18 @@ fn parse_glb(bytes: &[u8]) -> Result<(Vec<GpuPrimitive>, Vec3, f32, usize), Stri
             let verts: Vec<Vertex> = positions
                 .iter()
                 .zip(normals.iter().zip(uvs.iter()))
-                .map(|(p, (n, uv))| Vertex { pos: *p, normal: *n, uv: *uv })
+                .map(|(p, (n, uv))| Vertex {
+                    pos: *p,
+                    normal: *n,
+                    uv: *uv,
+                })
                 .collect();
             let (index_data, index_format) = match indices {
                 Some(idx) => (idx, wgpu::IndexFormat::Uint32),
-                None => ((0..positions.len() as u32).collect::<Vec<u32>>(), wgpu::IndexFormat::Uint32),
+                None => (
+                    (0..positions.len() as u32).collect::<Vec<u32>>(),
+                    wgpu::IndexFormat::Uint32,
+                ),
             };
             gpus.push(GpuPrimitive {
                 verts,
@@ -561,12 +585,11 @@ fn request_model_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::
     {
         required |= wgpu::Features::POLYGON_MODE_LINE;
     }
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_features: required,
-            ..Default::default()
-        }))
-        .map_err(|e| format!("request_device failed: {e}"))?;
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_features: required,
+        ..Default::default()
+    }))
+    .map_err(|e| format!("request_device failed: {e}"))?;
     Ok((device, queue))
 }
 
@@ -594,60 +617,63 @@ impl Scene {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let bg_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("bg-layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
+        let bg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("bg-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
+                    count: None,
+                },
+            ],
+        });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shader"),
             source: wgpu::ShaderSource::Wgsl(CODE.into()),
         });
-        let pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: None,
-                bind_group_layouts: &[&bg_layout],
-                push_constant_ranges: &[],
-            });
-        let pipeline =
-            create_pipeline(device, &shader, &pipeline_layout, "pipeline", wgpu::PolygonMode::Fill);
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[&bg_layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = create_pipeline(
+            device,
+            &shader,
+            &pipeline_layout,
+            "pipeline",
+            wgpu::PolygonMode::Fill,
+        );
         // wireframe 需要 POLYGON_MODE_LINE feature；adapter 不支援時 fallback 到
         // solid 管線（wireframe 開關只是不生效，不 crash）。
         let wire_pipeline = if device
@@ -736,7 +762,11 @@ impl Scene {
         // ---- offscreen target / depth / staging ---------------------------
         let target = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("offscreen"),
-            size: wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -747,7 +777,11 @@ impl Scene {
         let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
         let depth = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("depth"),
-            size: wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -801,12 +835,7 @@ impl Scene {
             pitch.cos() * yaw.cos(),
         );
         let cam = self.center + dir * dist;
-        let proj = glam::camera::rh::proj::directx::perspective(
-            self.fov,
-            1.0,
-            self.near,
-            self.far,
-        );
+        let proj = glam::camera::rh::proj::directx::perspective(self.fov, 1.0, self.near, self.far);
         let view = glam::camera::rh::view::look_at_mat4(cam, self.center, Vec3::Y);
         let mvp = proj * view;
         // 固定世界座標光（不跟相機轉）：key 主光（右上前）+ fill 補光（左下）。
@@ -894,13 +923,19 @@ impl Scene {
         // copy 命令先提交（staging 必須 Idle），poll 完成後再 map/read/unmap。
         self.queue.submit([commands]);
         self.device
-            .poll(PollType::Wait { submission_index: None, timeout: None })
+            .poll(PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            })
             .map_err(|e| format!("poll failed: {e}"))?;
         self.staging
             .slice(..)
             .map_async(wgpu::MapMode::Read, move |_| {});
         self.device
-            .poll(PollType::Wait { submission_index: None, timeout: None })
+            .poll(PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            })
             .map_err(|e| format!("poll failed: {e}"))?;
         let pixels = {
             let view = self.staging.slice(..).get_mapped_range();
@@ -955,7 +990,11 @@ fn upload_albedo(
     };
     let tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("albedo"),
-        size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -976,9 +1015,16 @@ fn upload_albedo(
             bytes_per_row: Some(w * 4),
             rows_per_image: None,
         },
-        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
     );
-    (tex.create_view(&wgpu::TextureViewDescriptor::default()), tex)
+    (
+        tex.create_view(&wgpu::TextureViewDescriptor::default()),
+        tex,
+    )
 }
 
 /// 離屏渲染一個 GLB 到 `size`×`size` 的 RGBA pixels（固定縮圖鏡頭）。
@@ -997,14 +1043,15 @@ pub(crate) fn render_offscreen_with_device(
     let fov = 45.0f32.to_radians();
     let near = (radius * 0.1).max(1e-3);
     let far = radius * 10.0;
-    let mut scene =
-        Scene::build(device, queue, &gpus, center, fov, near, far, size)
-            .map_err(|e| format!("GPU setup failed: {e}"))?;
+    let mut scene = Scene::build(device, queue, &gpus, center, fov, near, far, size)
+        .map_err(|e| format!("GPU setup failed: {e}"))?;
     // Actual GPU target size (rounded up to a multiple of 64).
     let rendered = scene.size();
     let dist = (radius / (fov * 0.5).tan()) * 1.35;
     // 固定縮圖鏡頭：微微由上往正面看，顯示 3D 立體感。
-    let pixels = scene.render(0.0, 0.35, dist, false).map_err(|e| format!("render failed: {e}"))?;
+    let pixels = scene
+        .render(0.0, 0.35, dist, false)
+        .map_err(|e| format!("render failed: {e}"))?;
     Ok((pixels, rendered))
 }
 
@@ -1156,7 +1203,11 @@ pub fn view(app: &mut App, ui: &mut Ui, path: &Path) {
         egui::Align2::LEFT_TOP,
         label,
         egui::FontId::proportional(12.0),
-        if app.canvas_dark { egui::Color32::from_gray(180) } else { egui::Color32::from_gray(90) },
+        if app.canvas_dark {
+            egui::Color32::from_gray(180)
+        } else {
+            egui::Color32::from_gray(90)
+        },
     );
 
     ui.ctx().accesskit_node_builder(response.id, |node| {
@@ -1249,8 +1300,14 @@ mod tests {
         }
         // baseColorFactor 被讀取：prim0 紅、prim1 綠。
         let (r, g) = (gpus[0].base_color, gpus[1].base_color);
-        assert!(r[0] > 0.9 && r[1] < 0.2 && r[2] < 0.2, "prim0 should be red: {r:?}");
-        assert!(g[1] > 0.9 && g[0] < 0.2 && g[2] < 0.2, "prim1 should be green: {g:?}");
+        assert!(
+            r[0] > 0.9 && r[1] < 0.2 && r[2] < 0.2,
+            "prim0 should be red: {r:?}"
+        );
+        assert!(
+            g[1] > 0.9 && g[0] < 0.2 && g[2] < 0.2,
+            "prim1 should be green: {g:?}"
+        );
         // 兩個三角形 x∈[0,3]，中心 x=1.5。
         assert!((center.x - 1.5).abs() < 1e-3);
         assert!(radius > 0.0);
@@ -1310,28 +1367,28 @@ mod tests {
             backends: Backends::all(),
             ..Default::default()
         });
-        let adapter = match pollster::block_on(instance.request_adapter(&
-            wgpu::RequestAdapterOptions {
+        let adapter =
+            match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 ..Default::default()
-            }
-        )) {
-            Ok(a) => a,
-            Err(e) => {
-                eprintln!("skip render test: no GPU adapter ({e})");
-                return;
-            }
-        };
-        let (device, queue) = match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("lumiere-model-test"),
-            ..Default::default()
-        })) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("skip render test: device request failed ({e})");
-                return;
-            }
-        };
+            })) {
+                Ok(a) => a,
+                Err(e) => {
+                    eprintln!("skip render test: no GPU adapter ({e})");
+                    return;
+                }
+            };
+        let (device, queue) =
+            match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                label: Some("lumiere-model-test"),
+                ..Default::default()
+            })) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("skip render test: device request failed ({e})");
+                    return;
+                }
+            };
 
         let fov = 45.0f32.to_radians();
         let near = (radius * 0.01).max(0.001);
@@ -1359,13 +1416,24 @@ mod tests {
         // 若 base_color 未乘入（全白），兩三角形同色，以下兩項不會同時 > 0。
         let red = pixels
             .chunks(4)
-            .filter(|px| px[0] as u32 > 50 && px[0] as u32 > 2 * px[1] as u32 && px[0] as u32 > 2 * px[2] as u32)
+            .filter(|px| {
+                px[0] as u32 > 50
+                    && px[0] as u32 > 2 * px[1] as u32
+                    && px[0] as u32 > 2 * px[2] as u32
+            })
             .count();
         let green = pixels
             .chunks(4)
-            .filter(|px| px[1] as u32 > 50 && px[1] as u32 > 2 * px[0] as u32 && px[1] as u32 > 2 * px[2] as u32)
+            .filter(|px| {
+                px[1] as u32 > 50
+                    && px[1] as u32 > 2 * px[0] as u32
+                    && px[1] as u32 > 2 * px[2] as u32
+            })
             .count();
-        assert!(red > 0 && green > 0, "baseColorFactor not applied: red={red} green={green}");
+        assert!(
+            red > 0 && green > 0,
+            "baseColorFactor not applied: red={red} green={green}"
+        );
     }
 
     /// wireframe 管線（PolygonMode::Line）渲染成功、畫出線條、且輸出與 solid 不同
@@ -1378,18 +1446,17 @@ mod tests {
             backends: Backends::all(),
             ..Default::default()
         });
-        let adapter = match pollster::block_on(instance.request_adapter(&
-            wgpu::RequestAdapterOptions {
+        let adapter =
+            match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 ..Default::default()
-            }
-        )) {
-            Ok(a) => a,
-            Err(e) => {
-                eprintln!("skip: no GPU adapter ({e})");
-                return;
-            }
-        };
+            })) {
+                Ok(a) => a,
+                Err(e) => {
+                    eprintln!("skip: no GPU adapter ({e})");
+                    return;
+                }
+            };
         let (device, queue) = match request_model_device(&adapter) {
             Ok(d) => d,
             Err(e) => {
@@ -1405,8 +1472,12 @@ mod tests {
 
         let mut scene = Scene::build(&device, &queue, &gpus, center, fov, near, far, WIDTH)
             .expect("build scene");
-        let solid = scene.render(0.0, 0.18, fit_dist, false).expect("solid render");
-        let wire = scene.render(0.0, 0.18, fit_dist, true).expect("wireframe render");
+        let solid = scene
+            .render(0.0, 0.18, fit_dist, false)
+            .expect("solid render");
+        let wire = scene
+            .render(0.0, 0.18, fit_dist, true)
+            .expect("wireframe render");
 
         assert_eq!(wire.len(), (WIDTH * HEIGHT * 4) as usize);
         let fg = wire

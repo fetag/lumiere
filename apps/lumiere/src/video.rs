@@ -33,6 +33,16 @@ fn restart_before_resume(paused: bool, eof_reached: bool) -> bool {
     !paused && eof_reached
 }
 
+/// mpv's `loadfile` parses a bare argument the way a command line is parsed,
+/// so a file whose name starts with `--` would be read as an option (or an
+/// option=value pair) instead of a location. A `file://` URL removes that
+/// ambiguity: mpv treats it purely as a path.
+fn video_source_url(path: &Path) -> Result<String, String> {
+    url::Url::from_file_path(path)
+        .map(|u| u.to_string())
+        .map_err(|()| format!("Unable to build a file URL for {}", path.display()))
+}
+
 enum Event {
     Status(Status),
     Error(String),
@@ -134,9 +144,7 @@ fn play(
     events: &mpsc::Sender<Event>,
     frames: &mpsc::SyncSender<Frame>,
 ) -> Result<(), String> {
-    let source = path
-        .to_str()
-        .ok_or("Unable to open a non-Unicode video path")?;
+    let source = video_source_url(path)?;
     let engine = Engine::video().build().map_err(|e| e.to_string())?;
     let changed = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&changed);
@@ -147,7 +155,7 @@ fn play(
             repaint.request_repaint();
         })
         .map_err(|e| e.to_string())?;
-    engine.load(source).map_err(|e| e.to_string())?;
+    engine.load(&source).map_err(|e| e.to_string())?;
     let mut last_status = Instant::now() - Duration::from_secs(1);
     let mut last_frame = Instant::now() - Duration::from_secs(1);
     let mut pixels = Vec::new();
@@ -288,7 +296,8 @@ pub fn view(app: &mut App, ui: &mut Ui, path: &Path) {
 
 #[cfg(test)]
 mod tests {
-    use super::restart_before_resume;
+    use super::{restart_before_resume, video_source_url};
+    use std::path::Path;
 
     #[test]
     fn only_play_at_eof_restarts() {
@@ -296,5 +305,18 @@ mod tests {
         assert!(!restart_before_resume(false, false));
         assert!(!restart_before_resume(true, true));
         assert!(!restart_before_resume(true, false));
+    }
+
+    #[test]
+    fn dash_prefixed_names_become_file_urls_not_options() {
+        // A name like this would be misparsed as an mpv option if passed
+        // bare; the file URL keeps it a location.
+        let url = video_source_url(Path::new("/tmp/--really-quiet.mp4")).unwrap();
+        assert!(url.starts_with("file://"), "{url}");
+        assert!(url.contains("--really-quiet.mp4"), "{url}");
+        // Spaces and the percent sign are escaped so the URL stays unambiguous.
+        let spaced = video_source_url(Path::new("/tmp/a b 100%.mp4")).unwrap();
+        assert!(spaced.contains("%20"), "{spaced}");
+        assert!(spaced.contains("100%25.mp4"), "{spaced}");
     }
 }

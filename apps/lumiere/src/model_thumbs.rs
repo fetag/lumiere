@@ -39,7 +39,11 @@ impl ModelThumbService {
             .name("model-thumb".into())
             .spawn(move || run_loop(rx, reply_tx))
             .expect("spawn model thumb thread");
-        Self { tx, reply_rx, _thread: thread }
+        Self {
+            tx,
+            reply_rx,
+            _thread: thread,
+        }
     }
 
     /// Queue a render. Fails silently if the service has shut down.
@@ -61,10 +65,7 @@ impl ModelThumbService {
 }
 
 /// Thread body: create one wgpu device, then render jobs as they arrive.
-fn run_loop(
-    rx: mpsc::Receiver<ModelThumbJob>,
-    reply_tx: mpsc::Sender<Reply>,
-) {
+fn run_loop(rx: mpsc::Receiver<ModelThumbJob>, reply_tx: mpsc::Sender<Reply>) {
     // Device setup is best-effort: on a machine with no GPU we still answer
     // every job (with an error) so the cache marks the thumbnail as failed
     // instead of leaving a permanent `pending` marker.
@@ -130,8 +131,7 @@ fn render_job(gpu: Option<&Gpu>, job: &ModelThumbJob) -> Result<Decoded, String>
     let Some(gpu) = gpu else {
         return Err("no GPU for model thumbnail".to_string());
     };
-    let bytes = std::fs::read(path)
-        .map_err(|_| format!("open failed: {}", path.display()))?;
+    let bytes = std::fs::read(path).map_err(|_| format!("open failed: {}", path.display()))?;
     let (pixels, rendered) =
         crate::models::render_offscreen_with_device(&gpu.device, &gpu.queue, &bytes, size)?;
 
@@ -171,8 +171,8 @@ mod tests {
     /// A real GLB fixture renders to a square RGBA buffer of the requested size.
     #[test]
     fn render_fixture_square() {
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("fixtures/model-test.glb");
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/model-test.glb");
         let bytes = std::fs::read(&fixture).expect("read fixture");
         let gpu = setup_gpu().expect("gpu");
         let size = 128;
@@ -189,8 +189,8 @@ mod tests {
     /// request is served from that cache, no re-render).
     #[test]
     fn service_renders_and_persists() {
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("fixtures/model-test.glb");
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/model-test.glb");
         let size = 96;
         let service = ModelThumbService::start();
         service.submit(Kind::Thumb, fixture.clone(), size);
@@ -210,8 +210,8 @@ mod tests {
         assert_eq!(decoded.rgba.len(), (size * size * 4) as usize);
 
         // Persisted to the shared disk cache.
-        let cached = imaging::cached_thumbnail(&fixture, size)
-            .expect("thumbnail should be stored on disk");
+        let cached =
+            imaging::cached_thumbnail(&fixture, size).expect("thumbnail should be stored on disk");
         assert!(imaging::read_cached_thumbnail(&cached).is_some());
 
         // A second request is answered from the disk cache (still a square).

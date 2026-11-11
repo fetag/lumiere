@@ -8,7 +8,7 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/fetag/lumiere"
 
 [features]
-video = ["dep:mpv-engine", "lumiere-desktop/video"]
+video = ["dep:mpv-engine", "dep:url", "lumiere-desktop/video"]
 models = [
     "dep:gltf",
     "dep:wgpu",
@@ -21,6 +21,7 @@ models = [
 [dependencies]
 dirs = "7.0.0"
 mpv-engine = { version = "=0.2.1", optional = true }
+url = { version = "2", optional = true }
 gltf = { version = "1.4", optional = true, features = ["extensions"] }
 wgpu = { version = "=27.0.1", optional = true }
 glam = { version = "0.34", optional = true }
@@ -108,3 +109,6 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
 
 [target.'cfg(target_os = "linux")'.dependencies]
 raw-window-handle = "0.6"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_UI_Shell"] }

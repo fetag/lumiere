@@ -156,7 +156,6 @@ pub fn observe_drag() -> Option<DragObservation> {
 /// that looks like files.
 #[cfg(target_os = "macos")]
 pub fn pasteboard_file_paths() -> Vec<PathBuf> {
-    use objc2::rc::Retained;
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSPasteboard;
     use objc2_foundation::{NSArray, NSString, NSURL};
@@ -197,12 +196,18 @@ pub fn pasteboard_file_paths() -> Vec<PathBuf> {
     let Some(list) = pb.propertyListForType(unsafe { objc2_app_kit::NSFilenamesPboardType }) else {
         return Vec::new();
     };
-    // SAFETY: the property list for the filenames type is an array of path
-    // strings; winit makes the same re-interpretation for the same payload.
-    // `downcast` cannot name generic container types, so `cast_unchecked` is
-    // the sanctioned route.
-    let list: Retained<NSArray<NSString>> = unsafe { Retained::cast_unchecked(list) };
+    // The payload was written by another app, so verify the class before
+    // re-interpreting it. `downcast` cannot name the generic
+    // `NSArray<NSString>` (generic containers are not a `DowncastTarget`),
+    // but it can confirm the container is an `NSArray`; each element is then
+    // confirmed to be an `NSString` before it is read. This replaces an
+    // unchecked re-interpretation, which would have sent `NSArray`
+    // (and `NSString`) messages to whatever object the pasteboard held.
+    let Some(list) = list.downcast::<NSArray>().ok() else {
+        return Vec::new();
+    };
     list.iter()
+        .filter_map(|element| element.downcast::<NSString>().ok())
         .map(|name| PathBuf::from(name.to_string()))
         .collect()
 }

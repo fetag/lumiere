@@ -58,11 +58,20 @@ chroot "$ROOTFS" /bin/sh -c "
 "
 
 echo "==> 3/3 chroot 內安裝 Rust $RUST_VERSION（rustup）"
+# 直接下載官方 rustup-init 二進位並執行，而非 `curl sh.rustup.rs | sh`：
+# 不把遠端腳本送進 shell 執行。rootfs 固定為 x86_64（见檔首 ubuntu-base
+# amd64 的說明）。若要更強完整性保護，可在此加
+#   echo '<sha256>  rustup-init' | sha256sum -c -
+# 並固定 rustup-init 的 SHA-256；該雜湊會隨 rustup 版本變動，需於發布時更新。
 chroot "$ROOTFS" /bin/sh -c "
     set -eu
     export RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --default-toolchain $RUST_VERSION --profile minimal
+    curl --proto '=https' --tlsv1.2 -sSf -o /tmp/rustup-init \
+        https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init
+    [ -s /tmp/rustup-init ] || { echo 'rustup-init 下載為空' >&2; exit 1; }
+    chmod +x /tmp/rustup-init
+    /tmp/rustup-init -y --default-toolchain $RUST_VERSION --profile minimal
+    rm -f /tmp/rustup-init
     ln -sf /usr/local/cargo/bin/cargo /usr/local/bin/cargo
     ln -sf /usr/local/cargo/bin/rustc /usr/local/bin/rustc
 "

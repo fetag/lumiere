@@ -441,7 +441,8 @@ impl App {
             scroll_to_selected: false,
         };
         #[cfg(feature = "models")]
-        app.caches.attach_model_thumbs(crate::model_thumbs::ModelThumbService::start());
+        app.caches
+            .attach_model_thumbs(crate::model_thumbs::ModelThumbService::start());
         apply_preferences(&mut app, &saved);
         app.rescan();
         app
