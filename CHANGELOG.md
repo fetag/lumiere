@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The Windows release bundle (`bundle-windows.ps1`) now Authenticode-signs `lumiere.exe` with the `FETAG.NET` code-signing certificate and a DigiCert timestamp before zipping, and verifies the signature (the self-signed root "not trusted" note from `signtool verify` is expected). Set `LUMIERE_SIGN_CERT` / `LUMIERE_SIGN_TIMESTAMP` to override the certificate and timestamp server. The 0.1.7 Windows asset was re-published with this signature.
+
 ## [0.1.7] - 2026-11-10
 
 ### Added

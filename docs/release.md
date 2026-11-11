@@ -34,7 +34,11 @@ Build the version being tagged on each machine. The scripts enable `video`:
   `./bundle.sh`. The selected IINA runtime and its source information are
   described in `THIRD_PARTY_NOTICES.md`.
 - Windows: set `MPV_LIBRARY_DIR` to a directory containing `mpv.lib` and
-  `libmpv-2.dll`, then run `./bundle-windows.ps1` in PowerShell.
+  `libmpv-2.dll`, then run `./bundle-windows.ps1` in PowerShell. The script
+  Authenticode-signs `lumiere.exe` before zipping (self-signed `FETAG.NET`
+  certificate plus a DigiCert timestamp by default; override with
+  `LUMIERE_SIGN_CERT` / `LUMIERE_SIGN_TIMESTAMP`) and verifies the signature —
+  see the Windows signing section below.
 - Ubuntu 22.04: install the libmpv development package and run
   `./bundle-linux.sh`, `./bundle-linux-deb.sh`, and
   `./bundle-linux-appimage.sh`. The portable bundles include their runtime
@@ -69,7 +73,7 @@ Once the native video dependencies are configured on all runners, the manual
 | `lumiere-v<version>-linux-x86_64.tar.gz` | portable directory: binary + `AppIcon.png`, per-user installer, desktop launcher, hicolor icon-theme entries | x86_64 Linux only |
 | `lumiere-v<version>-linux-x86_64.deb` | system package: `/opt/lumiere` + a `/usr/bin` symlink, desktop launcher and hicolor icons; install with `dpkg -i` or `apt install` | x86_64 Linux (Debian family) |
 | `lumiere-v<version>-linux-x86_64.AppImage` | portable executable: run directly, no install; requires system graphics libraries and FUSE (or extract-and-run) | x86_64 Linux only |
-| `lumiere-v<version>-windows-x86_64.zip` | portable directory: executable (window icon compiled in) + `AppIcon.png` for the in-window About panel | x86_64 Windows only |
+| `lumiere-v<version>-windows-x86_64.zip` | portable directory: executable (window icon compiled in, Authenticode-signed) + `AppIcon.png` for the in-window About panel | x86_64 Windows only |
 
 Every asset shares the prefix `lumiere-v<version>-<os>-<arch>`; only the
 suffix is platform-specific (`.zip`, `.tar.gz`, `.deb`, `.AppImage`). The
@@ -99,8 +103,12 @@ portable archive still depend on the system's graphics libraries and drivers.
   Developer ID identity and notarization slot in when those become available.
 - **Linux**: the `.deb`, AppImage and portable archive are all unsigned (Linux
   has no widely used equivalent of code-signing notarization); users install or
-  run them directly. **Windows**: unsigned portable archive; users run it
-  directly.
+  run them directly.
+- **Windows**: `lumiere.exe` is Authenticode-signed with the self-signed
+  `FETAG.NET` certificate and a DigiCert RFC 3161 timestamp (see the Windows
+  signing section below). The signature is verifiable and timestamped, but the
+  self-signed root is not in end users' trust stores, so SmartScreen still
+  shows an "unknown publisher" prompt on first run.
 
 ### Developer ID + notarization: current assessment
 
@@ -123,18 +131,32 @@ installed by machines that cannot right-click (MDM-managed fleets). Until
 then the ad-hoc bundle plus the documented first-launch step is the
 cheapest correct behavior.
 
-### Windows code signing: current assessment
+### Windows code signing: how it works
 
-Deferred. Today the Windows archive is an unsigned portable zip, so
-SmartScreen shows an "Unknown publisher" prompt on first run until enough
-users have opened it (reputation) or it is signed. To remove that we would
-need:
+Implemented in `bundle-windows.ps1`. After staging the executable, the script
+Authenticode-signs `lumiere.exe` and verifies the signature before zipping, so
+a release is signed by default and the step cannot be forgotten.
 
-1. A code-signing certificate (OV or EV) installed where the bundle is built,
-   or exported into CI secrets.
-2. `bundle-windows.ps1` running `signtool sign` on the executable, plus a CI
-   secret for the certificate and its password/thumbprint.
+- **Certificate**: the self-signed `CN=FETAG.NET` code-signing certificate in
+  the current user's store is selected by subject. Override the choice with
+  `LUMIERE_SIGN_CERT` (a certificate thumbprint).
+- **Timestamp**: an RFC 3161 timestamp is embedded (default
+  `http://timestamp.digicert.com`) so the signature stays valid past the
+  certificate's expiry. Override with `LUMIERE_SIGN_TIMESTAMP`.
+- **signtool**: the script finds `signtool.exe` on `PATH` or in the Windows SDK
+  `bin\x64` directory (it is not on `PATH` by default).
+- **Verification**: the signature is confirmed to be the primary signature, to
+  belong to the expected certificate, and to carry a timestamp. Because the
+  signing certificate is self-signed, `signtool verify` still reports its root
+  as "not trusted" and exits non-zero — that is expected and is not treated as
+  a failure.
+- **Missing inputs**: if no certificate or no `signtool` is available the
+  bundle is still produced, but left unsigned with a loud warning. Do not ship
+  an unsigned build.
 
-Revisit when distribution reaches people who are not you (SmartScreen prompts
-become support traffic) — the same trigger as the macOS notarization above.
-Until then the unsigned portable archive is the cheapest correct behavior.
+**Limitation.** The `FETAG.NET` certificate is self-signed, so the executable
+carries a verifiable, timestamped signature, but Windows still shows an
+"unknown publisher" / SmartScreen prompt for end users because the self-signed
+root is not in their trust store. To establish real publisher trust, replace it
+with a public OV or EV certificate from a CA (install it where the bundle is
+built, or export it into CI secrets, and select it via `LUMIERE_SIGN_CERT`).

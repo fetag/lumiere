@@ -74,6 +74,90 @@ public static class LumiereIconCheck {
     Copy-Item (Join-Path $PSScriptRoot 'THIRD_PARTY_NOTICES.md') (Join-Path $Stage 'THIRD_PARTY_NOTICES.md') -Force
     Copy-Item (Join-Path $PSScriptRoot 'third-party\mpv-windows') (Join-Path $Stage 'mpv-windows') -Recurse -Force
 
+    # Authenticode-sign the executable that goes into the archive. This matches
+    # how prior Windows releases were signed: the default certificate is the
+    # self-signed FETAG.NET code-signing cert in the local store, and an RFC 3161
+    # timestamp is embedded so the signature stays valid past the cert's expiry.
+    # (A self-signed root still triggers Windows "unknown publisher" for end
+    # users — it establishes a verifiable signature, not publisher trust.)
+    # Override with LUMIERE_SIGN_CERT (cert thumbprint) or LUMIERE_SIGN_TIMESTAMP
+    # (RFC 3161 server) if the defaults do not fit. When no certificate or no
+    # signtool is available the bundle is still produced, but left unsigned with
+    # a loud warning — do not ship it.
+    $StageExe = Join-Path $Stage "lumiere.exe"
+
+    # signtool.exe is part of the Windows SDK and is usually NOT on PATH, so
+    # resolve it explicitly. Prefer the x64 binary to match the x64 executable.
+    $Signtool = (Get-Command signtool.exe -ErrorAction SilentlyContinue).Source
+    if (-not $Signtool) {
+        $SdkBins = @("${env:ProgramFiles(x86)}\Windows Kits\10\bin", "${env:ProgramFiles}\Windows Kits\10\bin") |
+            Where-Object { $_ -and (Test-Path $_) }
+        foreach ($root in $SdkBins) {
+            $x64 = Get-ChildItem -Path $root -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -like '*\x64\*' } |
+                Sort-Object FullName -Descending
+            if ($x64) { $Signtool = $x64[0].FullName; break }
+        }
+        if (-not $Signtool) {
+            foreach ($root in $SdkBins) {
+                $any = Get-ChildItem -Path $root -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue
+                if ($any) { $Signtool = $any[0].FullName; break }
+            }
+        }
+    }
+
+    $SignThumbprint = $env:LUMIERE_SIGN_CERT
+    if (-not $SignThumbprint) {
+        $SignCert = Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue |
+            Where-Object { $_.Subject -eq "CN=FETAG.NET" } |
+            Select-Object -First 1
+        if ($SignCert) { $SignThumbprint = $SignCert.Thumbprint }
+    }
+
+    if ($Signtool -and $SignThumbprint) {
+        $TimestampServer = $env:LUMIERE_SIGN_TIMESTAMP
+        if (-not $TimestampServer) { $TimestampServer = "http://timestamp.digicert.com" }
+        Write-Host "Signing $StageExe with certificate $SignThumbprint ..."
+
+        # signtool writes progress and errors to stderr; under the script's
+        # $ErrorActionPreference = "Stop" a native stderr line trips a
+        # NativeCommandError. Relax it around the native calls (same approach as
+        # the cargo build above) and judge success by $LASTEXITCODE + the
+        # verify output, not by a stderr-driven exception.
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+
+        & $Signtool sign /fd sha256 /td sha256 /tr $TimestampServer /sha1 $SignThumbprint $StageExe
+        if ($LASTEXITCODE -ne 0) {
+            $ErrorActionPreference = $prevEAP
+            throw "signtool sign failed (exit $LASTEXITCODE)"
+        }
+
+        # Verify. The signing certificate is self-signed (FETAG.NET), so
+        # `signtool verify` always reports its root as "not trusted" and exits
+        # non-zero even for a correct, timestamped signature — the exit code is
+        # therefore NOT the pass/fail signal here. Instead confirm from the
+        # verbose output that the primary signature is present, belongs to the
+        # expected certificate, and carries an RFC 3161 timestamp.
+        $verifyOut = & $Signtool verify /v /pa $StageExe 2>&1 | ForEach-Object { "$_" }
+        $ErrorActionPreference = $prevEAP
+        $blob = $verifyOut -join "`n"
+        $hasPrimary = $blob -match 'Signature Index: 0 \(Primary Signature\)'
+        $isCert     = $blob -match [regex]::Escape($SignThumbprint)
+        $isStamped  = $blob -match 'The signature is timestamped'
+        if (-not ($hasPrimary -and $isCert -and $isStamped)) {
+            $verifyOut | ForEach-Object { Write-Host $_ }
+            throw "signtool verify could not confirm a primary signature for $SignThumbprint with an embedded timestamp"
+        }
+        Write-Host "Signature verified (self-signed FETAG.NET; the 'root not trusted' warning is expected)."
+    }
+    elseif (-not $Signtool) {
+        Write-Warning "signtool.exe not found (Windows SDK not installed or not on PATH); $StageExe will be left UNSIGNED. Install the Windows SDK or add its bin\x64 dir to PATH before shipping."
+    }
+    else {
+        Write-Warning "NO code-signing certificate available; $StageExe will be left UNSIGNED. Import the FETAG.NET cert (or set LUMIERE_SIGN_CERT) and re-run before shipping."
+    }
+
     $Readme = @"
 Lumiere for Windows
 ===================
