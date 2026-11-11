@@ -76,7 +76,10 @@ impl Shortcut {
             parts.push(match self.key {
                 Key::Char(c) => c.to_uppercase().to_string(),
                 Key::Return => "Enter".to_owned(),
-                Key::Delete => "Delete / Backspace".to_owned(),
+                // The forward Delete key is the trash key on Windows and
+                // Linux (the Explorer convention); plain Backspace is
+                // "up one level" and is bound there, not to trash.
+                Key::Delete => "Delete".to_owned(),
             });
             return parts.join("+");
         }
@@ -252,7 +255,7 @@ mod tests {
         );
         assert_eq!(
             Shortcut::plain(Key::Delete).display_for_macos(false),
-            "Delete / Backspace"
+            "Delete"
         );
         assert_eq!(
             Shortcut::plain(Key::Return).display_for_macos(false),

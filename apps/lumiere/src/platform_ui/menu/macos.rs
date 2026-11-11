@@ -162,6 +162,20 @@ fn build(
         holder.setTitle(&NSString::from_str(title));
         let submenu = root_menu(mtm);
         add_items(&submenu, items, mtm, target, tags);
+        if title == "File" {
+            // The standard `⌘W` close, which AppKit does not install on its
+            // own: the shared description is platform-neutral, so the item
+            // lands here, at the end of File, the way a single-window app's
+            // does.
+            submenu.addItem(&NSMenuItem::separatorItem(mtm));
+            submenu.addItem(&standard_item(
+                &NSString::from_str("Close"),
+                sel!(performClose:),
+                "w",
+                NSEventModifierFlags::Command,
+                mtm,
+            ));
+        }
         holder.setSubmenu(Some(&submenu));
         main.addItem(&holder);
     }

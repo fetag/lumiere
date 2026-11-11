@@ -1482,12 +1482,26 @@ fn egui_key_for_char(c: char) -> Option<egui::Key> {
 
 /// The egui keys a menu shortcut can arrive as. macOS draws backspace as
 /// `\u{232B}`, which winit reports as `Key::Backspace`; `Key::Delete` is the
-/// forward delete an external keyboard sends.
+/// forward delete an external keyboard sends. (The numeric keypad's Enter,
+/// `+` and `-` arrive normalized as `Enter`/`Minus`/`Plus` — egui-winit maps
+/// the winit numpad codes onto the main-row keys — so there is nothing
+/// numpad-specific to match here.)
 fn egui_keys(key: Key) -> Vec<egui::Key> {
     match key {
         Key::Char(c) => egui_key_for_char(c).into_iter().collect(),
         Key::Return => vec![egui::Key::Enter],
-        Key::Delete => vec![egui::Key::Backspace, egui::Key::Delete],
+        Key::Delete => {
+            if cfg!(target_os = "macos") {
+                // The laptop's single key is Backspace; an external
+                // keyboard's forward delete gets the same action.
+                vec![egui::Key::Backspace, egui::Key::Delete]
+            } else {
+                // The forward Delete key is the trash key, the Explorer
+                // convention; `handle_keys` gives plain Backspace "up one
+                // level" on these platforms instead.
+                vec![egui::Key::Delete]
+            }
+        }
     }
 }
 

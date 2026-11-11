@@ -151,6 +151,22 @@ impl App {
             ),
         ];
 
+        // Plain Return is claimed by whatever owns the keyboard: a text
+        // field confirms it, a focused grid cell or sidebar row opens it.
+        // While any of those has the keyboard the menu must not also claim
+        // the key, or the app-level map opens the viewer instead of the
+        // focused entry.
+        let view_image =
+            if self.text_focused || self.grid_focus.is_some() || self.sidebar_focus.is_some() {
+                Item::command("View Image", Action::OpenViewer)
+            } else {
+                Item::key(
+                    "View Image",
+                    Action::OpenViewer,
+                    Shortcut::plain(Key::Return),
+                )
+            };
+
         let go = vec![
             Item::key(
                 "Up One Level",
@@ -173,12 +189,7 @@ impl App {
             Item::command("Next Image", Action::NextImage),
             Item::command("Last Image", Action::LastImage),
             Item::Separator,
-            self.key_item(
-                "View Image",
-                Action::OpenViewer,
-                Shortcut::plain(Key::Return),
-            )
-            .with_enabled(has_image),
+            view_image.with_enabled(has_image),
             Item::Command {
                 label: "Back to Browser".into(),
                 shortcut: None,

@@ -278,44 +278,87 @@ impl App {
     /// in-window fallback menu and the headless tests drive. Both paths read the
     /// same [`Shortcut`] values out of [`Self::menu_spec`], so the menu label and
     /// the working shortcut cannot disagree.
+    ///
+    /// A focused *text field* keeps the unmodified navigation keys for
+    /// itself: Home/End move the cursor, PageUp/PageDown scroll, the arrows
+    /// step it, `⌘⌫` deletes to the start of the line, and F2/Return/bare
+    /// letters are the field's own. `menu_spec` withdraws the menu shortcuts
+    /// that would collide with editing (`⌘A`, plain Delete, plain Return)
+    /// while a field is focused, so the rest of the map — `⌘O`, `⌘,`, … —
+    /// stays live even over a field, exactly like the native macOS menu
+    /// behaves. A focused grid cell or sidebar row keeps the map live too
+    /// (the in-window menu has to work after arrow-key navigation); the
+    /// one plain-key collision it has, Return, is avoided by `menu_spec`
+    /// withdrawing "View Image"'s shortcut while a cell or row has the
+    /// keyboard.
     pub(super) fn handle_keys(&mut self, ctx: &Context) {
-        if ctx.memory(|m| m.focused().is_some()) {
-            return;
-        }
+        let field = self.text_focused;
         let shortcuts = self.shortcuts();
         let mut actions: Vec<Action> = Vec::new();
         let viewer_mode = self.mode == Mode::Viewer;
         ctx.input_mut(|i| {
-            if viewer_mode {
-                for key in [
-                    egui::Key::Space,
-                    egui::Key::ArrowRight,
-                    egui::Key::ArrowDown,
-                ] {
-                    if i.consume_key(egui::Modifiers::NONE, key) {
+            if !field {
+                if viewer_mode {
+                    for key in [
+                        egui::Key::Space,
+                        egui::Key::ArrowRight,
+                        egui::Key::ArrowDown,
+                    ] {
+                        if i.consume_key(egui::Modifiers::NONE, key) {
+                            actions.push(Action::NextImage);
+                        }
+                    }
+                    // Backspace is Move to Trash (the menu shortcut), not
+                    // "previous".
+                    for key in [egui::Key::ArrowLeft, egui::Key::ArrowUp] {
+                        if i.consume_key(egui::Modifiers::NONE, key) {
+                            actions.push(Action::PrevImage);
+                        }
+                    }
+                } else {
+                    if i.consume_key(egui::Modifiers::NONE, egui::Key::PageDown) {
                         actions.push(Action::NextImage);
                     }
-                }
-                // Backspace is Move to Trash (the menu shortcut), not "previous".
-                for key in [egui::Key::ArrowLeft, egui::Key::ArrowUp] {
-                    if i.consume_key(egui::Modifiers::NONE, key) {
+                    if i.consume_key(egui::Modifiers::NONE, egui::Key::PageUp) {
                         actions.push(Action::PrevImage);
                     }
                 }
-            } else {
-                if i.consume_key(egui::Modifiers::NONE, egui::Key::PageDown) {
-                    actions.push(Action::NextImage);
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::Home) {
+                    actions.push(Action::FirstImage);
                 }
-                if i.consume_key(egui::Modifiers::NONE, egui::Key::PageUp) {
-                    actions.push(Action::PrevImage);
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::End) {
+                    actions.push(Action::LastImage);
+                }
+                // `⌘⌫` still moves to the Trash, as before the bare key did.
+                for key in [egui::Key::Backspace, egui::Key::Delete] {
+                    if i.consume_key(egui::Modifiers::COMMAND, key) {
+                        actions.push(Action::MoveToTrash);
+                    }
+                }
+
+                // On Windows and Linux the plain Backspace key walks up one
+                // level (the Explorer convention); the trash owns the forward
+                // Delete key there, and its menu shortcut maps to that key
+                // only.
+                #[cfg(not(target_os = "macos"))]
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace) {
+                    actions.push(Action::UpFolder);
                 }
             }
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::Home) {
-                actions.push(Action::FirstImage);
+
+            // Menu-declared shortcuts, most specific modifier set first. They
+            // are tried even while a field is focused: the ones that collide
+            // with editing were withdrawn from the list by `menu_spec`, and
+            // the remainder do not clash with a text field's own keys.
+            for (shortcut, action) in shortcuts {
+                if consume_menu_shortcut(i, shortcut) {
+                    actions.push(action);
+                }
             }
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::End) {
-                actions.push(Action::LastImage);
-            }
+
+            // Escape answers to the dialog stack even while a dialog's own
+            // field holds the keyboard: ⎋ cancels the rename, the transfer
+            // and the open-folder dialogs the way the native ones do.
             if i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
                 if self.confirm_trash.is_some()
                     || self.rename_target.is_some()
@@ -339,41 +382,34 @@ impl App {
                 }
             }
 
-            // `⌘⌫` still moves to the Trash, as before the bare key did.
-            for key in [egui::Key::Backspace, egui::Key::Delete] {
-                if i.consume_key(egui::Modifiers::COMMAND, key) {
-                    actions.push(Action::MoveToTrash);
+            if !field {
+                // F2 renames as well; the menu advertises the `⌥⌘R` spelling
+                // because function keys are not how a macOS user is meant to
+                // find this.
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::F2) {
+                    actions.push(Action::Rename);
                 }
-            }
 
-            // Menu-declared shortcuts, most specific modifier set first.
-            for (shortcut, action) in shortcuts {
-                if consume_menu_shortcut(i, shortcut) {
-                    actions.push(action);
+                // Viewer-only single keys, kept because they are handy and
+                // clash with nothing; they must not run in the browser, where
+                // they would quietly drag the next picture's zoom away from
+                // "fit".
+                if viewer_mode {
+                    if i.consume_key(egui::Modifiers::NONE, egui::Key::Plus)
+                        || i.consume_key(egui::Modifiers::SHIFT, egui::Key::Equals)
+                    {
+                        actions.push(Action::ZoomIn);
+                    }
+                    if i.consume_key(egui::Modifiers::NONE, egui::Key::Minus) {
+                        actions.push(Action::ZoomOut);
+                    }
+                    if i.consume_key(egui::Modifiers::NONE, egui::Key::F) {
+                        actions.push(Action::FitWindow);
+                    }
+                    if i.consume_key(egui::Modifiers::NONE, egui::Key::Num1) {
+                        actions.push(Action::ActualSize);
+                    }
                 }
-            }
-
-            // F2 renames as well; the menu advertises the `⌥⌘R` spelling because
-            // function keys are not how a macOS user is meant to find this.
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::F2) {
-                actions.push(Action::Rename);
-            }
-
-            // Viewer-only single keys, kept because they are handy and clash
-            // with nothing.
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::Plus)
-                || i.consume_key(egui::Modifiers::SHIFT, egui::Key::Equals)
-            {
-                actions.push(Action::ZoomIn);
-            }
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::Minus) {
-                actions.push(Action::ZoomOut);
-            }
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::F) {
-                actions.push(Action::FitWindow);
-            }
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::Num1) {
-                actions.push(Action::ActualSize);
             }
         });
         for action in actions {

@@ -1116,8 +1116,8 @@ pub fn view(app: &mut App, ui: &mut Ui, path: &Path) {
         dirty = true;
     }
     // WASD 鍵盤旋轉（持續按下時連續 orbit；方向與滑鼠拖曳一致：
-    // A/D = yaw 左/右、W/S = pitch 上/下）。
-    if app.model_player.is_ready() {
+    // A/D = yaw 左/右、W/S = pitch 上/下）。文字欄位擁有鍵盤時不搶字。
+    if app.model_player.is_ready() && !app.text_focused {
         let (kw, ka, ks, kd) = ui.ctx().input(|i| {
             (
                 i.key_down(egui::Key::W),

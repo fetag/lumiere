@@ -432,7 +432,7 @@ fn menu_shortcuts_are_the_keyboard_map() {
     let mut app = App::build(&ctx, Some(dir.clone()));
     let _ = ctx.run(raw_input(), |ctx| app.draw(ctx));
 
-    let cases: &[(&[&str], egui::Key, egui::Modifiers)] = &[
+    let cases: Vec<(&[&str], egui::Key, egui::Modifiers)> = vec![
         (
             &["Edit", "Rotate Left"],
             egui::Key::L,
@@ -443,9 +443,14 @@ fn menu_shortcuts_are_the_keyboard_map() {
             egui::Key::R,
             egui::Modifiers::SHIFT | egui::Modifiers::COMMAND,
         ),
+        // The trash' plain key is Backspace on macOS but the forward Delete
+        // key on Windows and Linux; press whichever spelling the platform
+        // binds, and check it against the same mapping.
         (
             &["File", "Move to Trash"],
-            egui::Key::Backspace,
+            *egui_keys(Key::Delete)
+                .first()
+                .expect("the trash key has a spelling"),
             egui::Modifiers::NONE,
         ),
         (
@@ -468,9 +473,9 @@ fn menu_shortcuts_are_the_keyboard_map() {
         );
         let mut input = raw_input();
         input.events.push(egui::Event::Key {
-            key: *key,
+            key,
             pressed: true,
-            modifiers: *modifiers,
+            modifiers,
             physical_key: None,
             repeat: false,
         });
@@ -493,11 +498,11 @@ fn menu_shortcuts_are_the_keyboard_map() {
             .expect("the shortcut is not declared in the menu bar");
         assert_eq!(
             egui_modifiers(declared.1),
-            *modifiers,
+            modifiers,
             "{path:?} is advertised with different modifiers"
         );
         assert!(
-            egui_keys(declared.0).contains(key),
+            egui_keys(declared.0).contains(&key),
             "{path:?} is advertised on a different key"
         );
     }
@@ -692,6 +697,89 @@ fn arrow_keys_operate_the_sidebar() {
     // Enter navigates to the focused row: the first row is Home.
     frame(&mut app, vec![key(egui::Key::Enter)]);
     assert_eq!(app.dir, dirs::home_dir().unwrap());
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Menu shortcuts stay live while the address field holds the keyboard: the
+/// in-window map must make the same deal the native macOS menu makes, where
+/// `⌘O` opens a folder mid-typing while `⌘A` stays with the field.
+#[test]
+fn shortcuts_survive_a_focused_text_field() {
+    let dir = fixture_dir("fieldshortcuts");
+    let ctx = egui::Context::default();
+    let mut app = App::build(&ctx, Some(dir.clone()));
+
+    let mut time = 1.0;
+    let mut frame = |app: &mut App, events: Vec<egui::Event>| {
+        time += 0.4;
+        let mut input = raw_input();
+        input.time = Some(time);
+        input.events = events;
+        ctx.run(input, |ctx| app.draw(ctx))
+    };
+    let key = |key: egui::Key, modifiers: egui::Modifiers| egui::Event::Key {
+        key,
+        pressed: true,
+        modifiers,
+        repeat: false,
+        physical_key: None,
+    };
+
+    frame(&mut app, vec![]);
+    // Hand the keyboard to the address field, as a click would.
+    let field = app
+        .text_field_ids
+        .first()
+        .copied()
+        .expect("the browser lays out a text field");
+    ctx.memory_mut(|m| m.request_focus(field));
+    frame(&mut app, vec![]);
+    assert!(app.text_focused, "the field should own the keyboard");
+
+    // `⌘A` stays with the field: Select All must not fire.
+    frame(&mut app, vec![key(egui::Key::A, egui::Modifiers::COMMAND)]);
+    assert!(app.multi.is_empty(), "a focused field keeps ⌘A for itself");
+
+    // `⌘O` still opens the folder browser over the field.
+    frame(&mut app, vec![key(egui::Key::O, egui::Modifiers::COMMAND)]);
+    assert!(app.explore_open, "⌘O must work while the field is focused");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// On Windows and Linux the plain Backspace key walks up one level, the
+/// Explorer convention: the trash owns the forward Delete key instead.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn backspace_walks_up_one_level() {
+    let dir = fixture_dir("backspaceup");
+    let child = dir.join("nested");
+    let ctx = egui::Context::default();
+    let mut app = App::build(&ctx, Some(child.clone()));
+
+    let mut time = 1.0;
+    let mut frame = |app: &mut App, events: Vec<egui::Event>| {
+        time += 0.4;
+        let mut input = raw_input();
+        input.time = Some(time);
+        input.events = events;
+        ctx.run(input, |ctx| app.draw(ctx))
+    };
+
+    frame(&mut app, vec![]);
+    frame(
+        &mut app,
+        vec![egui::Event::Key {
+            key: egui::Key::Backspace,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+            repeat: false,
+            physical_key: None,
+        }],
+    );
+    assert_eq!(app.dir, dir, "Backspace must walk up one level");
+    assert!(app.confirm_trash.is_none(), "…and must not offer the trash");
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
