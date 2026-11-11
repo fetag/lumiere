@@ -104,10 +104,6 @@ cp assets/Lumiere.icns "$APP/Contents/Resources/AppIcon.icns"
 # The same artwork for the fallback (non-mac) about panel.
 cp assets/AppIcon.png "$APP/Contents/Resources/AppIcon.png"
 
-# The native macOS About panel uses a close-cropped variant in its fixed icon
-# view; this intentionally does not affect the Dock/Finder .icns artwork.
-cp assets/AboutIcon.png "$APP/Contents/Resources/AboutIcon.png"
-
 # Package libmpv and its IINA-provided dylib dependencies beside the app.
 python3 scripts/bundle-macos-mpv.py "$LUMIERE_MPV_FRAMEWORKS" "$APP/Contents/Frameworks"
 install_name_tool -add_rpath '@executable_path/../Frameworks' "$APP/Contents/MacOS/Lumiere"

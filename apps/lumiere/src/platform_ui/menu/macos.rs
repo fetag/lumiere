@@ -8,7 +8,6 @@
 //! [`App::menu_spec`].
 
 use std::cell::RefCell;
-use std::path::PathBuf;
 use std::sync::Mutex;
 
 use objc2::rc::Retained;
@@ -18,7 +17,7 @@ use objc2_app_kit::{
     NSAboutPanelOptionApplicationIcon, NSApplication, NSControlStateValue, NSControlStateValueOff,
     NSControlStateValueOn, NSEventModifierFlags, NSImage, NSMenu, NSMenuItem,
 };
-use objc2_foundation::{NSBundle, NSCopying, NSDictionary, NSInteger, NSString};
+use objc2_foundation::{NSCopying, NSData, NSDictionary, NSInteger, NSString};
 
 use crate::app::{Action, APP_TITLE};
 use crate::menu::{Item, Key, MenuBar, Shortcut};
@@ -216,9 +215,10 @@ fn add_items(
                 marked,
             } => {
                 if *action == Action::About {
-                    // Keep the platform About panel, but provide a dedicated
-                    // close-cropped image for its fixed-size icon view. The
-                    // Dock/Finder bundle icon remains untouched.
+                    // Keep the platform About panel, but give it the artwork
+                    // explicitly: a bare executable (cargo run) has no
+                    // bundle icon, and the standard panel's fallback for
+                    // that is a generic folder icon.
                     let item = standard_item(
                         &NSString::from_str(label),
                         sel!(aboutItemInvoked:),
@@ -354,17 +354,20 @@ fn add_standard_app_items(
     add_items(menu, &[quit], mtm, target, tags);
 }
 
-/// Opens the standard macOS About panel with a larger, About-only artwork.
-/// The normal application icon is deliberately left to Info.plist so Dock and
-/// Finder continue using the existing, separately tuned `.icns` asset.
+/// The panel's artwork, compiled into the binary: a bare `cargo run`
+/// executable has no bundle resources to look it up from, and the panel
+/// would otherwise fall back to a generic folder icon.
+const ABOUT_ICON: &[u8] = include_bytes!("../../../../../assets/AboutIcon.png");
+
+/// Opens the standard macOS About panel with the app artwork. The regular
+/// application icon is deliberately left to Info.plist so Dock and Finder
+/// continue using the existing `.icns` asset.
 fn show_about_panel(mtm: MainThreadMarker) {
     let app = NSApplication::sharedApplication(mtm);
-    let Some(path) = about_icon_path() else {
-        app.orderFrontStandardAboutPanel(None);
-        return;
+    let data = unsafe {
+        NSData::dataWithBytes_length(ABOUT_ICON.as_ptr().cast(), ABOUT_ICON.len() as _)
     };
-    let path = NSString::from_str(&path.to_string_lossy());
-    let Some(icon) = NSImage::initWithContentsOfFile(mtm.alloc(), &path) else {
+    let Some(icon) = NSImage::initWithData(mtm.alloc(), &data) else {
         app.orderFrontStandardAboutPanel(None);
         return;
     };
@@ -373,18 +376,6 @@ fn show_about_panel(mtm: MainThreadMarker) {
         unsafe { ProtocolObject::from_ref(NSAboutPanelOptionApplicationIcon) };
     let options = unsafe { NSDictionary::dictionaryWithObject_forKey(icon_object, key) };
     unsafe { app.orderFrontStandardAboutPanelWithOptions(&options) };
-}
-
-/// The bundle resource is available in releases; the source-tree path keeps
-/// `cargo run` usable during development.
-fn about_icon_path() -> Option<PathBuf> {
-    let name = NSString::from_str("AboutIcon");
-    let ext = NSString::from_str("png");
-    if let Some(path) = NSBundle::mainBundle().pathForResource_ofType(Some(&name), Some(&ext)) {
-        return Some(PathBuf::from(path.to_string()));
-    }
-    let dev = PathBuf::from("assets/AboutIcon.png");
-    dev.is_file().then_some(dev)
 }
 
 fn standard_item(
