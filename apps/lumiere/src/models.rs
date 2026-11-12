@@ -5,8 +5,8 @@
 //! 阻塞等待渲染指令；UI thread 持有 camera 狀態與 texture，orbit/zoom 時
 //! 把最新 camera 送過去、只渲染最新一幀（不跑 60fps 迴圈）。
 //!
-//! 離屏渲染與 readback 路徑已於 Phase 0 spike（`experiments/glb-spike/`）
-//! 在 Metal / D3D12 / Vulkan 三平台驗證。wgpu 27 關鍵限制照 spike 記錄：
+//! 離屏渲染與 readback 路徑已於 Phase 0 spike 在 Metal / D3D12 / Vulkan
+//! 三平台驗證（spike 代碼已從 repo 移除）。wgpu 27 關鍵限制：
 //! - uniform 走 bind group（Metal 無 PUSH_CONSTANT capability）。
 //! - readback：先 submit copy（staging 必須 Idle）、poll、再 map/read/unmap。
 
