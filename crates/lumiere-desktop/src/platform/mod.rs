@@ -1,4 +1,5 @@
 pub mod alerts;
+pub mod filetypes;
 pub mod icon;
 #[cfg(target_os = "macos")]
 pub(crate) mod image_io;

@@ -2114,6 +2114,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
  "objc2-core-graphics",
+ "objc2-core-services",
  "objc2-foundation 0.3.2",
  "objc2-image-io",
  "resvg 0.49.0",

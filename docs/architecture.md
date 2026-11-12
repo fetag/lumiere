@@ -97,6 +97,13 @@ native lookups are skipped. **Rule: if you add a native call that a test build
 would exercise, give it a `test-support` fallback** — real AppKit work from
 many parallel test threads is how flaky timeouts are born.
 
+The `platform::filetypes` service also owns the OS default-handler bindings
+behind Settings ▸ File Types: LaunchServices role handlers on macOS, `HKCU`
+registry entries on Windows (portable — no admin, no `HKLM` writes), and the
+per-user `mimeapps.list` / desktop file on Linux. The OS is the source of
+truth — the checkboxes are re-read from it on every open of the Settings
+window and are never persisted to the state file.
+
 ## Adding an image format
 
 1. Add the extension to `SUPPORTED_EXTS` in `crates/lumiere-desktop/src/imaging.rs`.

@@ -9,6 +9,20 @@ impl App {
         let mut clear_cache = false;
         let mut rescan = false;
         let mut open = self.settings_open;
+        // The OS is the source of truth for the file type bindings, so the
+        // checkboxes are (re)read from it every time the window opens; the
+        // map is dropped again on close so the next open starts fresh.
+        if self.file_type_bindings.is_none() {
+            let bound = filetypes::bound_groups();
+            self.file_type_bindings = Some(
+                filetypes::groups()
+                    .iter()
+                    .filter(|group| group.available())
+                    .map(|group| (group.id, bound.contains(group.id)))
+                    .collect(),
+            );
+        }
+        let mut pending: Vec<(&'static str, bool)> = Vec::new();
         egui::Window::new("Settings")
             .open(&mut open)
             .collapsible(false)
@@ -101,8 +115,71 @@ impl App {
                             .color(ui.visuals().weak_text_color()),
                     );
                 });
+
+                Self::settings_group(ui, "File Types", |ui| {
+                    let bindings = self
+                        .file_type_bindings
+                        .as_mut()
+                        .expect("loaded before the window was shown");
+                    // Rows the OS can actually bind on this platform; the
+                    // rest of the table (e.g. RAW on macOS, where the types
+                    // have no system UTI) is hidden rather than dead.
+                    let available: Vec<_> = filetypes::groups()
+                        .iter()
+                        .filter(|group| group.available())
+                        .collect();
+                    for (index, group) in available.iter().enumerate() {
+                        let on = bindings
+                            .get_mut(group.id)
+                            .expect("every available group has a checkbox");
+                        ui.horizontal(|ui| {
+                            ui.label(group.label);
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let response = theme::settings_switch(ui, on);
+                                    theme::note_rect(ui, group.label, response.rect);
+                                    if response.changed() {
+                                        pending.push((group.id, *on));
+                                    }
+                                },
+                            );
+                        });
+                        if index + 1 < available.len() {
+                            ui.separator();
+                        }
+                    }
+                });
             });
         self.settings_open = open;
+
+        // On macOS the change sits pending until the user confirms it in the
+        // system prompt; say so, or the toggle looks like it did nothing
+        // until the old app keeps opening the files.
+        #[cfg(all(target_os = "macos", not(test)))]
+        let prompt_expected = !pending.is_empty();
+
+        // Apply the toggles to the OS; on failure roll the checkbox back so
+        // the UI never disagrees with the system state.
+        for (id, on) in pending {
+            if let Err(message) = filetypes::set_binding(id, on) {
+                if let Some(slot) = self
+                    .file_type_bindings
+                    .as_mut()
+                    .and_then(|map| map.get_mut(id))
+                {
+                    *slot = !on;
+                }
+                self.notify(format!("File types: {message}"));
+            }
+        }
+        #[cfg(all(target_os = "macos", not(test)))]
+        if prompt_expected {
+            self.notify("macOS will ask you to confirm the new default app");
+        }
+        if !open {
+            self.file_type_bindings = None;
+        }
 
         if clear_cache {
             let removed = imaging::clear_thumbnail_cache().unwrap_or(0);

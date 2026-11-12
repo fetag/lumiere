@@ -18,7 +18,7 @@ mod theme;
 mod video;
 mod viewer;
 
-use lumiere_desktop::platform::{alerts, window};
+use lumiere_desktop::platform::{alerts, filetypes, window};
 use lumiere_desktop::{file_ops, fsmodel, imaging, loader, state};
 use platform_ui::{dnd, macos_open, menu};
 

@@ -1,7 +1,7 @@
 //! Application state, window chrome (menu bar, toolbars, status bar) and the
 //! command dispatch used by menus, toolbar buttons and the keyboard alike.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use egui::{Context, TextureHandle, TextureOptions, Vec2};
 
 use crate::file_ops::{self, Outcome as OpOutcome};
+use crate::filetypes;
 use crate::fsmodel::{self, Entry, SortKey};
 use crate::imaging::{self, Info};
 use crate::loader::{Kind, Loader, Request};
@@ -140,6 +141,11 @@ pub struct App {
     pub fullscreen: bool,
 
     pub settings_open: bool,
+    /// The OS default-handler bindings, per file type group, while the
+    /// Settings window is open (`None` while it is closed). The OS is the
+    /// source of truth, so the map is re-read from it on every open and
+    /// never persisted to the state file.
+    pub file_type_bindings: Option<BTreeMap<&'static str, bool>>,
     /// Whether an egui text edit owns the keyboard right now.
     pub text_focused: bool,
     /// The text fields laid out during the current frame; `text_focused` is
@@ -408,6 +414,7 @@ impl App {
             swipe_last: Instant::now(),
             fullscreen: false,
             settings_open: false,
+            file_type_bindings: None,
             text_focused: false,
             text_field_ids: Vec::new(),
             about_open: false,

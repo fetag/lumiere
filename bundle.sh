@@ -86,6 +86,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
                 <string>com.microsoft.bmp</string>
                 <string>public.tiff</string>
                 <string>org.webmproject.webp</string>
+                <string>public.heic</string>
+                <string>public.heif</string>
+                <string>public.avif</string>
                 <string>com.microsoft.ico</string>
                 <string>public.pnm</string>
                 <string>org.w3c.svg</string>

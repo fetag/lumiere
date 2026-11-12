@@ -76,10 +76,16 @@ objc2-core-graphics = { version = "0.3.2", features = [
     "CGImage",
     "CGColorSpace",
 ] }
+objc2-core-services = { version = "0.3.2", features = [
+    "objc2",
+    "LSInfo",
+    "LSConstants",
+] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "std",
     "NSAppleEventDescriptor",
     "NSAppleEventManager",
+    "NSBundle",
     "objc2-core-services",
     "NSArray",
     "NSEnumerator",
@@ -97,4 +103,9 @@ x11-dl = "2.21"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 rfd = { version = "0.15", default-features = false }
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Registry",
+] }

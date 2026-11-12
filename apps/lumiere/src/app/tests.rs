@@ -2207,6 +2207,85 @@ fn menu_shortcuts_open_dialogs() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+fn open_settings(ctx: &Context, app: &mut App, time: &mut f64) {
+    let mut input = raw_input();
+    input.events.push(egui::Event::Key {
+        key: egui::Key::Comma,
+        pressed: true,
+        modifiers: egui::Modifiers::COMMAND,
+        physical_key: None,
+        repeat: false,
+    });
+    let _ = ctx.run(input, |ctx| app.draw(ctx));
+    settle(ctx, app, time);
+}
+
+#[test]
+fn file_types_settings_rows_are_listed() {
+    let dir = fixture_dir("filetypes_rows");
+    let ctx = egui::Context::default();
+    let mut app = App::build(&ctx, Some(dir.clone()));
+    let mut time = 1.0;
+
+    open_settings(&ctx, &mut app, &mut time);
+    assert!(app.settings_open);
+    assert!(app.file_type_bindings.is_some());
+
+    time += 0.4;
+    let mut input = raw_input();
+    input.time = Some(time);
+    let output = ctx.run(input, |ctx| app.draw(ctx));
+    let painted = painted_text(&output.shapes);
+    assert!(
+        painted.contains("File Types"),
+        "the section header is missing"
+    );
+    assert!(painted.contains("JPEG"));
+    assert!(painted.contains("PNG"));
+    // RAW has no system UTI on macOS, so the row is hidden there but shown
+    // on the platforms that bind it through MIME types.
+    assert_eq!(painted.contains("Camera RAW"), !cfg!(target_os = "macos"));
+    assert!(theme::rect_of(&ctx, "JPEG").is_some());
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn toggling_a_file_type_row_applies_the_os_binding() {
+    let dir = fixture_dir("filetypes_toggle");
+    let ctx = egui::Context::default();
+    let mut app = App::build(&ctx, Some(dir.clone()));
+    let mut time = 1.0;
+
+    open_settings(&ctx, &mut app, &mut time);
+
+    // The test build records the OS call instead of making it.
+    assert!(click_label(&ctx, &mut app, "JPEG", &mut time));
+    assert_eq!(
+        filetypes::test_bindings_drain(),
+        vec![("jpeg".to_owned(), true)]
+    );
+    assert!(app.notice.is_none());
+    assert_eq!(
+        app.file_type_bindings.as_ref().unwrap().get("jpeg"),
+        Some(&true)
+    );
+
+    // And back off again.
+    assert!(click_label(&ctx, &mut app, "JPEG", &mut time));
+    assert_eq!(
+        filetypes::test_bindings_drain(),
+        vec![("jpeg".to_owned(), false)]
+    );
+    assert!(app.notice.is_none());
+    assert_eq!(
+        app.file_type_bindings.as_ref().unwrap().get("jpeg"),
+        Some(&false)
+    );
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn rename_updates_disk_and_selection() {
     let dir = fixture_dir("rename");
