@@ -33,7 +33,7 @@ impl App {
                 ui.set_width(390.0);
                 ui.add_space(2.0);
 
-                Self::settings_group(ui, "Browser", |ui| {
+                Self::settings_group(ui, "Browser", None, |ui| {
                     ui.horizontal(|ui| {
                         ui.label("Thumbnail size");
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -58,7 +58,7 @@ impl App {
                     });
                 });
 
-                Self::settings_group(ui, "Viewer", |ui| {
+                Self::settings_group(ui, "Viewer", None, |ui| {
                     ui.horizontal(|ui| {
                         ui.label("Use black background");
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -70,7 +70,7 @@ impl App {
                     });
                 });
 
-                Self::settings_group(ui, "Slideshow", |ui| {
+                Self::settings_group(ui, "Slideshow", None, |ui| {
                     ui.horizontal(|ui| {
                         ui.label("Change image every");
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -99,7 +99,7 @@ impl App {
                     });
                 });
 
-                Self::settings_group(ui, "Storage", |ui| {
+                Self::settings_group(ui, "Storage", None, |ui| {
                     ui.horizontal(|ui| {
                         ui.label("Thumbnail cache");
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -116,7 +116,12 @@ impl App {
                     );
                 });
 
-                Self::settings_group(ui, "File Types", |ui| {
+                // 12–15 rows depending on platform — more than a short
+                // display fits; cap the visible rows so the card scrolls
+                // instead of pushing the window off screen.
+                let row_height =
+                    ui.spacing().interact_size.y + 2.0 * ui.spacing().item_spacing.y + 1.0;
+                Self::settings_group(ui, "File Types", Some(6.0 * row_height), |ui| {
                     let bindings = self
                         .file_type_bindings
                         .as_mut()
@@ -195,9 +200,12 @@ impl App {
 
     /// An inset preference group: a compact approximation of the grouped
     /// rows used by macOS Settings, with controls aligned in a quiet card.
+    /// With a `max_height`, long groups scroll inside the card instead of
+    /// growing the window off small displays.
     pub(super) fn settings_group(
         ui: &mut egui::Ui,
         title: &str,
+        max_height: Option<f32>,
         add_contents: impl FnOnce(&mut egui::Ui),
     ) {
         ui.label(
@@ -210,7 +218,15 @@ impl App {
             .fill(ui.visuals().widgets.inactive.weak_bg_fill)
             .corner_radius(8.0)
             .inner_margin(egui::Margin::symmetric(12, 9))
-            .show(ui, add_contents);
+            .show(ui, |ui| {
+                if let Some(max_height) = max_height {
+                    egui::ScrollArea::vertical()
+                        .max_height(max_height)
+                        .show(ui, add_contents);
+                } else {
+                    ui.scope(add_contents);
+                }
+            });
         ui.add_space(8.0);
     }
 
