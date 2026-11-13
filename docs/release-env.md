@@ -51,11 +51,13 @@ video feature 經 `mpv-engine` crate link libmpv；Windows、macOS 使用本地�
   ```
 - `[已清掉]` 0.1.6 release 產物（`lumiere-v0.1.6-macos-arm64.zip`）原在
   `dist/release-v0.1.6/`，已隨 `dist/` 清理不存在；0.1.7 建置不依賴它。
-- `[已實測]` 該目錄只有 `libmpv.2.dylib`，linker 需要無版本名稱：
+- `[已實測]` 該目錄只有 `libmpv.2.dylib`，linker 需要無版本名稱。symlink 就位後
+  `./bundle.sh` 可直接執行（預設值即指向 `dist/` 的這兩處；mpv 放在別處才需要以
+  `MPV_LIBRARY_DIR` / `LUMIERE_MPV_FRAMEWORKS` 覆寫）：
   ```sh
   mkdir -p dist/mpv-link
   ln -sf ../Lumiere-video-test.app/Contents/Frameworks/libmpv.2.dylib dist/mpv-link/libmpv.dylib
-  MPV_LIBRARY_DIR=dist/mpv-link LUMIERE_MPV_FRAMEWORKS=dist/Lumiere-video-test.app/Contents/Frameworks ./bundle.sh
+  ./bundle.sh
   ```
 - `third-party/iina-1.5.0/` 只有授權檔（LICENSE/Credits/versions.env），**不是**
   Frameworks 來源，別搞錯。

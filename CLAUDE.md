@@ -19,7 +19,7 @@ cargo test --locked --workspace        # full headless UI suite; runs on macOS
 - Single test: `cargo test --locked -p lumiere <name>` (or `-p lumiere-desktop` / `-p lumiere-core`).
 - Release build: `cargo build --locked --release -p lumiere`.
 - Bundling is always `--features video,models --locked`:
-  - macOS: `MPV_LIBRARY_DIR=<dir> LUMIERE_MPV_FRAMEWORKS=<dir> ./bundle.sh`
+  - macOS: `./bundle.sh` (mpv dylibs are vendored in `dist/`; `MPV_LIBRARY_DIR` / `LUMIERE_MPV_FRAMEWORKS` override the defaults)
   - Linux: `./bundle-linux.sh` (+ `-deb`, `-appimage`); package smoke test: `./test-linux-packages.sh dist`
   - Windows: `$env:MPV_LIBRARY_DIR=<dir>; .\bundle-windows.ps1`
 - The `video` feature links libmpv via `mpv-engine = "=0.2.1"`. `MPV_LIBRARY_DIR` must name a libmpv *without* the version suffix (`libmpv.dylib` / `libmpv.so` / `mpv.lib`); on macOS the real dylib is versioned (`libmpv.2.dylib`), so a symlink dir is needed. Per-machine mpv locations and the source-sync workflow (commit → James pushes to GitLab → pull on the .120/.123 build machines) are documented in `docs/release-env.md` — read it before release work instead of guessing paths.

@@ -12,8 +12,16 @@ case "$ARCH" in
 esac
 mkdir -p "$OUT"
 
-: "${MPV_LIBRARY_DIR:?Set MPV_LIBRARY_DIR to the libmpv link directory}"
-: "${LUMIERE_MPV_FRAMEWORKS:?Set LUMIERE_MPV_FRAMEWORKS to the IINA Frameworks directory}"
+# mpv dylibs are vendored in dist/ (gitignored — restore per
+# docs/release-env.md if missing). The env vars override for machines
+# that keep mpv elsewhere.
+export MPV_LIBRARY_DIR="${MPV_LIBRARY_DIR:-dist/mpv-link}"
+export LUMIERE_MPV_FRAMEWORKS="${LUMIERE_MPV_FRAMEWORKS:-dist/Lumiere-video-test.app/Contents/Frameworks}"
+if [ ! -e "$MPV_LIBRARY_DIR/libmpv.dylib" ] || [ ! -f "$LUMIERE_MPV_FRAMEWORKS/libmpv.2.dylib" ]; then
+    echo "libmpv not found under $MPV_LIBRARY_DIR / $LUMIERE_MPV_FRAMEWORKS." >&2
+    echo "Restore the vendored dylibs per docs/release-env.md (macOS section)." >&2
+    exit 1
+fi
 cargo build --release -p lumiere --locked --features video,models
 
 # Cargo.toml is the release-version authority. Keep the bundle metadata in
@@ -52,7 +60,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key>  <string>11.0</string>
     <key>NSHighResolutionCapable</key> <true/>
     <key>CFBundleIconFile</key>       <string>AppIcon</string>
-    <key>NSHumanReadableCopyright</key> <string>Copyright © 2026 fetag</string>
+    <key>NSHumanReadableCopyright</key> <string>By FETAG.NET</string>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
