@@ -48,6 +48,7 @@ Three crates, dependencies flow one way only: `apps/lumiere` → `crates/lumiere
 ## Conventions
 
 - Commit messages: English, imperative mood, one logical change per commit. No `Co-Authored-By` attribution lines.
+- **Confidentiality**: the repo is mirrored to public GitHub — never write machine-local or private detail (SSH key names/paths, credentials, build-machine internals) into tracked files; such operational detail goes in the agent's local memory instead. See `AGENTS.md`.
 - Bump `version` in the root `Cargo.toml` only for releases (bundle scripts read it from there).
 - `Cargo.lock` is committed; build commands use `--locked`. New dependencies must therefore come with a regenerated lockfile.
 - Docs mix English (README, CONTRIBUTING, docs/architecture.md) and 繁體中文 (docs/release-env.md); user-facing docs updates follow the language of the file being edited.
