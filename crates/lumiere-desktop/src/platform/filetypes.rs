@@ -890,7 +890,7 @@ fn linux_set_binding(group: &FileTypeGroup, on: bool) -> Result<(), String> {
     let mimes: Vec<&str> = GROUPS
         .iter()
         .filter(|candidate| bound.contains(candidate.id))
-        .flat_map(|candidate| candidate.mimes)
+        .flat_map(|candidate| candidate.mimes.iter().copied())
         .collect();
     if mimes.is_empty() {
         match std::fs::remove_file(&desktop_file) {
