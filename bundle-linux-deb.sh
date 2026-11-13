@@ -45,10 +45,14 @@ mkdir -p \
 # 連同 libmpv 的相依函式庫及授權資訊打包，避免不同發行版的 SONAME 不相容。
 sh scripts/linux-video-appdir.sh "$PKGROOT/opt/lumiere"
 install -m 644 assets/AppIcon.png "$PKGROOT/opt/lumiere/usr/bin/AppIcon.png"
+# Relocatable like the portable and AppImage launchers: the package installs
+# under /opt/lumiere, but the launcher also works from an extracted copy,
+# which is how the package smoke test runs it without installing.
 cat > "$PKGROOT/opt/lumiere/lumiere" <<'LAUNCHER'
 #!/bin/sh
 export SDL_NO_SIGNAL_HANDLERS=1
-exec /opt/lumiere/usr/bin/lumiere "$@"
+HERE=$(CDPATH= cd -- "$(dirname -- "$(readlink -f "$0")")" && pwd)
+exec "$HERE/usr/bin/lumiere" "$@"
 LAUNCHER
 chmod 755 "$PKGROOT/opt/lumiere/lumiere"
 
