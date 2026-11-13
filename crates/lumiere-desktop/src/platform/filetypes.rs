@@ -478,7 +478,7 @@ fn exe_path() -> std::path::PathBuf {
 
 #[cfg(target_os = "windows")]
 fn windows_bound_groups() -> HashSet<&'static str> {
-    use windows_sys::Win32::Foundation::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
     GROUPS
         .iter()
         .filter(|group| group.available())
@@ -500,8 +500,7 @@ fn windows_bound_groups() -> HashSet<&'static str> {
 
 #[cfg(target_os = "windows")]
 fn windows_set_binding(group: &FileTypeGroup, on: bool) -> Result<(), String> {
-    use windows_sys::Win32::Foundation::HKEY_CURRENT_USER;
-    use windows_sys::Win32::Storage::FileSystem::KEY_WRITE;
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, KEY_WRITE};
     let exe = exe_path();
     let pid = progid(group.id);
     if on {
@@ -579,10 +578,11 @@ fn windows_set_binding(group: &FileTypeGroup, on: bool) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-fn read_registry_value(hive: windows_sys::Win32::Foundation::HKEY, subkey: &str) -> Option<String> {
-    use windows_sys::Win32::Foundation::HKEY;
-    use windows_sys::Win32::Storage::FileSystem::KEY_READ;
-    use windows_sys::Win32::System::Registry::{RegCloseKey, RegOpenKeyExW};
+fn read_registry_value(
+    hive: windows_sys::Win32::System::Registry::HKEY,
+    subkey: &str,
+) -> Option<String> {
+    use windows_sys::Win32::System::Registry::{RegCloseKey, RegOpenKeyExW, HKEY, KEY_READ};
     let mut hkey: HKEY = std::ptr::null_mut();
     // SAFETY: `subkey` is NUL-terminated wide text; the handle is closed on
     // every path below.
@@ -606,7 +606,7 @@ fn read_registry_value(hive: windows_sys::Win32::Foundation::HKEY, subkey: &str)
 }
 
 #[cfg(target_os = "windows")]
-fn query_default_string(hkey: windows_sys::Win32::Foundation::HKEY) -> Option<String> {
+fn query_default_string(hkey: windows_sys::Win32::System::Registry::HKEY) -> Option<String> {
     use windows_sys::Win32::System::Registry::{RegQueryValueExW, REG_SZ};
     // First pass: the value's size (including the trailing NUL).
     let mut size = 0u32;
@@ -616,8 +616,8 @@ fn query_default_string(hkey: windows_sys::Win32::Foundation::HKEY) -> Option<St
     let status = unsafe {
         RegQueryValueExW(
             hkey,
-            None,
-            None,
+            std::ptr::null(),
+            std::ptr::null(),
             &mut value_type,
             std::ptr::null_mut(),
             &mut size,
@@ -634,8 +634,8 @@ fn query_default_string(hkey: windows_sys::Win32::Foundation::HKEY) -> Option<St
     let status = unsafe {
         RegQueryValueExW(
             hkey,
-            None,
-            None,
+            std::ptr::null(),
+            std::ptr::null(),
             &mut value_type,
             buffer.as_mut_ptr(),
             &mut size,
@@ -655,13 +655,14 @@ fn query_default_string(hkey: windows_sys::Win32::Foundation::HKEY) -> Option<St
 
 #[cfg(target_os = "windows")]
 fn write_registry_value(
-    hive: windows_sys::Win32::Foundation::HKEY,
+    hive: windows_sys::Win32::System::Registry::HKEY,
     subkey: &str,
     value: Option<&str>,
 ) -> Result<(), String> {
-    use windows_sys::Win32::Storage::FileSystem::{KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ};
-    use windows_sys::Win32::System::Registry::{RegCloseKey, RegCreateKeyExW, RegSetValueExW};
-    let mut hkey: windows_sys::Win32::Foundation::HKEY = std::ptr::null_mut();
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegCreateKeyExW, KEY_WRITE, REG_OPTION_NON_VOLATILE,
+    };
+    let mut hkey: windows_sys::Win32::System::Registry::HKEY = std::ptr::null_mut();
     let mut disposition = 0u32;
     // SAFETY: `subkey` is a NUL-terminated wide string; the handle is closed
     // on every path below.
@@ -673,7 +674,7 @@ fn write_registry_value(
             std::ptr::null(),
             REG_OPTION_NON_VOLATILE,
             KEY_WRITE,
-            None,
+            std::ptr::null(),
             &mut hkey,
             &mut disposition,
         )
@@ -690,23 +691,31 @@ fn write_registry_value(
 
 #[cfg(target_os = "windows")]
 fn write_default_string(
-    hkey: windows_sys::Win32::Foundation::HKEY,
+    hkey: windows_sys::Win32::System::Registry::HKEY,
     value: Option<&str>,
 ) -> Result<(), String> {
     use windows_sys::Win32::System::Registry::{RegSetValueExW, REG_SZ};
-    let (data, len): (&[u8], u32) = match value {
-        Some(text) => {
-            // REG_SZ is UTF-16 with a trailing NUL (an empty string is the
-            // two zero bytes).
-            let mut utf16 = wide(text);
-            let len = (utf16.len() * 2) as u32;
-            utf16.push(0);
-            (&utf16, len)
-        }
-        None => (b"", 0),
+    // REG_SZ is UTF-16 with a trailing NUL (an empty string is the two zero
+    // bytes); `wide` already appends the NUL. The registry APIs take bytes,
+    // so widen each unit to its little-endian pair.
+    let bytes: Vec<u8> = match value {
+        Some(text) => wide(text)
+            .iter()
+            .flat_map(|unit| unit.to_ne_bytes())
+            .collect(),
+        None => Vec::new(),
     };
-    // SAFETY: `data` outlives the call and its size is passed explicitly.
-    let status = unsafe { RegSetValueExW(hkey, None, 0, REG_SZ, data.as_ptr(), len) };
+    // SAFETY: `bytes` outlives the call and its size is passed explicitly.
+    let status = unsafe {
+        RegSetValueExW(
+            hkey,
+            std::ptr::null(),
+            0,
+            REG_SZ,
+            bytes.as_ptr(),
+            bytes.len() as u32,
+        )
+    };
     if status != 0 {
         return Err(format!(
             "could not write the registry value: status {status}"
@@ -917,7 +926,10 @@ fn linux_set_binding(group: &FileTypeGroup, on: bool) -> Result<(), String> {
 }
 
 /// Write `path` atomically: a same-directory temp file that is renamed into
-/// place, the same discipline as `state.ini`.
+/// place, the same discipline as `state.ini`. Both callers — the macOS
+/// restore points and the Linux `mimeapps.list` merge — are platform-gated,
+/// so the helper is too, or Windows builds see it as dead code.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn write_atomic(path: &std::path::Path, content: &str) -> Result<(), String> {
     use std::io::Write;
     let temp = path.with_file_name(format!(
