@@ -101,3 +101,16 @@ video feature 經 `mpv-engine` crate link libmpv；Windows、macOS 使用本地�
    `libmpv.so.2` 與 link symlink）。
 3. 確認 Linux 產物實際 glibc 需求及 README 說明一致。
 4. `bundle*.sh`/`.ps1` 都是 `--features video,models`、`--locked`。
+5. `[2026-11-13 增補]` push 前在 macOS 本機跑跨平台編譯檢查：`#[cfg(target_os =
+   "windows")]` / `"linux"` 的代碼在 macOS 的 CI 三關下**完全不會被編譯**，編譯
+   錯誤只有到原生 build 機才會暴露（本次 Windows 16 個、Linux 1 個 filetypes 編譯
+   錯誤皆因此延遲到 .120/.123 build 才發現）。windows target 需 `llvm-rc`
+   （`/opt/homebrew/opt/llvm/bin`，供 build.rs 的 resource 步驟）；兩個 target 若
+   未安裝先 `rustup target add`：
+   ```sh
+   export PATH="/opt/homebrew/opt/llvm/bin:$PATH"
+   cargo clippy --locked -p lumiere --target x86_64-pc-windows-msvc \
+       --features video,models --all-targets -- -D warnings
+   cargo clippy --locked -p lumiere --target x86_64-unknown-linux-gnu \
+       --features video,models --all-targets -- -D warnings
+   ```
