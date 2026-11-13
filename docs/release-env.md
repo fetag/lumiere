@@ -4,7 +4,7 @@
 （libmpv 位置、rootfs、工作路徑）。這些是機器本地的操作細節，发版前對照此檔，
 不要再憑空猜路徑。
 
-> 更新：2026-11-10（0.1.7）。確認狀態：`[已確認]` = 本次實地查過；`[待確認]` =
+> 更新：2026-11-13（0.1.7）。確認狀態：`[已確認]` = 本次實地查過；`[待確認]` =
 > 需再核對才能直接用。
 
 ## 工作路徑慣例（重要）
@@ -35,9 +35,22 @@ video feature 經 `mpv-engine` crate link libmpv；Windows、macOS 使用本地�
 - 舊副本（備援）：`C:\workspace\lumiere-mpv-spike-20261030\lib`。
 
 ### macOS（本機）
-- `[已確認]` mpv dylibs（含 `libmpv.2.dylib` + 全套 mpv 相依 dylib）在
-  `dist/Lumiere-video-test.app/Contents/Frameworks/`（舊 build 產物，repo 內 `dist/`）。
-- `[已確認]` 0.1.6 release 產物在 `dist/release-v0.1.6/`（`lumiere-v0.1.6-macos-arm64.zip`）。
+- `[硬依賴、不可刪]` mpv dylibs（含 `libmpv.2.dylib` + 全套 mpv 相依 dylib，約 44 個 /
+  102MB、x86_64+arm64）在 `dist/Lumiere-video-test.app/Contents/Frameworks/`（repo 內
+  `dist/`）。**這是本機唯一的 mpv 來源**：`bundle.sh` 以 `LUMIERE_MPV_FRAMEWORKS` 把整目錄
+  複製進新 app，linker 用指向它的 `dist/mpv-link/libmpv.dylib` symlink。刪除後
+  `--features video` 無法建置——**清理 `dist/` 時必須保留此目錄與 `mpv-link` symlink**。
+- `[還原方式]`（2026-11-13：此目錄曾隨 `dist/` 清理遺失，已從本機已安裝的
+  `/Applications/Lumiere.app`（0.1.7）複製回來。）再遺失時，從任何已安裝的
+  Lumiere.app 或 macOS release zip 的 `Contents/Frameworks/` 複製即可：
+  ```sh
+  mkdir -p dist/Lumiere-video-test.app/Contents
+  cp -R <Lumiere.app>/Contents/Frameworks dist/Lumiere-video-test.app/Contents/Frameworks
+  mkdir -p dist/mpv-link
+  ln -sf ../Lumiere-video-test.app/Contents/Frameworks/libmpv.2.dylib dist/mpv-link/libmpv.dylib
+  ```
+- `[已清掉]` 0.1.6 release 產物（`lumiere-v0.1.6-macos-arm64.zip`）原在
+  `dist/release-v0.1.6/`，已隨 `dist/` 清理不存在；0.1.7 建置不依賴它。
 - `[已實測]` 該目錄只有 `libmpv.2.dylib`，linker 需要無版本名稱：
   ```sh
   mkdir -p dist/mpv-link
@@ -82,6 +95,7 @@ video feature 經 `mpv-engine` crate link libmpv；Windows、macOS 使用本地�
 
 1. 工作路徑在 `C:\workspace\`（Win）/ `/home/james/workspace/`（Linux）下。
 2. 各機 mpv 路徑存在（Windows `mpv.lib`+`libmpv-2.dll`；macOS Frameworks
-   有 `libmpv.2.dylib`；Linux host 有 `libmpv.so.2` 與 link symlink）。
+   有全套 dylib、且 `dist/mpv-link/libmpv.dylib` symlink 可解析；Linux host 有
+   `libmpv.so.2` 與 link symlink）。
 3. 確認 Linux 產物實際 glibc 需求及 README 說明一致。
 4. `bundle*.sh`/`.ps1` 都是 `--features video,models`、`--locked`。
