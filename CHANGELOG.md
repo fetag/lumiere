@@ -7,9 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-11-15
+
+### Added
+
+- File Types section in Settings: bind the operating system's default
+  handler for a group of formats (JPEG, PNG, HEIC/HEIF, camera RAW, video,
+  3D models, and more) with per-group toggles on all three platforms —
+  macOS LaunchServices, the per-user Windows registry, and freedesktop
+  `mimeapps.list` on Linux. The OS's current state is the source of truth,
+  so the toggles always reflect what the system actually resolves.
+- View PAM, DDS, HDR, Farbfeld and OpenEXR images.
+
 ### Changed
 
 - The Windows release bundle (`bundle-windows.ps1`) now Authenticode-signs `lumiere.exe` with the `FETAG.NET` code-signing certificate and a DigiCert timestamp before zipping, and verifies the signature (the self-signed root "not trusted" note from `signtool verify` is expected). Set `LUMIERE_SIGN_CERT` / `LUMIERE_SIGN_TIMESTAMP` to override the certificate and timestamp server. The 0.1.7 Windows asset was re-published with this signature.
+- Keyboard shortcuts follow each platform's conventions.
+- Neighbour prefetches wait until the image is displayed, and stale decode work is dropped on navigation.
+- The macOS About panel artwork is embedded in the binary.
+
+### Security
+
+- Hardened cross-platform attack surfaces.
+
+### Fixed
+
+- The Linux `.deb` launcher resolves its own install location, so the
+  package works from an extracted copy as well as the installed
+  `/opt/lumiere`.
 
 ## [0.1.7] - 2026-11-10
 
@@ -169,7 +194,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ImageIO on macOS), recoverable delete to the system Trash, and persistent
   session state.
 
-[Unreleased]: https://github.com/fetag/lumiere/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/fetag/lumiere/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/fetag/lumiere/compare/v0.1.7...v0.1.8
+[0.1.7]: https://github.com/fetag/lumiere/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/fetag/lumiere/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/fetag/lumiere/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/fetag/lumiere/compare/v0.1.3...v0.1.4
